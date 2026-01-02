@@ -444,6 +444,11 @@
         /* 横向滚动支持 */
         .table-wrapper { overflow-x: auto; -webkit-overflow-scrolling: touch; }
         .matches-table { min-width: 1100px; }
+        
+        /* 响应式视图控制 */
+        .mobile-view { display: none; }
+        .desktop-view { display: block; }
+        
         @media (max-width: 768px) {
             .matches-grid {
                 grid-template-columns: 1fr;
@@ -456,6 +461,127 @@
             
             .stats-bar {
                 flex-direction: column;
+            }
+            
+            /* 移动端切换为卡片视图 */
+            .desktop-view { display: none; }
+            .mobile-view { display: flex; flex-direction: column; gap: 15px; }
+            
+            .mobile-card {
+                background: white;
+                border-radius: 12px;
+                padding: 15px;
+                box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+                border: 1px solid #e2e8f0;
+            }
+            
+            .m-header {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                margin-bottom: 12px;
+                font-size: 12px;
+                color: #718096;
+            }
+            
+            .m-league {
+                background: #667eea;
+                color: white;
+                padding: 2px 8px;
+                border-radius: 4px;
+                font-weight: 500;
+            }
+            
+            .m-body {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                margin-bottom: 15px;
+            }
+            
+            .m-team {
+                flex: 1;
+                font-weight: 600;
+                font-size: 15px;
+                color: #2d3748;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }
+            
+            .m-team.home { text-align: right; padding-left: 5px; }
+            .m-team.away { text-align: left; padding-right: 5px; }
+            
+            .m-score-box {
+                min-width: 80px;
+                text-align: center;
+                padding: 0 10px;
+            }
+            
+            .m-score {
+                font-size: 20px;
+                font-weight: bold;
+                color: #667eea;
+                line-height: 1.2;
+            }
+            
+            .m-status {
+                font-size: 11px;
+                color: #a0aec0;
+            }
+            
+            .m-footer {
+                border-top: 1px solid #f0f0f0;
+                padding-top: 10px;
+                font-size: 12px;
+            }
+            
+            .m-odds-grid {
+                display: grid;
+                grid-template-columns: 1fr;
+                gap: 8px;
+                margin-bottom: 10px;
+                background: #f8fafc;
+                padding: 8px;
+                border-radius: 6px;
+            }
+            
+            .m-odds-item {
+                display: flex;
+                align-items: flex-start;
+                font-size: 11px;
+                line-height: 1.4;
+            }
+            
+            .m-odds-label {
+                background: #edf2f7;
+                color: #4a5568;
+                padding: 2px 6px;
+                border-radius: 4px;
+                margin-right: 8px;
+                font-weight: 600;
+                min-width: 24px;
+                text-align: center;
+                height: fit-content;
+            }
+            
+            .m-odds-content {
+                flex: 1;
+                display: flex;
+                flex-direction: column;
+                color: #2d3748;
+            }
+
+            .m-odds-row-text {
+                display: flex;
+                gap: 8px;
+            }
+            
+            .m-actions {
+                display: flex;
+                gap: 8px;
+                margin-top: 10px;
+                justify-content: flex-end;
             }
         }
     </style>
@@ -528,6 +654,13 @@
         
         // 页面加载时获取数据
         window.onload = function() {
+            // 设置日期选择器默认为今天
+            const today = new Date();
+            const year = today.getFullYear();
+            const month = String(today.getMonth() + 1).padStart(2, '0');
+            const day = String(today.getDate()).padStart(2, '0');
+            document.getElementById('datePicker').value = `${year}-${month}-${day}`;
+            
             loadMatches();
             loadLeagues();
         };
@@ -570,6 +703,7 @@
                 return;
             }
             
+            const mobileCardsArr = [];
             const rows = matches.map(match => {
                 const score = (match.home_score && match.away_score && match.home_score !== '-' && match.away_score !== '-')
                     ? `${match.home_score}-${match.away_score}`
@@ -761,6 +895,64 @@
                 const homeDisplay = match.home_rank ? `<span style="color:#718096;font-size:11px;margin-right:4px;">${match.home_rank}</span>${match.home_team}` : (match.home_team || '主队');
                 const awayDisplay = match.away_rank ? `<span style="color:#718096;font-size:11px;margin-right:4px;">${match.away_rank}</span>${match.away_team}` : (match.away_team || '客队');
                 
+                // 生成移动端卡片
+                mobileCardsArr.push(`
+                    <div class="mobile-card" onclick="viewMatchDetail('${match.match_id}')">
+                        <div class="m-header">
+                            <div>
+                                <span class="m-league">${match.league || '未知'}</span>
+                                <span style="margin-left:5px;">${match.match_number || ''}</span>
+                            </div>
+                            <span>${match.match_time ? match.match_time.substring(5, 16) : ''}</span>
+                        </div>
+                        <div class="m-body">
+                            <div class="m-team home">${match.home_team}</div>
+                            <div class="m-score-box">
+                                <div class="m-score">${score}</div>
+                                <div class="m-status">${statusText}</div>
+                            </div>
+                            <div class="m-team away">${match.away_team}</div>
+                        </div>
+                        <div class="m-footer">
+                            <div class="m-odds-grid">
+                                <!-- 欧赔 -->
+                                <div class="m-odds-item">
+                                    <div class="m-odds-label">欧</div>
+                                    <div class="m-odds-content">
+                                        <div class="m-odds-row-text"><span>初: ${euroInit}</span></div>
+                                        <div class="m-odds-row-text"><span>即: ${euroCurr}</span></div>
+                                    </div>
+                                </div>
+                                <!-- 亚盘 -->
+                                <div class="m-odds-item">
+                                    <div class="m-odds-label">亚</div>
+                                    <div class="m-odds-content">
+                                        <div class="m-odds-row-text"><span>初: ${asianInit}</span></div>
+                                        <div class="m-odds-row-text"><span>即: ${asianCurr}</span></div>
+                                    </div>
+                                </div>
+                                <!-- 让球 -->
+                                ${ (hiHasInitial || hiHasCurrent) ? `
+                                <div class="m-odds-item">
+                                    <div class="m-odds-label">让 ${hiHandicap || ''}</div>
+                                    <div class="m-odds-content">
+                                        ${hiHasInitial ? `<div class="m-odds-row-text"><span>初: ${hiInit}</span></div>` : ''}
+                                        ${hiHasCurrent ? `<div class="m-odds-row-text"><span>即: ${hiCurr}</span></div>` : ''}
+                                    </div>
+                                </div>
+                                ` : '' }
+                            </div>
+                             <div class="m-actions">
+                                <button class="btn btn-warning" style="padding:4px 8px; font-size:11px; background:#f59e0b; color:white;" onclick="updateMatch('${match.match_id}');event.stopPropagation()">更新</button>
+                                <button class="btn btn-success" style="padding:4px 8px; font-size:11px; background:#667eea;" onclick="openManualPredict('${match.match_id}','${match.home_team}','${match.away_team}');event.stopPropagation()">手动</button>
+                                <button class="btn btn-primary" style="padding:4px 8px; font-size:11px;" onclick="predictSingle('${match.match_id}');event.stopPropagation()">AI</button>
+                                <a href="/match/${match.match_id}" class="btn btn-primary" style="padding:4px 8px; font-size:11px;">详情</a>
+                            </div>
+                            <div id="m-${predictionId}" class="prediction-cell" style="margin-top:5px;font-size:12px;color:#718096;text-align:right;"></div>
+                        </div>
+                    </div>
+                `);
+
                 return `
                     <tr onclick="viewMatchDetail('${match.match_id}')">
                         <td>
@@ -792,29 +984,36 @@
                 `;
             }).join('');
             
+            const mobileCards = mobileCardsArr.join('');
+
             container.innerHTML = `
-                <div class="table-wrapper">
-                    <table class="matches-table">
-                    <thead>
-                        <tr>
-                            <th>场次/联赛/时间</th>
-                            <th>主队</th>
-                            <th>比分/盘口</th>
-                            <th>客队</th>
-                            <th>状态</th>
-                            <th>欧赔</th>
-                            <th>亚盘</th>
-                            <th>大小球</th>
-                            <th>让球指数</th>
-                            <th>总进球</th>
-                            <th>AI预测</th>
-                            <th>操作</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        ${rows}
-                    </tbody>
-                </table>
+                <div class="desktop-view">
+                    <div class="table-wrapper">
+                        <table class="matches-table">
+                        <thead>
+                            <tr>
+                                <th>场次/联赛/时间</th>
+                                <th>主队</th>
+                                <th>比分/盘口</th>
+                                <th>客队</th>
+                                <th>状态</th>
+                                <th>欧赔</th>
+                                <th>亚盘</th>
+                                <th>大小球</th>
+                                <th>让球指数</th>
+                                <th>总进球</th>
+                                <th>AI预测</th>
+                                <th>操作</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${rows}
+                        </tbody>
+                    </table>
+                    </div>
+                </div>
+                <div class="mobile-view">
+                    ${mobileCards}
                 </div>
             `;
             
@@ -884,16 +1083,20 @@
                     
                     matches.forEach(match => {
                         const pred = predictionsMap[match.match_id];
-                        const cell = document.getElementById(`pred-${match.match_id}`);
-                        
-                        if (cell && pred) {
-                            const predText = getPredictionText(pred, match.status);
-                            const predClass = getPredictionClass(pred, match.status);
-                            cell.innerHTML = `<div class="${predClass}">${predText}</div>`;
-                            cell.onclick = (e) => {
-                                e.stopPropagation();
-                                showPredictionDetail(pred, match);
+                        if (pred) {
+                            const updateCell = (cell) => {
+                                if (cell) {
+                                    const predText = getPredictionText(pred, match.status);
+                                    const predClass = getPredictionClass(pred, match.status);
+                                    cell.innerHTML = `<div class="${predClass}">${predText}</div>`;
+                                    cell.onclick = (e) => {
+                                        e.stopPropagation();
+                                        showPredictionDetail(pred, match);
+                                    };
+                                }
                             };
+                            updateCell(document.getElementById(`pred-${match.match_id}`));
+                            updateCell(document.getElementById(`m-pred-${match.match_id}`));
                         }
                     });
                 }
