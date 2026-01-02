@@ -11,6 +11,12 @@ from crawler import FootballCrawler
 from db_storage import MongoDBStorage
 from prediction_engine import PredictionEngine
 from prediction_review import PredictionReviewer
+try:
+    from apscheduler.schedulers.background import BackgroundScheduler
+    from apscheduler.triggers.cron import CronTrigger
+except Exception:
+    BackgroundScheduler = None
+    CronTrigger = None
 
 
 
@@ -67,6 +73,37 @@ def get_matches():
             matches = [m for m in matches if m.get('status') == status_code]
         except ValueError:
             pass
+    else:
+        # 默认仅展示未开始比赛
+        matches = [m for m in matches if m.get('status') == 0]
+    
+    # 排序：未开始的比赛按时间升序（默认或明确传入status=0）
+    try:
+        from datetime import datetime
+        def parse_match_time(mt):
+            if not mt:
+                return datetime.max
+            s = str(mt).strip()
+            fmts = [
+                "%Y-%m-%d %H:%M:%S",
+                "%Y-%m-%d %H:%M",
+                "%Y/%m/%d %H:%M",
+                "%m-%d %H:%M"
+            ]
+            for fmt in fmts:
+                try:
+                    if fmt == "%m-%d %H:%M":
+                        s2 = f"{datetime.now().year}-{s}"
+                        return datetime.strptime(s2, "%Y-%m-%d %H:%M")
+                    return datetime.strptime(s, fmt)
+                except Exception:
+                    continue
+            return datetime.max
+        need_sort = (not status) or (status and str(status).isdigit() and int(status) == 0)
+        if need_sort:
+            matches.sort(key=lambda m: parse_match_time(m.get('match_time')))
+    except Exception:
+        pass
     
     # 分页参数
     page = request.args.get('page', '1')
@@ -409,6 +446,32 @@ def get_predictions():
             'success': False,
             'message': f'获取预测失败: {str(e)}'
         }), 500
+
+scheduler = None
+
+def _crawl_latest():
+    try:
+        date_str = datetime.now().strftime('%Y-%m-%d')
+        url = f"https://live.500.com/?e={date_str}"
+        matches = crawler.crawl_daily_matches(url)
+        if mongo_storage and matches:
+            mongo_storage.save_matches(matches)
+    except Exception:
+        pass
+
+def _start_scheduler():
+    global scheduler
+    try:
+        if BackgroundScheduler and CronTrigger and scheduler is None:
+            scheduler = BackgroundScheduler()
+            scheduler.add_job(_crawl_latest, CronTrigger(minute='*/15'), id='crawl_every_15m', replace_existing=True)
+            scheduler.start()
+    except Exception:
+        scheduler = None
+
+@app.before_first_request
+def _init_jobs():
+    _start_scheduler()
 
 
 @app.route('/api/predict/<match_id>')

@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>足球数据展示系统</title>
+    <title>足彩分析</title>
     <style>
         * {
             margin: 0;
@@ -509,6 +509,13 @@
                 white-space: nowrap;
             }
             
+            .m-rank {
+                color: #718096;
+                font-size: 12px;
+                font-weight: normal;
+                margin-right: 4px;
+            }
+            
             .m-team.home { text-align: right; padding-left: 5px; }
             .m-team.away { text-align: left; padding-right: 5px; }
             
@@ -589,7 +596,7 @@
 <body>
     <div class="container">
         <div class="header">
-            <h1>⚽ 足球数据展示系统</h1>
+            <h1>⚽ 足彩分析</h1>
             <div class="controls">
                 <select id="leagueFilter">
                     <option value="">所有联赛</option>
@@ -892,10 +899,16 @@
                 const predictionId = `pred-${match.match_id}`;
                 
                 // 球队名称前显示排名
-                const homeDisplay = match.home_rank ? `<span style="color:#718096;font-size:11px;margin-right:4px;">${match.home_rank}</span>${match.home_team}` : (match.home_team || '主队');
-                const awayDisplay = match.away_rank ? `<span style="color:#718096;font-size:11px;margin-right:4px;">${match.away_rank}</span>${match.away_team}` : (match.away_team || '客队');
+                const homeDisplay = match.home_rank ? `<span style="color:#718096;font-size:11px;margin-right:4px;">[${match.home_rank}]</span>${match.home_team}` : (match.home_team || '主队');
+                const awayDisplay = match.away_rank ? `<span style="color:#718096;font-size:11px;margin-right:4px;">[${match.away_rank}]</span>${match.away_team}` : (match.away_team || '客队');
                 
                 // 生成移动端卡片
+                const mHomeTeam = match.home_team || '主队';
+                const mAwayTeam = match.away_team || '客队';
+                // 强制显示排名以便调试（如果有值的话），并且使用独立的span
+                const mHomeRank = match.home_rank ? `<span class="m-rank">[${match.home_rank}]</span>` : '';
+                const mAwayRank = match.away_rank ? `<span class="m-rank">[${match.away_rank}]</span>` : '';
+
                 mobileCardsArr.push(`
                     <div class="mobile-card" onclick="viewMatchDetail('${match.match_id}')">
                         <div class="m-header">
@@ -906,12 +919,12 @@
                             <span>${match.match_time ? match.match_time.substring(5, 16) : ''}</span>
                         </div>
                         <div class="m-body">
-                            <div class="m-team home">${match.home_team}</div>
+                            <div class="m-team home">${mHomeRank}${mHomeTeam}</div>
                             <div class="m-score-box">
                                 <div class="m-score">${score}</div>
                                 <div class="m-status">${statusText}</div>
                             </div>
-                            <div class="m-team away">${match.away_team}</div>
+                            <div class="m-team away">${mAwayRank}${mAwayTeam}</div>
                         </div>
                         <div class="m-footer">
                             <div class="m-odds-grid">
