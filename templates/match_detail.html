@@ -1,0 +1,651 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>比赛详情</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1000px;
+            margin: 0 auto;
+        }
+        
+        .back-btn {
+            background: white;
+            color: #667eea;
+            padding: 10px 20px;
+            border-radius: 8px;
+            text-decoration: none;
+            display: inline-block;
+            margin-bottom: 20px;
+            font-weight: 500;
+        }
+        
+        .detail-card {
+            background: white;
+            border-radius: 15px;
+            padding: 40px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+        }
+        
+        .match-header {
+            text-align: center;
+            margin-bottom: 40px;
+            padding-bottom: 30px;
+            border-bottom: 2px solid #f0f0f0;
+        }
+        
+        .league-badge {
+            background: #667eea;
+            color: white;
+            padding: 8px 20px;
+            border-radius: 25px;
+            display: inline-block;
+            margin-bottom: 15px;
+            font-size: 16px;
+        }
+        
+        .match-time {
+            color: #718096;
+            font-size: 14px;
+            margin-bottom: 10px;
+        }
+        
+        .teams-display {
+            display: flex;
+            justify-content: space-around;
+            align-items: center;
+            margin: 40px 0;
+        }
+        
+        .team-section {
+            flex: 1;
+            text-align: center;
+        }
+        
+        .team-name {
+            font-size: 28px;
+            font-weight: bold;
+            color: #2d3748;
+            margin-bottom: 15px;
+        }
+        
+        .team-score {
+            font-size: 48px;
+            font-weight: bold;
+            color: #667eea;
+        }
+        
+        .vs-separator {
+            font-size: 24px;
+            color: #cbd5e0;
+            font-weight: bold;
+        }
+        
+        .odds-section {
+            margin-top: 40px;
+        }
+        
+        .section-title {
+            font-size: 20px;
+            font-weight: bold;
+            color: #2d3748;
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #f0f0f0;
+        }
+        
+        .odds-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        
+        .odds-card {
+            background: #f7fafc;
+            padding: 20px;
+            border-radius: 10px;
+            border-left: 4px solid #667eea;
+        }
+        
+        .odds-type {
+            font-size: 16px;
+            font-weight: 600;
+            color: #4a5568;
+            margin-bottom: 15px;
+        }
+        
+        .odds-row {
+            display: flex;
+            justify-content: space-between;
+            margin: 10px 0;
+            font-size: 14px;
+        }
+        
+        .odds-label {
+            color: #718096;
+        }
+        
+        .odds-value {
+            color: #2d3748;
+            font-weight: 600;
+        }
+        
+        .loading {
+            text-align: center;
+            padding: 60px;
+            color: #667eea;
+            font-size: 18px;
+        }
+        
+        .crawl-btn {
+            background: #48bb78;
+            color: white;
+            padding: 12px 25px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 15px;
+            font-weight: 500;
+            margin-top: 20px;
+        }
+        
+        .crawl-btn:hover {
+            background: #38a169;
+        }
+        
+        .crawl-btn:disabled {
+            background: #cbd5e0;
+            cursor: not-allowed;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <a href="/" class="back-btn">← 返回列表</a>
+        
+        <div class="detail-card">
+            <div id="matchDetail" class="loading">
+                加载中...
+            </div>
+        </div>
+        <div class="detail-card" style="margin-top:20px;">
+            <div class="section-title">📊 AI预测</div>
+            <div id="predictionSection" class="loading">加载中...</div>
+        </div>
+        <div class="detail-card" style="margin-top:20px;">
+            <div class="section-title">📈 赔率变动</div>
+            <div id="movementSection" class="loading">加载中...</div>
+        </div>
+    </div>
+
+    <script>
+        const matchId = "{{ match_id }}";
+        
+        window.onload = function() {
+            loadMatchDetail();
+            loadPrediction();
+            loadMovement();
+        };
+        
+        async function loadMatchDetail() {
+            try {
+                const response = await fetch(`/api/match/${matchId}`);
+                const result = await response.json();
+                
+                if (result.success) {
+                    displayMatchDetail(result.data);
+                } else {
+                    document.getElementById('matchDetail').innerHTML = 
+                        '<p style="color: #e53e3e;">加载失败: ' + result.message + '</p>';
+                }
+            } catch (error) {
+                document.getElementById('matchDetail').innerHTML = 
+                    '<p style="color: #e53e3e;">加载失败: ' + error.message + '</p>';
+            }
+        }
+        
+        async function loadMovement() {
+            try {
+                const res = await fetch(`/api/match/${matchId}/movement`);
+                const result = await res.json();
+                const el = document.getElementById('movementSection');
+                if (!el) return;
+                if (!result.success) {
+                    el.innerHTML = '<p style="color:#e53e3e;">加载失败: ' + (result.message || '') + '</p>';
+                    return;
+                }
+                const data = result.data || {};
+                let html = '';
+                if (data.euro) {
+                    const m = data.euro.movement;
+                    html += `
+                        <div class="odds-section">
+                            <div class="section-title">欧赔变动</div>
+                            <div class="odds-card">
+                                <div class="odds-row"><span class="odds-label">初盘:</span><span class="odds-value">${data.euro.initial.win}/${data.euro.initial.draw}/${data.euro.initial.lose}</span></div>
+                                <div class="odds-row"><span class="odds-label">即时:</span><span class="odds-value">${data.euro.current.win}/${data.euro.current.draw}/${data.euro.current.lose}</span></div>
+                                <div class="odds-row"><span class="odds-label">变化:</span><span class="odds-value">胜${m.win.dir}${m.win.change}，平${m.draw.dir}${m.draw.change}，负${m.lose.dir}${m.lose.change}</span></div>
+                                ${data.euro.tendency ? `<div class="odds-row"><span class="odds-label">倾向:</span><span class="odds-value">${data.euro.tendency}</span></div>` : ''}
+                            </div>
+                        </div>
+                    `;
+                }
+                if (data.asian) {
+                    const m2 = data.asian.movement;
+                    html += `
+                        <div class="odds-section">
+                            <div class="section-title">亚盘变动</div>
+                            <div class="odds-card">
+                                <div class="odds-row"><span class="odds-label">初盘:</span><span class="odds-value">${data.asian.initial.home} ${data.asian.initial.handicap} ${data.asian.initial.away}</span></div>
+                                <div class="odds-row"><span class="odds-label">即时:</span><span class="odds-value">${data.asian.current.home} ${data.asian.current.handicap} ${data.asian.current.away}</span></div>
+                                <div class="odds-row"><span class="odds-label">变化:</span><span class="odds-value">盘口${m2.handicap ? (m2.handicap.dir + m2.handicap.change) : '—'}，主水${m2.home ? (m2.home.dir + m2.home.change) : '—'}，客水${m2.away ? (m2.away.dir + m2.away.change) : '—'}</span></div>
+                                ${data.asian.tendency ? `<div class="odds-row"><span class="odds-label">倾向:</span><span class="odds-value">${data.asian.tendency}</span></div>` : ''}
+                            </div>
+                        </div>
+                    `;
+                }
+                el.innerHTML = html || '<p style="color:#718096;">暂无变动数据</p>';
+            } catch (e) {
+                const el = document.getElementById('movementSection');
+                if (el) el.innerHTML = '<p style="color:#e53e3e;">加载失败: ' + e.message + '</p>';
+            }
+        }
+
+        function displayMatchDetail(match) {
+            const hasOdds = match.euro_current_win || match.asian_current_handicap || match.ou_current_total || match.hi_handicap_value;
+            
+            const html = `
+                <div class="match-header">
+                    <div class="league-badge">${match.league || '未知联赛'}</div>
+                    <div class="match-time">比赛时间: ${match.match_time || '未知'}</div>
+                    <div class="match-time">比赛ID: ${match.match_id}</div>
+                </div>
+                
+                <div class="teams-display">
+                    <div class="team-section">
+                        <div class="team-name">${match.home_team || '主队'}</div>
+                        <div class="team-score">${match.home_score || '-'}</div>
+                    </div>
+                    
+                    <div class="vs-separator">VS</div>
+                    
+                    <div class="team-section">
+                        <div class="team-name">${match.away_team || '客队'}</div>
+                        <div class="team-score">${match.away_score || '-'}</div>
+                    </div>
+                </div>
+                
+                ${hasOdds ? `
+                    <div class="odds-section">
+                        <div class="section-title">📊 赔率信息</div>
+                        <div class="odds-grid">
+                            ${match.euro_current_win ? `
+                                <div class="odds-card">
+                                    <div class="odds-type">欧赔 (胜平负)</div>
+                                    <div class="odds-row">
+                                        <span class="odds-label">即时盘 - 主胜:</span>
+                                        <span class="odds-value">${match.euro_current_win}</span>
+                                    </div>
+                                    <div class="odds-row">
+                                        <span class="odds-label">即时盘 - 平局:</span>
+                                        <span class="odds-value">${match.euro_current_draw}</span>
+                                    </div>
+                                    <div class="odds-row">
+                                        <span class="odds-label">即时盘 - 客胜:</span>
+                                        <span class="odds-value">${match.euro_current_lose}</span>
+                                    </div>
+                                    ${match.euro_initial_win ? `
+                                        <hr style="margin: 15px 0; border: none; border-top: 1px solid #e2e8f0;">
+                                        <div class="odds-row">
+                                            <span class="odds-label">初盘 - 主胜:</span>
+                                            <span class="odds-value">${match.euro_initial_win}</span>
+                                        </div>
+                                        <div class="odds-row">
+                                            <span class="odds-label">初盘 - 平局:</span>
+                                            <span class="odds-value">${match.euro_initial_draw}</span>
+                                        </div>
+                                        <div class="odds-row">
+                                            <span class="odds-label">初盘 - 客胜:</span>
+                                            <span class="odds-value">${match.euro_initial_lose}</span>
+                                        </div>
+                                    ` : ''}
+                                </div>
+                            ` : ''}
+                            
+                            ${match.asian_current_handicap ? `
+                                <div class="odds-card">
+                                    <div class="odds-type">亚盘 (让球)</div>
+                                    <div class="odds-row">
+                                        <span class="odds-label">即时盘 - 主队:</span>
+                                        <span class="odds-value">${match.asian_current_home_odds}</span>
+                                    </div>
+                                    <div class="odds-row">
+                                        <span class="odds-label">即时盘 - 盘口:</span>
+                                        <span class="odds-value">${match.asian_current_handicap}</span>
+                                    </div>
+                                    <div class="odds-row">
+                                        <span class="odds-label">即时盘 - 客队:</span>
+                                        <span class="odds-value">${match.asian_current_away_odds}</span>
+                                    </div>
+                                    ${match.asian_initial_handicap ? `
+                                        <hr style="margin: 15px 0; border: none; border-top: 1px solid #e2e8f0;">
+                                        <div class="odds-row">
+                                            <span class="odds-label">初盘 - 主队:</span>
+                                            <span class="odds-value">${match.asian_initial_home_odds}</span>
+                                        </div>
+                                        <div class="odds-row">
+                                            <span class="odds-label">初盘 - 盘口:</span>
+                                            <span class="odds-value">${match.asian_initial_handicap}</span>
+                                        </div>
+                                        <div class="odds-row">
+                                            <span class="odds-label">初盘 - 客队:</span>
+                                            <span class="odds-value">${match.asian_initial_away_odds}</span>
+                                        </div>
+                                    ` : ''}
+                                </div>
+                            ` : ''}
+                            
+                            ${match.ou_current_total ? `
+                                <div class="odds-card">
+                                    <div class="odds-type">大小球</div>
+                                    <div class="odds-row">
+                                        <span class="odds-label">即时盘 - 大球:</span>
+                                        <span class="odds-value">${match.ou_current_over_odds}</span>
+                                    </div>
+                                    <div class="odds-row">
+                                        <span class="odds-label">即时盘 - 盘口:</span>
+                                        <span class="odds-value">${match.ou_current_total}</span>
+                                    </div>
+                                    <div class="odds-row">
+                                        <span class="odds-label">即时盘 - 小球:</span>
+                                        <span class="odds-value">${match.ou_current_under_odds}</span>
+                                    </div>
+                                    ${match.ou_initial_total ? `
+                                        <hr style="margin: 15px 0; border: none; border-top: 1px solid #e2e8f0;">
+                                        <div class="odds-row">
+                                            <span class="odds-label">初盘 - 大球:</span>
+                                            <span class="odds-value">${match.ou_initial_over_odds}</span>
+                                        </div>
+                                        <div class="odds-row">
+                                            <span class="odds-label">初盘 - 盘口:</span>
+                                            <span class="odds-value">${match.ou_initial_total}</span>
+                                        </div>
+                                        <div class="odds-row">
+                                            <span class="odds-label">初盘 - 小球:</span>
+                                            <span class="odds-value">${match.ou_initial_under_odds}</span>
+                                        </div>
+                                    ` : ''}
+                                </div>
+                            ` : ''}
+                            
+                            ${match.hi_handicap_value ? `
+                                <div class="odds-card">
+                                    <div class="odds-type">让球指数 (竞彩官方)</div>
+                                    <div class="odds-row">
+                                        <span class="odds-label">让球数:</span>
+                                        <span class="odds-value" style="font-weight:bold;color:#667eea;">${match.hi_handicap_value}</span>
+                                    </div>
+                                    <div class="odds-row">
+                                        <span class="odds-label">即时盘 - 主胜:</span>
+                                        <span class="odds-value">${match.hi_current_home_odds}</span>
+                                    </div>
+                                    <div class="odds-row">
+                                        <span class="odds-label">即时盘 - 平局:</span>
+                                        <span class="odds-value">${match.hi_current_draw_odds}</span>
+                                    </div>
+                                    <div class="odds-row">
+                                        <span class="odds-label">即时盘 - 客胜:</span>
+                                        <span class="odds-value">${match.hi_current_away_odds}</span>
+                                    </div>
+                                    ${match.hi_initial_home_odds ? `
+                                        <hr style="margin: 15px 0; border: none; border-top: 1px solid #e2e8f0;">
+                                        <div class="odds-row">
+                                            <span class="odds-label">初盘 - 主胜:</span>
+                                            <span class="odds-value">${match.hi_initial_home_odds}</span>
+                                        </div>
+                                        <div class="odds-row">
+                                            <span class="odds-label">初盘 - 平局:</span>
+                                            <span class="odds-value">${match.hi_initial_draw_odds}</span>
+                                        </div>
+                                        <div class="odds-row">
+                                            <span class="odds-label">初盘 - 客胜:</span>
+                                            <span class="odds-value">${match.hi_initial_away_odds}</span>
+                                        </div>
+                                    ` : ''}
+                                </div>
+                            ` : ''}
+                        </div>
+                    </div>
+                ` : `
+                    <div style="text-align: center; padding: 30px; background: #f7fafc; border-radius: 10px;">
+                        <p style="color: #718096; margin-bottom: 15px;">暂无赔率数据</p>
+                        <button class="crawl-btn" onclick="crawlOdds()">🔍 爬取赔率数据</button>
+                    </div>
+                `}
+            `;
+            
+            document.getElementById('matchDetail').innerHTML = html;
+        }
+        
+        async function loadPrediction() {
+            try {
+                const response = await fetch(`/api/predictions?limit=200`);
+                const result = await response.json();
+                
+                const el = document.getElementById('predictionSection');
+                if (!el) return;
+                
+                if (!result.success || !result.data || result.data.length === 0) {
+                    el.innerHTML = `
+                        <div style="text-align:center;padding:30px;background:#f7fafc;border-radius:10px;">
+                            <p style="color:#718096;margin-bottom:15px;">未找到AI预测数据</p>
+                            <button class="crawl-btn" onclick="predictMatch()">🤖 生成预测</button>
+                        </div>
+                    `;
+                    return;
+                }
+                
+                // 查找当前比赛的预测
+                const pred = result.data.find(p => p.match_id === matchId);
+                
+                if (!pred) {
+                    el.innerHTML = `
+                        <div style="text-align:center;padding:30px;background:#f7fafc;border-radius:10px;">
+                            <p style="color:#718096;margin-bottom:15px;">该比赛尚未AI预测</p>
+                            <button class="crawl-btn" onclick="predictMatch()">🤖 生成预测</button>
+                        </div>
+                    `;
+                    return;
+                }
+                
+                // 显示预测结果
+                const winMap = {'home': '主胜', 'draw': '平局', 'away': '客胜'};
+                const asianMap = {'home': '主队', 'away': '客队'};
+                const ouMap = {'over': '大球', 'under': '小球'};
+                
+                let html = `
+                    <div class="odds-grid">
+                        <div class="odds-card" style="border-left:4px solid #667eea;">
+                            <div class="odds-type">🏆 胜负预测</div>
+                            <div class="odds-row">
+                                <span class="odds-label">预测结果:</span>
+                                <span class="odds-value" style="color:#667eea;font-size:18px;">${winMap[pred.win_prediction]}</span>
+                            </div>
+                            <div class="odds-row">
+                                <span class="odds-label">置信度:</span>
+                                <span class="odds-value">${pred.win_confidence.toFixed(1)}%</span>
+                            </div>
+                            ${pred.is_reviewed ? `
+                                <div class="odds-row" style="margin-top:10px;padding-top:10px;border-top:1px solid #e2e8f0;">
+                                    <span class="odds-label">实际结果:</span>
+                                    <span class="odds-value" style="color:${pred.win_correct ? '#48bb78' : '#fc8181'};">${pred.win_correct ? '✅ 正确' : '❌ 错误'}</span>
+                                </div>
+                            ` : ''}
+                        </div>
+                        
+                        <div class="odds-card" style="border-left:4px solid #48bb78;">
+                            <div class="odds-type">⚖️ 亚盘预测</div>
+                            <div class="odds-row">
+                                <span class="odds-label">预测结果:</span>
+                                <span class="odds-value" style="color:#48bb78;font-size:18px;">${asianMap[pred.asian_prediction]}</span>
+                            </div>
+                            <div class="odds-row">
+                                <span class="odds-label">盘口:</span>
+                                <span class="odds-value">${pred.asian_handicap || '—'}</span>
+                            </div>
+                            <div class="odds-row">
+                                <span class="odds-label">置信度:</span>
+                                <span class="odds-value">${pred.asian_confidence.toFixed(1)}%</span>
+                            </div>
+                            ${pred.is_reviewed ? `
+                                <div class="odds-row" style="margin-top:10px;padding-top:10px;border-top:1px solid #e2e8f0;">
+                                    <span class="odds-label">实际结果:</span>
+                                    <span class="odds-value" style="color:${pred.asian_correct ? '#48bb78' : '#fc8181'};">${pred.asian_correct ? '✅ 正确' : '❌ 错误'}</span>
+                                </div>
+                            ` : ''}
+                        </div>
+                        
+                        <div class="odds-card" style="border-left:4px solid #f6ad55;">
+                            <div class="odds-type">⚽ 大小球预测</div>
+                            <div class="odds-row">
+                                <span class="odds-label">预测结果:</span>
+                                <span class="odds-value" style="color:#f6ad55;font-size:18px;">${ouMap[pred.ou_prediction]}</span>
+                            </div>
+                            <div class="odds-row">
+                                <span class="odds-label">盘口:</span>
+                                <span class="odds-value">${pred.ou_total || '—'}</span>
+                            </div>
+                            <div class="odds-row">
+                                <span class="odds-label">置信度:</span>
+                                <span class="odds-value">${pred.ou_confidence.toFixed(1)}%</span>
+                            </div>
+                            ${pred.is_reviewed ? `
+                                <div class="odds-row" style="margin-top:10px;padding-top:10px;border-top:1px solid #e2e8f0;">
+                                    <span class="odds-label">实际结果:</span>
+                                    <span class="odds-value" style="color:${pred.ou_correct ? '#48bb78' : '#fc8181'};">${pred.ou_correct ? '✅ 正确' : '❌ 错误'}</span>
+                                </div>
+                            ` : ''}
+                        </div>
+                        
+                        <div class="odds-card" style="border-left:4px solid #9f7aea;">
+                            <div class="odds-type">🎯 比分预测</div>
+                            <div class="odds-row">
+                                <span class="odds-label">预测比分:</span>
+                                <span class="odds-value" style="color:#9f7aea;font-size:18px;">${pred.predicted_home_score}-${pred.predicted_away_score}</span>
+                            </div>
+                            ${pred.is_reviewed ? `
+                                <div class="odds-row">
+                                    <span class="odds-label">实际比分:</span>
+                                    <span class="odds-value">${pred.actual_home_score}-${pred.actual_away_score}</span>
+                                </div>
+                                <div class="odds-row" style="margin-top:10px;padding-top:10px;border-top:1px solid #e2e8f0;">
+                                    <span class="odds-label">比分匹配:</span>
+                                    <span class="odds-value" style="color:${pred.score_correct ? '#48bb78' : '#fc8181'};">${pred.score_correct ? '✅ 完全正确' : '❌ 不匹配'}</span>
+                                </div>
+                            ` : ''}
+                        </div>
+                    </div>
+                `;
+                
+                // 如果已复盘，显示总体统计
+                if (pred.is_reviewed) {
+                    const accuracy = pred.accuracy || 0;
+                    const bgColor = accuracy >= 75 ? '#d4f4dd' : accuracy >= 50 ? '#fef3c7' : '#fed7d7';
+                    const textColor = accuracy >= 75 ? '#22543d' : accuracy >= 50 ? '#744210' : '#742a2a';
+                    
+                    html += `
+                        <div style="margin-top:20px;padding:20px;background:${bgColor};border-radius:10px;border-left:4px solid ${textColor};">
+                            <div style="font-size:18px;font-weight:bold;color:${textColor};margin-bottom:10px;">
+                                📈 复盘统计
+                            </div>
+                            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:15px;">
+                                <div>
+                                    <div style="color:#718096;font-size:13px;">总体准确度</div>
+                                    <div style="font-size:24px;font-weight:bold;color:${textColor};">${accuracy.toFixed(1)}%</div>
+                                </div>
+                                <div>
+                                    <div style="color:#718096;font-size:13px;">命中项目</div>
+                                    <div style="font-size:24px;font-weight:bold;color:${textColor};">${pred.correct_count}/${pred.total_predictions}</div>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                }
+                
+                el.innerHTML = html;
+                
+            } catch (error) {
+                console.error('加载AI预测失败:', error);
+                document.getElementById('predictionSection').innerHTML = `
+                    <div style="text-align:center;padding:30px;">
+                        <p style="color:#fc8181;">加载失败: ${error.message}</p>
+                    </div>
+                `;
+            }
+        }
+        
+        async function predictMatch() {
+            const btn = event.target;
+            btn.disabled = true;
+            btn.textContent = '预测中...';
+            
+            try {
+                const response = await fetch(`/api/predict/${matchId}`);
+                const result = await response.json();
+                
+                if (result.success) {
+                    alert('AI预测生成成功！页面将刷新。');
+                    location.reload();
+                } else {
+                    alert('预测失败: ' + result.message);
+                    btn.disabled = false;
+                    btn.textContent = '🤖 生成预测';
+                }
+            } catch (error) {
+                alert('预测失败: ' + error.message);
+                btn.disabled = false;
+                btn.textContent = '🤖 生成预测';
+            }
+        }
+        
+        async function crawlOdds() {
+            const btn = event.target;
+            btn.disabled = true;
+            btn.textContent = '爬取中...';
+            
+            try {
+                const response = await fetch(`/api/crawl_odds/${matchId}`);
+                const result = await response.json();
+                
+                if (result.success) {
+                    alert('赔率数据爬取成功！页面将刷新。');
+                    location.reload();
+                } else {
+                    alert('爬取失败: ' + result.message);
+                    btn.disabled = false;
+                    btn.textContent = '🔍 爬取赔率数据';
+                }
+            } catch (error) {
+                alert('爬取失败: ' + error.message);
+                btn.disabled = false;
+                btn.textContent = '🔍 爬取赔率数据';
+            }
+        }
+    </script>
+</body>
+</html>
