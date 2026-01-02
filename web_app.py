@@ -17,6 +17,8 @@ try:
 except Exception:
     BackgroundScheduler = None
     CronTrigger = None
+import requests
+from config import WECHAT_WEBHOOK_URL
 
 
 
@@ -456,6 +458,50 @@ def _crawl_latest():
         matches = crawler.crawl_daily_matches(url)
         if mongo_storage and matches:
             mongo_storage.save_matches(matches)
+        def to_float(x):
+            try:
+                return float(x)
+            except Exception:
+                return None
+        def meets_alert(m):
+            if m.get('status') != 1:
+                return False
+            draw_odds = to_float(m.get('euro_current_draw') or m.get('euro_initial_draw'))
+            let_val = str(m.get('hi_handicap_value') or '').strip()
+            cond_ping = draw_odds is not None and 2.85 <= draw_odds <= 3.5
+            cond_rangping = let_val in ['0', '平手'] or ('平' in let_val)
+            return cond_ping or cond_rangping
+        def build_msg(m):
+            home = m.get('home_team', '')
+            away = m.get('away_team', '')
+            tm = m.get('match_time', '')
+            num = m.get('match_number', '')
+            draw_odds = m.get('euro_current_draw') or m.get('euro_initial_draw') or ''
+            hi_val = m.get('hi_handicap_value') or ''
+            tags = []
+            if draw_odds:
+                try:
+                    v = float(draw_odds)
+                    if 2.85 <= v <= 3.5:
+                        tags.append('平')
+                except Exception:
+                    pass
+            if hi_val and (hi_val in ['0', '平手'] or ('平' in hi_val)):
+                tags.append('让平')
+            tag_str = '、'.join(tags) if tags else '提示'
+            return f"{num} {home} vs {away}\n时间: {tm}\n欧赔平: {draw_odds}\n让球: {hi_val}\n符合: {tag_str}"
+        def send_wechat(text):
+            if not WECHAT_WEBHOOK_URL:
+                return
+            try:
+                payload = {"msgtype":"text","text":{"content":text}}
+                headers = {"Content-Type":"application/json"}
+                requests.post(WECHAT_WEBHOOK_URL, json=payload, headers=headers, timeout=10)
+            except Exception:
+                pass
+        for m in matches or []:
+            if meets_alert(m):
+                send_wechat(build_msg(m))
     except Exception:
         pass
 

@@ -43,3 +43,5 @@ EXPORT_FORMAT = os.getenv('EXPORT_FORMAT', 'csv')  # csv, json, excel
 LOG_DIR = os.path.join(BASE_DIR, 'logs')
 os.makedirs(LOG_DIR, exist_ok=True)
 LOG_FILE = os.path.join(LOG_DIR, 'crawler.log')
+
+WECHAT_WEBHOOK_URL = os.getenv('WECHAT_WEBHOOK_URL', 'https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=b0dd1c4a-8067-4e65-ba06-9f7cc736a02f')

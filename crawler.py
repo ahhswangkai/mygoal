@@ -243,11 +243,15 @@ class FootballCrawler:
                 
                 # 标准化状态：0=未开始，1=进行中，2=完场
                 raw_status = status_td.get_text(strip=True)
-                status_code = 0  # 默认未开始
-                if raw_status and ('完' in raw_status or '结束' in raw_status):
-                    status_code = 2  # 完场
-                elif raw_status and raw_status not in ['未', '']:
-                    status_code = 1  # 进行中
+                status_code = 0
+                status_classes = status_td.get('class') or []
+                if 'td_living' in status_classes:
+                    status_code = 1
+                else:
+                    if raw_status and ('完' in raw_status or '结束' in raw_status):
+                        status_code = 2
+                    elif raw_status and raw_status not in ['未', '']:
+                        status_code = 1
                 
                 match_data = {
                     'match_id': match_id,
