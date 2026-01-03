@@ -639,7 +639,7 @@
                 <button class="btn btn-success" onclick="showDailyPredictions()" style="background:linear-gradient(135deg, #f093fb 0%, #f5576c 100%);">📊 每日推荐</button>
                 <button class="btn btn-success" onclick="showLowerPlate()" style="background:linear-gradient(135deg, #11998e 0%, #38ef7d 100%);">🎲 下盘筛选</button>
                 <button class="btn btn-success" onclick="showOddsFilter()" style="background:linear-gradient(135deg, #fc4a1a 0%, #f7b733 100%);">📈 赔率筛选</button>
-                <button class="btn btn-success" onclick="showMyPicks()" style="background:linear-gradient(135deg, #00b09b 0%, #96c93d 100%);">🎯 我的选择</button>
+                <a href="/my_picks" class="btn btn-success" style="background:linear-gradient(135deg, #00b09b 0%, #96c93d 100%);">🎯 我的选择</a>
             </div>
         </div>
         
@@ -658,6 +658,17 @@
     </div>
 
     <script>
+        // 获取或生成设备ID
+        function getDeviceId() {
+            let deviceId = localStorage.getItem('football_device_id');
+            if (!deviceId) {
+                // 生成简单的随机ID
+                deviceId = 'user_' + Math.random().toString(36).substr(2, 9) + '_' + Date.now();
+                localStorage.setItem('football_device_id', deviceId);
+            }
+            return deviceId;
+        }
+
         let allMatches = [];
         let currentPage = 1;
         let totalPages = 1;
@@ -1602,10 +1613,11 @@
             }
             async function submitManualPredict(matchId, options, confidence) {
                 try {
+                    const deviceId = getDeviceId();
                     const res = await fetch(`/api/predict/manual/${matchId}`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ options, confidence })
+                        body: JSON.stringify({ options, confidence, device_id: deviceId })
                     });
                     const j = await res.json();
                     if (j.success) {

@@ -1,0 +1,1021 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>足球计算器 - 混合过关</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background: #f5f5f5;
+            min-height: 100vh;
+            padding-bottom: 180px; /* Space for bottom bar */
+        }
+        
+        /* Red Header */
+        .app-header {
+            background: #e53e3e;
+            color: white;
+            padding: 12px 15px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+            font-size: 18px;
+            font-weight: 600;
+        }
+        .back-btn {
+            position: absolute;
+            left: 15px;
+            color: white;
+            text-decoration: none;
+            font-size: 20px;
+        }
+        
+        /* Game Type Tabs */
+        .game-types {
+            display: none;
+            background: white;
+            padding: 10px 5px;
+            border-bottom: 1px solid #eee;
+            overflow-x: auto;
+        }
+        .type-tab {
+            flex: 1;
+            text-align: center;
+            padding: 6px 10px;
+            font-size: 13px;
+            color: #4a5568;
+            border: 1px solid #e2e8f0;
+            margin: 0 4px;
+            border-radius: 4px;
+            white-space: nowrap;
+        }
+        .type-tab.active {
+            color: #e53e3e;
+            border-color: #e53e3e;
+            position: relative;
+        }
+        /* Group Header */
+        .date-header {
+            padding: 8px 15px;
+            font-size: 12px;
+            color: #718096;
+            display: flex;
+            justify-content: space-between;
+        }
+        
+        /* Match List */
+        .match-list {
+            padding: 0 10px;
+        }
+        .match-item {
+            background: white;
+            border-radius: 8px;
+            margin-bottom: 10px;
+            display: flex;
+            padding: 10px;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+            position: relative;
+        }
+        
+        /* Left: Info */
+        .match-left {
+            width: 80px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            font-size: 12px;
+            color: #718096;
+            text-align: center;
+            border-right: 1px solid #f0f0f0;
+            padding-right: 8px;
+            margin-right: 8px;
+        }
+        .league-name { color: #4a5568; margin-bottom: 4px; }
+        .match-num { margin-bottom: 4px; font-weight: bold; color: #2d3748; }
+        .match-time { color: #a0aec0; font-size: 11px; }
+        .match-conf { color: #e53e3e; font-size: 11px; margin-top: 2px; }
+        
+        /* Right: Betting Area */
+        .match-right {
+            flex: 1;
+        }
+        .teams-row {
+            display: flex;
+            justify-content: space-between;
+            font-size: 15px;
+            font-weight: 600;
+            color: #2d3748;
+            margin-bottom: 8px;
+            padding: 0 5px;
+        }
+        .vs-text { color: #cbd5e0; font-size: 12px; margin: 0 5px; }
+        
+        /* Odds Grid */
+        .odds-grid {
+            display: grid;
+            grid-template-columns: 30px 1fr 1fr 1fr;
+            gap: 1px;
+            background: #e2e8f0; /* Borders */
+            border: 1px solid #e2e8f0;
+            border-radius: 4px;
+            overflow: hidden;
+        }
+        
+        .grid-cell {
+            background: white;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 8px 2px;
+            cursor: pointer;
+            font-size: 12px;
+            position: relative;
+        }
+        
+        .label-cell {
+            background: #f7fafc;
+            color: #718096;
+            font-weight: 500;
+        }
+        
+        .grid-cell.selected {
+            background: #e53e3e;
+            color: white;
+        }
+        
+        .grid-cell.selected .odds-val {
+            color: white;
+        }
+        
+        .odds-name { margin-bottom: 2px; }
+        .odds-val { color: #718096; font-weight: 500; }
+        
+        /* Handicap Colors */
+        .handicap-val.pos { color: #e53e3e; }
+        .handicap-val.neg { color: #38a169; }
+        .handicap-val { font-weight: bold; }
+        
+        /* Delete Button */
+        .btn-del-match {
+            position: absolute;
+            top: 0;
+            right: 0;
+            width: 24px;
+            height: 24px;
+            background: #fc8181;
+            color: white;
+            border-radius: 0 8px 0 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
+            cursor: pointer;
+        }
+        
+        /* Bottom Bar */
+        .bottom-bar {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: white;
+            box-shadow: 0 -2px 10px rgba(0,0,0,0.1);
+            z-index: 100;
+        }
+        
+        /* Gate Selection (Pass Type) */
+        .gate-selector {
+            padding: 10px;
+            border-bottom: 1px solid #f0f0f0;
+            overflow-x: auto;
+            white-space: nowrap;
+            display: flex;
+            gap: 8px;
+        }
+        .gate-btn {
+            padding: 6px 16px;
+            border: 1px solid #e2e8f0;
+            border-radius: 4px;
+            background: white;
+            font-size: 13px;
+            color: #4a5568;
+            cursor: pointer;
+        }
+        .gate-btn.active {
+            background: #e53e3e;
+            color: white;
+            border-color: #e53e3e;
+        }
+        
+        /* Summary Row */
+        .summary-row {
+            padding: 10px 15px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .summary-info {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        
+        .multiple-box {
+            display: flex;
+            align-items: center;
+            border: 1px solid #e2e8f0;
+            border-radius: 4px;
+            overflow: hidden;
+        }
+        .multiple-input {
+            width: 50px;
+            border: none;
+            text-align: center;
+            padding: 5px;
+            font-size: 14px;
+            outline: none;
+        }
+        .multiple-label {
+            background: #f7fafc;
+            padding: 5px 8px;
+            font-size: 12px;
+            color: #718096;
+            border-left: 1px solid #e2e8f0;
+        }
+        
+        .amount-info {
+            font-size: 12px;
+            color: #718096;
+            text-align: right;
+        }
+        .money-text {
+            color: #e53e3e;
+            font-weight: bold;
+            font-size: 16px;
+        }
+        
+        .action-row {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+        
+        .status-text {
+            flex: 1;
+            font-size: 12px;
+            color: #4a5568;
+        }
+        
+        .btn-clear {
+            padding: 8px 15px;
+            border: 1px solid #e2e8f0;
+            border-radius: 4px;
+            background: white;
+            color: #718096;
+            font-size: 14px;
+        }
+        
+        .btn-optimize {
+            padding: 8px 15px;
+            background: #ed8936;
+            color: white;
+            border-radius: 4px;
+            border: none;
+            font-size: 14px;
+        }
+        
+        .btn-submit {
+            padding: 8px 25px;
+            background: #e53e3e;
+            color: white;
+            border-radius: 4px;
+            border: none;
+            font-size: 16px;
+            font-weight: 600;
+        }
+        
+        .empty-state {
+            text-align: center;
+            padding: 50px;
+            color: #a0aec0;
+        }
+
+        /* Optimization Modal */
+        .modal-overlay {
+            position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.5); z-index: 200;
+            display: none; align-items: flex-end;
+        }
+        .modal-overlay.active { display: flex; }
+        .modal-content {
+            background: white; width: 100%; border-radius: 12px 12px 0 0;
+            padding: 20px; max-height: 90vh; overflow-y: auto;
+            display: flex; flex-direction: column;
+        }
+        .modal-header {
+            display: flex; justify-content: space-between; align-items: center;
+            margin-bottom: 15px; border-bottom: 1px solid #eee; padding-bottom: 10px;
+        }
+        .modal-title { font-size: 16px; font-weight: bold; }
+        .modal-close { font-size: 24px; color: #aaa; cursor: pointer; line-height: 1; }
+        
+        .opt-input-row {
+            display: flex; align-items: center; justify-content: space-between;
+            margin-bottom: 15px; background: #f7fafc; padding: 10px; border-radius: 8px;
+        }
+        .opt-input {
+            width: 80px; padding: 5px; border: 1px solid #e2e8f0;
+            border-radius: 4px; text-align: center; font-size: 16px;
+        }
+        
+        .opt-types { display: flex; gap: 8px; margin-bottom: 15px; }
+        .opt-type-btn {
+            flex: 1; padding: 8px; border: 1px solid #e2e8f0; border-radius: 4px;
+            background: white; color: #4a5568; font-size: 13px; text-align: center;
+            cursor: pointer;
+        }
+        .opt-type-btn.active {
+            background: #e53e3e; color: white; border-color: #e53e3e;
+        }
+        
+        .opt-result-area { flex: 1; overflow-y: auto; margin-bottom: 15px; }
+        .opt-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+        .opt-table th { 
+            text-align: left; color: #718096; padding: 8px 4px; 
+            position: sticky; top: 0; background: white; border-bottom: 1px solid #eee;
+        }
+        .opt-table td { padding: 8px 4px; border-bottom: 1px solid #f7fafc; color: #2d3748; }
+        .opt-combo { color: #718096; font-size: 11px; margin-top: 2px; }
+        
+        .ticket-input {
+            width: 40px; padding: 2px; text-align: center; border: 1px solid #e2e8f0;
+        }
+        /* View Plan Modal */
+        .plan-modal {
+            position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.5); z-index: 300;
+            display: none; align-items: center; justify-content: center;
+        }
+        .plan-modal.active { display: flex; }
+        .plan-content {
+            background: white; width: 90%; max-width: 350px;
+            border-radius: 8px; overflow: hidden;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+        }
+        .plan-header {
+            padding: 15px; border-bottom: 1px solid #eee;
+            font-size: 16px; font-weight: bold; color: #2d3748;
+            position: relative;
+        }
+        .plan-close {
+            position: absolute; right: 10px; top: 10px;
+            width: 24px; height: 24px; background: #e53e3e;
+            color: white; border-radius: 50%;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 14px; cursor: pointer;
+        }
+        .plan-list {
+            padding: 0; max-height: 60vh; overflow-y: auto;
+        }
+        .plan-item {
+            padding: 12px 15px; border-bottom: 1px solid #f7fafc;
+        }
+        .plan-item-title {
+            font-size: 14px; color: #2d3748; margin-bottom: 4px;
+        }
+        .plan-item-detail {
+            font-size: 12px; color: #718096;
+        }
+    </style>
+</head>
+<body>
+    <div class="app-header">
+        <a href="/" class="back-btn">‹</a>
+        足球计算器
+    </div>
+    
+    <div class="game-types">
+        <div class="type-tab">胜平负/让球</div>
+        <div class="type-tab">比分</div>
+        <div class="type-tab">总进球</div>
+        <div class="type-tab">半全场</div>
+        <div class="type-tab active">混合过关</div>
+    </div>
+    
+    <div class="date-header">
+        <span id="matchCountDisplay">共 0 场比赛</span>
+    </div>
+    
+    <div id="matchList" class="match-list">
+        <!-- Matches will be inserted here -->
+    </div>
+    
+    <div class="bottom-bar">
+        <div class="gate-selector" id="gateSelector">
+            <!-- Gate buttons like 2关, 3关 -->
+        </div>
+        
+        <div class="summary-row">
+            <div class="summary-info">
+                <div style="display:flex;align-items:center;gap:10px;">
+                    <span class="status-text" id="selectionCount">已选 0 场</span>
+                    <div class="multiple-box">
+                        <input type="number" class="multiple-input" id="multipleInput" value="1" min="1">
+                        <div class="multiple-label">倍</div>
+                    </div>
+                </div>
+                <div class="amount-info">
+                    <div>投注金额: <span class="money-text" id="totalAmount">0</span> 元</div>
+                    <div>理论最高: <span class="money-text" id="maxBonus">0.00</span> 元</div>
+                </div>
+            </div>
+            <div class="action-row">
+                <button class="btn-clear" onclick="clearAll()">清空</button>
+                <button class="btn-optimize" onclick="openOptimization()">奖金优化</button>
+                <button class="btn-submit" style="flex:1;" onclick="showPlan()">查看方案</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- View Plan Modal -->
+    <div class="plan-modal" id="planModal">
+        <div class="plan-content">
+            <div class="plan-header">
+                <span id="planTitle">过关方式: </span>
+                <div class="plan-close" onclick="closePlan()">×</div>
+            </div>
+            <div class="plan-list" id="planList">
+                <!-- Items -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Optimization Modal -->
+    <div class="modal-overlay" id="optModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <div class="modal-title">奖金优化</div>
+                <div class="modal-close" onclick="closeOptimization()">×</div>
+            </div>
+            
+            <div class="opt-input-row">
+                <span>计划资金(元)</span>
+                <input type="number" id="planAmount" class="opt-input" value="100" step="2" onchange="runOptimization()">
+            </div>
+            
+            <div class="opt-types">
+                <div class="opt-type-btn active" onclick="setOptType('avg')" id="btn-opt-avg">平均优化</div>
+                <div class="opt-type-btn" onclick="setOptType('hot')" id="btn-opt-hot">博热优化</div>
+                <div class="opt-type-btn" onclick="setOptType('cold')" id="btn-opt-cold">博冷优化</div>
+            </div>
+            
+            <div class="opt-result-area">
+                <table class="opt-table">
+                    <thead>
+                        <tr>
+                            <th width="40%">组合</th>
+                            <th width="15%">赔率</th>
+                            <th width="20%">倍数</th>
+                            <th width="25%">奖金</th>
+                        </tr>
+                    </thead>
+                    <tbody id="optTableBody">
+                        <!-- Rows -->
+                    </tbody>
+                </table>
+            </div>
+            
+            <div style="text-align: center; color: #718096; font-size: 12px;">
+                实际总额: <span id="realTotal" style="color:#e53e3e;font-weight:bold;">0</span> 元
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Data Store
+        let matches = [];
+        let selections = {}; // { match_id: Set(['win', 'h_lose']) }
+        let selectedGates = new Set(); // Set([2, 3])
+        let currentTickets = []; // Array of { odds: number, desc: string, matches: [] }
+        let currentOptType = 'avg'; // avg, hot, cold
+        
+        // Utils
+        function getDeviceId() {
+            let id = localStorage.getItem('football_device_id');
+            if (!id) {
+                id = 'user_' + Date.now();
+                localStorage.setItem('football_device_id', id);
+            }
+            return id;
+        }
+        const deviceId = getDeviceId();
+        
+        // Fetch Data
+        async function init() {
+            try {
+                const res = await fetch(`/api/my_picks?device_id=${deviceId}`);
+                const data = await res.json();
+                if (data.success) {
+                    matches = data.data;
+                    initSelections();
+                    renderMatches();
+                    updateFooter();
+                }
+            } catch (e) {
+                console.error(e);
+                document.getElementById('matchList').innerHTML = '<div class="empty-state">加载失败</div>';
+            }
+        }
+        
+        function initSelections() {
+            matches.forEach(m => {
+                if (m.options && m.options.length > 0) {
+                    selections[m.match_id] = new Set(m.options);
+                }
+            });
+            const count = Object.keys(selections).length;
+            if (count >= 2) selectedGates.add(2);
+        }
+        
+        function renderMatches() {
+            const list = document.getElementById('matchList');
+            if (matches.length === 0) {
+                list.innerHTML = '<div class="empty-state">暂无选择，请先去首页添加比赛</div>';
+                return;
+            }
+            
+            document.getElementById('matchCountDisplay').textContent = `共 ${matches.length} 场比赛`;
+            
+            list.innerHTML = matches.map(m => {
+                const sel = selections[m.match_id] || new Set();
+                const grid = m.grid_data || { euro: {}, handicap: { val: '0' } };
+                const hVal = parseFloat(grid.handicap.val);
+                const hClass = hVal > 0 ? 'pos' : (hVal < 0 ? 'neg' : '');
+                const hText = hVal > 0 ? `+${hVal}` : hVal;
+                
+                return `
+                <div class="match-item" id="match-${m.match_id}">
+                    <div class="btn-del-match" onclick="removeMatch('${m.match_id}')">×</div>
+                    <div class="match-left">
+                        <div class="league-name">${m.league}</div>
+                        <div class="match-num">${m.match_number || m.match_id.substring(0,4)}</div>
+                        <div class="match-time">${m.match_time.substring(5, 16)}</div>
+                        <div class="match-conf">信心:${m.confidence || '-'}</div>
+                    </div>
+                    <div class="match-right">
+                        <div class="teams-row">
+                            <span>${m.home_team}</span>
+                            <span class="vs-text">VS</span>
+                            <span>${m.away_team}</span>
+                        </div>
+                        <div class="odds-grid">
+                            <!-- Row 1: Euro -->
+                            <div class="grid-cell label-cell">[0]</div>
+                            ${renderCell(m.match_id, 'win', '胜', grid.euro.win, sel)}
+                            ${renderCell(m.match_id, 'draw', '平', grid.euro.draw, sel)}
+                            ${renderCell(m.match_id, 'lose', '负', grid.euro.lose, sel)}
+                            
+                            <!-- Row 2: Handicap -->
+                            <div class="grid-cell label-cell handicap-val ${hClass}">[${hText}]</div>
+                            ${renderCell(m.match_id, 'h_win', '胜', grid.handicap.win, sel)}
+                            ${renderCell(m.match_id, 'h_draw', '平', grid.handicap.draw, sel)}
+                            ${renderCell(m.match_id, 'h_lose', '负', grid.handicap.lose, sel)}
+                        </div>
+                    </div>
+                </div>
+                `;
+            }).join('');
+        }
+        
+        function renderCell(mid, key, name, odds, set) {
+            const isSel = set.has(key);
+            const oddsDisp = odds > 0 ? odds.toFixed(2) : '-';
+            return `
+                <div class="grid-cell ${isSel ? 'selected' : ''}" onclick="toggleSelection('${mid}', '${key}')">
+                    <div class="odds-name">${name}</div>
+                    <div class="odds-val">${oddsDisp}</div>
+                </div>
+            `;
+        }
+        
+        function toggleSelection(mid, key) {
+            if (!selections[mid]) selections[mid] = new Set();
+            if (selections[mid].has(key)) {
+                selections[mid].delete(key);
+                if (selections[mid].size === 0) delete selections[mid];
+            } else {
+                selections[mid].add(key);
+            }
+            renderMatches();
+            updateFooter();
+        }
+        
+        async function removeMatch(mid) {
+            if (!confirm('确定删除此场比赛?')) return;
+            try {
+                await fetch(`/api/predict/manual/${mid}`, {
+                    method: 'DELETE',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({device_id: deviceId})
+                });
+                matches = matches.filter(m => m.match_id !== mid);
+                delete selections[mid];
+                renderMatches();
+                updateFooter();
+            } catch (e) { alert('删除失败'); }
+        }
+        
+        function clearAll() {
+            if (!confirm('清空所有选项?')) return;
+            selections = {};
+            renderMatches();
+            updateFooter();
+        }
+        
+        // --- Calculation Core ---
+        
+        function getOdds(mid, key) {
+            const m = matches.find(x => x.match_id === mid);
+            if (!m || !m.grid_data) return 1.0;
+            const grid = m.grid_data;
+            if (key === 'win') return grid.euro.win;
+            if (key === 'draw') return grid.euro.draw;
+            if (key === 'lose') return grid.euro.lose;
+            if (key === 'h_win') return grid.handicap.win;
+            if (key === 'h_draw') return grid.handicap.draw;
+            if (key === 'h_lose') return grid.handicap.lose;
+            return 1.0;
+        }
+
+        function getOptionName(key) {
+            const map = {
+                'win': '主胜', 'draw': '平', 'lose': '主负',
+                'h_win': '让胜', 'h_draw': '让平', 'h_lose': '让负'
+            };
+            return map[key] || key;
+        }
+        
+        function updateFooter() {
+            const selectedMatchIds = Object.keys(selections);
+            const count = selectedMatchIds.length;
+            
+            document.getElementById('selectionCount').textContent = `已选 ${count} 场`;
+            
+            // Update Gates
+            const gateContainer = document.getElementById('gateSelector');
+            let html = '';
+            if (count >= 2) {
+                for (let i = 2; i <= count; i++) {
+                    const active = selectedGates.has(i) ? 'active' : '';
+                    html += `<div class="gate-btn ${active}" onclick="toggleGate(${i})">${i}关</div>`;
+                }
+            } else {
+                html = '<div style="padding:6px;font-size:12px;color:#cbd5e0;">至少选择2场比赛</div>';
+                selectedGates.clear();
+            }
+            gateContainer.innerHTML = html;
+            
+            calculate();
+        }
+        
+        function toggleGate(n) {
+            if (selectedGates.has(n)) selectedGates.delete(n);
+            else selectedGates.add(n);
+            updateFooter();
+        }
+        
+        // Generate actual tickets (combinations)
+        function generateTickets() {
+            const activeMatches = matches.filter(m => selections[m.match_id]);
+            const tickets = [];
+            
+            selectedGates.forEach(gate => {
+                // 1. Choose 'gate' matches from activeMatches
+                const matchIndices = Array.from({length: activeMatches.length}, (_, i) => i);
+                const matchCombos = getCombinations(matchIndices, gate);
+                
+                matchCombos.forEach(mIndices => {
+                    // For this set of matches, generate Cartesian product of their selections
+                    // Data structure: [ [ {mid, opt, odds}, ... ], [ ... ] ]
+                    const matchOptions = mIndices.map(idx => {
+                        const m = activeMatches[idx];
+                        const selSet = selections[m.match_id];
+                        return Array.from(selSet).map(opt => ({
+                            mid: m.match_id,
+                            team: m.home_team,
+                            opt: opt,
+                            odds: getOdds(m.match_id, opt),
+                            name: getOptionName(opt)
+                        }));
+                    });
+                    
+                    const product = cartesianProduct(matchOptions);
+                    
+                    product.forEach(combo => {
+                        // combo is Array of {mid, opt, odds...}
+                        let totalOdds = 1;
+                        const descParts = [];
+                        combo.forEach(c => {
+                            totalOdds *= c.odds;
+                            descParts.push(`${c.team}(${c.name})`);
+                        });
+                        tickets.push({
+                            odds: totalOdds,
+                            desc: descParts.join(' x '),
+                            combo: combo
+                        });
+                    });
+                });
+            });
+            return tickets;
+        }
+        
+        function calculate() {
+            const multiple = parseInt(document.getElementById('multipleInput').value) || 1;
+            const unitPrice = 2;
+            
+            if (selectedGates.size === 0 || Object.keys(selections).length < 2) {
+                document.getElementById('totalAmount').textContent = '0';
+                document.getElementById('maxBonus').textContent = '0.00';
+                return;
+            }
+            
+            // Generate tickets to count them accurately
+            const tickets = generateTickets();
+            const totalNotes = tickets.length;
+            
+            const activeMatches = matches.filter(m => selections[m.match_id]);
+            
+            // Max Bonus Calculation: 
+            // 1. Find the BEST odds for each match (since options in same match are mutually exclusive)
+            const matchMaxOdds = activeMatches.map(m => {
+                const sel = selections[m.match_id];
+                let maxO = 0;
+                const grid = m.grid_data;
+                sel.forEach(opt => {
+                    let o = 0;
+                    if (opt === 'win') o = grid.euro.win;
+                    else if (opt === 'draw') o = grid.euro.draw;
+                    else if (opt === 'lose') o = grid.euro.lose;
+                    else if (opt === 'h_win') o = grid.handicap.win;
+                    else if (opt === 'h_draw') o = grid.handicap.draw;
+                    else if (opt === 'h_lose') o = grid.handicap.lose;
+                    if (o > maxO) maxO = o;
+                });
+                return maxO;
+            });
+
+            // 2. Sum up the max possible payout for all selected gates
+            // If we hit the best outcome for all matches, how many tickets win and what's the total?
+            let theoreticalMaxPrize = 0;
+            
+            selectedGates.forEach(gate => {
+                // Get all combinations of matches for this gate
+                // For each combination, product of their max odds is the payout for that ticket
+                const indices = Array.from({length: activeMatches.length}, (_, i) => i);
+                const combos = getCombinations(indices, gate);
+                
+                combos.forEach(comboIdx => {
+                    let comboOdds = 1;
+                    comboIdx.forEach(idx => comboOdds *= matchMaxOdds[idx]);
+                    theoreticalMaxPrize += comboOdds;
+                });
+            });
+
+            document.getElementById('totalAmount').textContent = (totalNotes * unitPrice * multiple).toFixed(0);
+            document.getElementById('maxBonus').textContent = (theoreticalMaxPrize * unitPrice * multiple).toFixed(2);
+            
+            currentTickets = tickets;
+        }
+        
+        function getCombinations(arr, k) {
+            const result = [];
+            function backtrack(start, combo) {
+                if (combo.length === k) {
+                    result.push([...combo]);
+                    return;
+                }
+                for (let i = start; i < arr.length; i++) {
+                    combo.push(arr[i]);
+                    backtrack(i + 1, combo);
+                    combo.pop();
+                }
+            }
+            backtrack(0, []);
+            return result;
+        }
+        
+        function cartesianProduct(arrays) {
+            return arrays.reduce((acc, curr) => {
+                return acc.flatMap(x => curr.map(y => [...x, y]));
+            }, [[]]);
+        }
+        
+        document.getElementById('multipleInput').addEventListener('change', calculate);
+        
+        // --- Optimization Logic ---
+        
+        function openOptimization() {
+            if (currentTickets.length === 0) {
+                alert('请先选择比赛和过关方式');
+                return;
+            }
+            document.getElementById('optModal').classList.add('active');
+            
+            // Set default plan amount based on current selection
+            const currentTotal = parseInt(document.getElementById('totalAmount').textContent);
+            document.getElementById('planAmount').value = currentTotal > 0 ? currentTotal : 100;
+            
+            runOptimization();
+        }
+        
+        function closeOptimization() {
+            document.getElementById('optModal').classList.remove('active');
+        }
+        
+        function setOptType(type) {
+            currentOptType = type;
+            document.querySelectorAll('.opt-type-btn').forEach(b => b.classList.remove('active'));
+            document.getElementById('btn-opt-' + type).classList.add('active');
+            runOptimization();
+        }
+        
+        function runOptimization() {
+            const planAmount = parseInt(document.getElementById('planAmount').value) || 0;
+            if (planAmount <= 0 || currentTickets.length === 0) return;
+            
+            // Sort tickets by odds
+            // Average: Weight = 1/Odds
+            // Hot: Min Odds ticket gets profit, others保本
+            // Cold: Max Odds ticket gets profit, others保本
+            
+            let tickets = currentTickets.map(t => ({...t, multiple: 1}));
+            
+            if (currentOptType === 'avg') {
+                // Average Optimization
+                // Target Return P is constant. S = Sum(P/Odds). P = S / Sum(1/Odds)
+                const sumInverseOdds = tickets.reduce((sum, t) => sum + (1/t.odds), 0);
+                const P = (planAmount / 2) / sumInverseOdds; // P is in units
+                
+                tickets.forEach(t => {
+                    t.multiple = Math.round(P / t.odds) || 1;
+                });
+                
+            } else if (currentOptType === 'hot') {
+                // Hot Optimization (Minimize risk, bet on likely outcomes)
+                // Find min odds ticket
+                tickets.sort((a, b) => a.odds - b.odds); // Ascending
+                const minIdx = 0;
+                
+                // Others: Break even. Return = Cost. 2*m*O >= PlanAmount? No, just recover cost?
+                // Usually "Break even" means if this ticket hits, we win back the PlanAmount.
+                // m = PlanAmount / (2 * O)
+                
+                let usedMoney = 0;
+                for (let i = 0; i < tickets.length; i++) {
+                    if (i === minIdx) continue;
+                    let m = Math.ceil(planAmount / (2 * tickets[i].odds));
+                    if (m < 1) m = 1;
+                    tickets[i].multiple = m;
+                    usedMoney += m * 2;
+                }
+                
+                // Remaining money to the hot ticket
+                let remain = planAmount - usedMoney;
+                if (remain < 2) remain = 2; // Ensure at least 1 bet
+                tickets[minIdx].multiple = Math.floor(remain / 2);
+                if (tickets[minIdx].multiple < 1) tickets[minIdx].multiple = 1;
+                
+            } else if (currentOptType === 'cold') {
+                // Cold Optimization (Maximize huge wins)
+                // Find max odds ticket
+                tickets.sort((a, b) => b.odds - a.odds); // Descending (index 0 is max)
+                const maxIdx = 0;
+                
+                let usedMoney = 0;
+                for (let i = 0; i < tickets.length; i++) {
+                    if (i === maxIdx) continue;
+                    let m = Math.ceil(planAmount / (2 * tickets[i].odds));
+                    if (m < 1) m = 1;
+                    tickets[i].multiple = m;
+                    usedMoney += m * 2;
+                }
+                
+                let remain = planAmount - usedMoney;
+                if (remain < 2) remain = 2;
+                tickets[maxIdx].multiple = Math.floor(remain / 2);
+                if (tickets[maxIdx].multiple < 1) tickets[maxIdx].multiple = 1;
+            }
+            
+            renderOptTable(tickets);
+        }
+        
+        function renderOptTable(tickets) {
+            const tbody = document.getElementById('optTableBody');
+            let totalMoney = 0;
+            
+            tbody.innerHTML = tickets.map((t, idx) => {
+                totalMoney += t.multiple * 2;
+                const prize = (t.odds * t.multiple * 2).toFixed(2);
+                return `
+                    <tr>
+                        <td>
+                            <div style="font-weight:bold;margin-bottom:2px;">组合 ${idx+1}</div>
+                            <div class="opt-combo">${t.desc}</div>
+                        </td>
+                        <td>${t.odds.toFixed(2)}</td>
+                        <td>
+                            <input type="number" class="ticket-input" value="${t.multiple}" 
+                                onchange="updateTicketMultiple(${idx}, this.value)">
+                        </td>
+                        <td style="color:#e53e3e;font-weight:bold;">${prize}</td>
+                    </tr>
+                `;
+            }).join('');
+            
+            document.getElementById('realTotal').textContent = totalMoney;
+            
+            // Store modified tickets in a temp variable if we want to save them
+            // But for now just display
+        }
+        
+        function updateTicketMultiple(idx, val) {
+            // Recalculate just the total and that row's prize
+            // But we need the tickets array.
+            // For simplicity, just let user edit and see visual update?
+            // Or better: update the underlying object and re-sum.
+            // Since tickets are derived inside runOptimization, we can't easily access them here
+            // unless we make 'currentOptTickets' global.
+            // Let's just update the prize in DOM for now.
+            const row = document.querySelectorAll('#optTableBody tr')[idx];
+            const odds = parseFloat(row.cells[1].textContent);
+            const prizeCell = row.cells[3];
+            const m = parseInt(val) || 0;
+            prizeCell.textContent = (odds * m * 2).toFixed(2);
+            
+            // Update total
+            let total = 0;
+            document.querySelectorAll('.ticket-input').forEach(inp => {
+                total += (parseInt(inp.value) || 0) * 2;
+            });
+            document.getElementById('realTotal').textContent = total;
+        }
+
+        // --- View Plan Logic ---
+        function showPlan() {
+            if (selectedGates.size === 0) {
+                alert('请先选择过关方式');
+                return;
+            }
+            const activeMatches = matches.filter(m => selections[m.match_id]);
+            if (activeMatches.length < 2) {
+                alert('至少选择2场比赛');
+                return;
+            }
+
+            // Update Title
+            const gates = Array.from(selectedGates).sort((a,b)=>a-b).map(g => `${g}关`).join(', ');
+            document.getElementById('planTitle').textContent = `过关方式: ${gates}`;
+
+            // Build List
+            const list = document.getElementById('planList');
+            list.innerHTML = activeMatches.map(m => {
+                const sel = selections[m.match_id];
+                const grid = m.grid_data;
+                const opts = Array.from(sel).map(key => {
+                    let name = getOptionName(key);
+                    // Simplify name: h_win -> 让胜, win -> 胜
+                    // getOptionName already does this
+                    let odds = 0;
+                    if (key === 'win') odds = grid.euro.win;
+                    else if (key === 'draw') odds = grid.euro.draw;
+                    else if (key === 'lose') odds = grid.euro.lose;
+                    else if (key === 'h_win') odds = grid.handicap.win;
+                    else if (key === 'h_draw') odds = grid.handicap.draw;
+                    else if (key === 'h_lose') odds = grid.handicap.lose;
+                    return `${name}(${odds.toFixed(2)})`;
+                }).join('、');
+
+                return `
+                <div class="plan-item">
+                    <div class="plan-item-title">${m.match_number || ''} ${m.home_team} VS ${m.away_team}</div>
+                    <div class="plan-item-detail">${opts}</div>
+                </div>
+                `;
+            }).join('');
+
+            document.getElementById('planModal').classList.add('active');
+        }
+
+        function closePlan() {
+            document.getElementById('planModal').classList.remove('active');
+        }
+
+        init();
+    </script>
+</body>
+</html>

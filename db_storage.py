@@ -43,6 +43,7 @@ class MongoDBStorage:
         self.matches_collection = self.db['matches']
         self.odds_collection = self.db['odds']
         self.predictions_collection = self.db['predictions']
+        self.user_picks_collection = self.db['user_picks']
         
         # 创建索引
         self._create_indexes()
@@ -65,6 +66,10 @@ class MongoDBStorage:
             self.predictions_collection.create_index([('match_id', ASCENDING)], unique=True)
             self.predictions_collection.create_index([('predict_date', DESCENDING)])
             self.predictions_collection.create_index([('is_reviewed', ASCENDING)])
+            
+            # 用户选择表索引
+            self.user_picks_collection.create_index([('device_id', ASCENDING), ('match_id', ASCENDING)], unique=True)
+            self.user_picks_collection.create_index([('created_at', DESCENDING)])
             
             self.logger.info("数据库索引创建成功")
         except Exception as e:
@@ -601,6 +606,92 @@ class MongoDBStorage:
             self.logger.error(f"更新复盘数据失败: {str(e)}")
             return False
     
+    def save_user_pick(self, pick_data):
+        """
+        保存用户选择
+        
+        Args:
+            pick_data: 用户选择数据字典
+            
+        Returns:
+            result: 插入结果
+        """
+        try:
+            # 添加时间戳
+            if 'created_at' not in pick_data:
+                pick_data['created_at'] = datetime.now()
+            pick_data['updated_at'] = datetime.now()
+            
+            # 使用upsert，根据device_id和match_id唯一确定
+            result = self.user_picks_collection.update_one(
+                {
+                    'device_id': pick_data.get('device_id'),
+                    'match_id': pick_data.get('match_id')
+                },
+                {'$set': pick_data},
+                upsert=True
+            )
+            
+            if result.upserted_id:
+                self.logger.info(f"新增用户选择: {pick_data.get('match_id')} - {pick_data.get('device_id')}")
+            else:
+                self.logger.info(f"更新用户选择: {pick_data.get('match_id')} - {pick_data.get('device_id')}")
+                
+            return result
+            
+        except Exception as e:
+            self.logger.error(f"保存用户选择失败: {str(e)}")
+            return None
+            
+    def get_user_picks(self, device_id, limit=None):
+        """
+        获取用户选择列表
+        
+        Args:
+            device_id: 设备ID
+            limit: 返回数量限制
+            
+        Returns:
+            picks: 用户选择列表
+        """
+        try:
+            query = {'device_id': device_id}
+            cursor = self.user_picks_collection.find(query, {'_id': 0})
+            cursor = cursor.sort('created_at', DESCENDING)
+            
+            if limit:
+                cursor = cursor.limit(limit)
+            
+            return list(cursor)
+            
+        except Exception as e:
+            self.logger.error(f"获取用户选择列表失败: {str(e)}")
+            return []
+
+    def delete_user_pick(self, device_id, match_id):
+        """
+        删除用户选择
+        
+        Args:
+            device_id: 设备ID
+            match_id: 比赛ID
+            
+        Returns:
+            success: 是否成功
+        """
+        try:
+            result = self.user_picks_collection.delete_one({
+                'device_id': device_id,
+                'match_id': match_id
+            })
+            if result.deleted_count > 0:
+                self.logger.info(f"删除用户选择: {match_id} - {device_id}")
+                return True
+            return False
+        except Exception as e:
+            self.logger.error(f"删除用户选择失败: {str(e)}")
+            return False
+
     def close(self):
         """关闭数据库连接"""
         try:

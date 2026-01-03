@@ -417,6 +417,12 @@ def stats():
     return render_template('stats.html')
 
 
+@app.route('/my_picks')
+def my_picks_page():
+    """我的选择页面"""
+    return render_template('my_picks.html')
+
+
 @app.route('/api/predictions')
 def get_predictions():
     """API - 获取预测列表"""
@@ -639,10 +645,18 @@ def manual_predict(match_id):
     try:
         if not mongo_storage:
             return jsonify({'success': False, 'message': 'MongoDB不可用'}), 500
+        
         match = mongo_storage.get_match_by_id(match_id)
         if not match:
             return jsonify({'success': False, 'message': '比赛不存在'}), 404
+        
         data = request.get_json(silent=True) or {}
+        
+        # 获取设备ID（必需）
+        device_id = data.get('device_id')
+        if not device_id:
+            return jsonify({'success': False, 'message': '未提供设备标识'}), 400
+            
         opts = data.get('options')
         if isinstance(opts, str):
             opts = [opts]
@@ -654,6 +668,7 @@ def manual_predict(match_id):
         options = [o for o in (opts or []) if o in allowed]
         if not options:
             return jsonify({'success': False, 'message': '未选择有效选项'}), 400
+        
         # 获取信心指数，默认90
         confidence = data.get('confidence')
         try:
@@ -661,30 +676,60 @@ def manual_predict(match_id):
             confidence = max(0.0, min(100.0, confidence))
         except Exception:
             confidence = 90.0
-        pred = {
+            
+        pick = {
             'match_id': match_id,
+            'device_id': device_id,
             'source': 'manual',
             'manual': True,
             'manual_options': options,
         }
-        # 1X2映射：仅当选择了且不冲突（唯一）时写入标准字段
+        
+        # 1X2映射
         ones = [o for o in options if o in {'win','draw','lose'}]
         if len(set(ones)) == 1:
             o = ones[0]
-            pred['manual_win_prediction'] = {'win':'home','draw':'draw','lose':'away'}[o]
-            pred['manual_win_confidence'] = confidence
-        # 让球映射：仅当选择了让胜/让负且唯一时写入标准字段；让平保留在manual_options
+            pick['manual_win_prediction'] = {'win':'home','draw':'draw','lose':'away'}[o]
+            pick['manual_win_confidence'] = confidence
+            
+        # 让球映射
         aopts = [o for o in options if o in {'h_win','h_lose'}]
         if len(set(aopts)) == 1:
             o = aopts[0]
-            pred['manual_asian_prediction'] = 'home' if o=='h_win' else 'away'
-            pred['manual_asian_confidence'] = confidence
-            pred['manual_asian_handicap'] = match.get('asian_current_handicap') or match.get('asian_initial_handicap') or ''
-        # 保存
-        mongo_storage.save_prediction(pred)
-        return jsonify({'success': True, 'data': pred})
+            pick['manual_asian_prediction'] = 'home' if o=='h_win' else 'away'
+            pick['manual_asian_confidence'] = confidence
+            pick['manual_asian_handicap'] = match.get('asian_current_handicap') or match.get('asian_initial_handicap') or ''
+            
+        # 保存到用户选择表
+        mongo_storage.save_user_pick(pick)
+        
+        return jsonify({'success': True, 'data': pick})
     except Exception as e:
         return jsonify({'success': False, 'message': f'手动预测失败: {str(e)}'}), 500
+@app.route('/api/predict/manual/<match_id>', methods=['DELETE'])
+def delete_manual_predict(match_id):
+    """API - 删除手动预测"""
+    try:
+        if not mongo_storage:
+            return jsonify({'success': False, 'message': 'MongoDB不可用'}), 500
+            
+        data = request.get_json(silent=True) or {}
+        device_id = data.get('device_id') or request.args.get('device_id')
+        
+        if not device_id:
+            return jsonify({'success': False, 'message': '未提供设备标识'}), 400
+            
+        success = mongo_storage.delete_user_pick(device_id, match_id)
+        
+        if success:
+            return jsonify({'success': True})
+        else:
+            return jsonify({'success': False, 'message': '删除失败或记录不存在'}), 404
+            
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'删除失败: {str(e)}'}), 500
+
+
 @app.route('/api/recommend')
 def get_recommend():
     """API - 获取N串1推荐方案"""
@@ -1625,23 +1670,23 @@ def get_my_picks():
         if not mongo_storage:
             return jsonify({'success': False, 'message': 'MongoDB不可用'}), 500
         
+        # 获取设备ID
+        device_id = request.args.get('device_id')
+        if not device_id:
+            return jsonify({'success': False, 'message': '未提供设备标识'}), 400
+        
         # 获取未开始的比赛
         upcoming_matches = mongo_storage.get_matches(filters={'status': 0})
         upcoming_ids = set(m.get('match_id') for m in upcoming_matches)
         
-        # 获取所有手动预测
-        all_predictions = mongo_storage.get_predictions(limit=500)
+        # 获取该用户的所有手动预测
+        user_picks = mongo_storage.get_user_picks(device_id, limit=500)
         
-        # 筛选：未开始 + 有手动预测
+        # 筛选：未开始
         manual_picks = []
-        for pred in all_predictions:
-            match_id = pred.get('match_id')
+        for pick in user_picks:
+            match_id = pick.get('match_id')
             if match_id not in upcoming_ids:
-                continue
-            
-            # 检查是否是手动预测
-            is_manual = pred.get('manual') or pred.get('source') == 'manual' or pred.get('manual_options')
-            if not is_manual:
                 continue
             
             # 获取比赛信息
@@ -1650,9 +1695,9 @@ def get_my_picks():
                 continue
             
             # 解析手动选项
-            options = pred.get('manual_options', [])
-            if not options and pred.get('manual_option'):
-                options = [pred.get('manual_option')]
+            options = pick.get('manual_options', [])
+            if not options and pick.get('manual_option'):
+                options = [pick.get('manual_option')]
             
             label_map = {
                 'win': '主胜', 'draw': '平', 'lose': '客胜',
@@ -1688,10 +1733,26 @@ def get_my_picks():
             # 取最低赔率作为主推
             main_odds = min(pick_odds) if pick_odds else None
             
-            confidence = pred.get('manual_win_confidence') or pred.get('manual_asian_confidence') or 90
+            confidence = pick.get('manual_win_confidence') or pick.get('manual_asian_confidence') or 90
+            
+            # 构建完整赔率数据供前端计算器使用
+            grid_data = {
+                'euro': {
+                    'win': float(euro_win) if euro_win else 0,
+                    'draw': float(euro_draw) if euro_draw else 0,
+                    'lose': float(euro_lose) if euro_lose else 0
+                },
+                'handicap': {
+                    'val': hi_handicap or '0',
+                    'win': float(hi_home) if hi_home else 0,
+                    'draw': float(hi_draw) if hi_draw else 0,
+                    'lose': float(hi_away) if hi_away else 0
+                }
+            }
             
             manual_picks.append({
                 'match_id': match_id,
+                'match_number': match.get('match_number', ''),
                 'league': match.get('league', ''),
                 'match_time': match.get('match_time', ''),
                 'home_team': match.get('home_team', ''),
@@ -1703,7 +1764,8 @@ def get_my_picks():
                 'hi_handicap': hi_handicap,
                 'hi_odds': f"{hi_home or '-'}/{hi_draw or '-'}/{hi_away or '-'}",
                 'pick_odds': pick_odds,
-                'main_odds': main_odds
+                'main_odds': main_odds,
+                'grid_data': grid_data
             })
         
         # 按时间排序
