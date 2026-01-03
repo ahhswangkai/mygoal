@@ -365,15 +365,15 @@ class FootballCrawler:
             tds = preferred_row.find_all('td')
             if len(tds) >= 9:
                 try:
-                    # 列3-5：即时盘（主胜、平局、客胜）
-                    current_win = tds[3].get_text(strip=True)
-                    current_draw = tds[4].get_text(strip=True)
-                    current_lose = tds[5].get_text(strip=True)
+                    # 列3-5：初盘（主胜、平局、客胜）
+                    initial_win = tds[3].get_text(strip=True)
+                    initial_draw = tds[4].get_text(strip=True)
+                    initial_lose = tds[5].get_text(strip=True)
                     
-                    # 列6-8：初盘（主胜、平局、客胜）
-                    initial_win = tds[6].get_text(strip=True)
-                    initial_draw = tds[7].get_text(strip=True)
-                    initial_lose = tds[8].get_text(strip=True)
+                    # 列6-8：即时盘（主胜、平局、客胜）
+                    current_win = tds[6].get_text(strip=True)
+                    current_draw = tds[7].get_text(strip=True)
+                    current_lose = tds[8].get_text(strip=True)
                     
                     if current_win and current_draw and current_lose:
                         odds_data['euro_odds'].append({
@@ -668,6 +668,52 @@ class FootballCrawler:
             self.logger.error(f"爬取比赛信息失败: {str(e)}")
             return []
     
+    def _fetch_data(self, url, parser_func, retries=3):
+        """
+        获取并解析数据，带重试机制
+        
+        Args:
+            url: 目标URL
+            parser_func: 解析函数
+            retries: 重试次数
+            
+        Returns:
+            parsed_data: 解析后的数据，失败返回None
+        """
+        for i in range(retries):
+            try:
+                response = self._make_request(url)
+                html = self._decode_html(response)
+                data = parser_func(html)
+                
+                # 验证数据是否为空
+                is_valid = False
+                if isinstance(data, dict):
+                    if 'euro_odds' in data:
+                        is_valid = bool(data['euro_odds'])
+                    elif 'handicap_value' in data:
+                        is_valid = bool(data['handicap_value'])
+                    else:
+                        is_valid = bool(data)
+                elif isinstance(data, list):
+                    is_valid = bool(data)
+                
+                if is_valid:
+                    return data
+                
+                if i < retries - 1:
+                    self.logger.warning(f"解析数据为空, 准备重试 ({i+1}/{retries}): {url}")
+                    time.sleep(random.uniform(1, 2))
+                    
+            except Exception as e:
+                if i < retries - 1:
+                    self.logger.warning(f"获取数据异常: {str(e)}，准备重试 ({i+1}/{retries}): {url}")
+                    time.sleep(random.uniform(1, 2))
+                else:
+                    self.logger.error(f"获取数据最终失败: {url}")
+        
+        return None
+
     def crawl_match_odds(self, match_id):
         """
         爬取指定比赛的赔率信息（包含即时盘和初盘）
@@ -688,47 +734,27 @@ class FootballCrawler:
         try:
             # 1. 爬取欧赔（使用欧赔专门页面）
             euro_url = f"https://odds.500.com/fenxi/ouzhi-{match_id}.shtml"
-            try:
-                euro_response = self._make_request(euro_url)
-                euro_html = self._decode_html(euro_response)
-                euro_data = self.parse_odds(euro_html)
-                if euro_data.get('euro_odds'):
-                    odds_data['euro_odds'] = euro_data['euro_odds']
-            except Exception as e:
-                self.logger.warning(f"爬取欧赔数据失败: {str(e)}")
+            euro_data = self._fetch_data(euro_url, self.parse_odds)
+            if euro_data and euro_data.get('euro_odds'):
+                odds_data['euro_odds'] = euro_data['euro_odds']
             
             # 2. 爬取亚盘（使用亚盘专门页面）
             asian_url = f"https://odds.500.com/fenxi/yazhi-{match_id}.shtml"
-            try:
-                asian_response = self._make_request(asian_url)
-                asian_html = self._decode_html(asian_response)
-                asian_data = self.parse_asian_handicap(asian_html)
-                if asian_data:
-                    odds_data['asian_handicap'] = asian_data
-            except Exception as e:
-                self.logger.warning(f"爬取亚盘数据失败: {str(e)}")
+            asian_data = self._fetch_data(asian_url, self.parse_asian_handicap)
+            if asian_data:
+                odds_data['asian_handicap'] = asian_data
             
             # 3. 爬取大小球（使用大小球专门页面）
             over_under_url = f"https://odds.500.com/fenxi/daxiao-{match_id}.shtml"
-            try:
-                ou_response = self._make_request(over_under_url)
-                ou_html = self._decode_html(ou_response)
-                over_under_data = self.parse_over_under(ou_html)
-                if over_under_data:
-                    odds_data['over_under'] = over_under_data
-            except Exception as e:
-                self.logger.warning(f"爬取大小球数据失败: {str(e)}")
+            over_under_data = self._fetch_data(over_under_url, self.parse_over_under)
+            if over_under_data:
+                odds_data['over_under'] = over_under_data
             
             # 4. 爬取让球指数（使用让球指数专门页面）
             handicap_index_url = f"https://odds.500.com/fenxi/rangqiu-{match_id}.shtml"
-            try:
-                hi_response = self._make_request(handicap_index_url)
-                hi_html = self._decode_html(hi_response)
-                handicap_index_data = self.parse_handicap_index(hi_html)
-                if handicap_index_data:
-                    odds_data['handicap_index'] = handicap_index_data
-            except Exception as e:
-                self.logger.warning(f"爬取让球指数数据失败: {str(e)}")
+            handicap_index_data = self._fetch_data(handicap_index_url, self.parse_handicap_index)
+            if handicap_index_data:
+                odds_data['handicap_index'] = handicap_index_data
             
             return odds_data
             

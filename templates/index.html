@@ -775,15 +775,15 @@
                         }
                     } catch (e) {}
                 }
-                // 注意：数据库字段 initial/current 与实际含义相反，此处做修正
-                const euroHasCurrent = (match.euro_initial_win || match.euro_initial_draw || match.euro_initial_lose);
-                const euroHasInitial = (match.euro_current_win || match.euro_current_draw || match.euro_current_lose);
-                const euroInitWin = euroResult === 'win' ? `<span class="odds-hit">${match.euro_current_win || ''}</span>` : (match.euro_current_win || '');
-                const euroInitDraw = euroResult === 'draw' ? `<span class="odds-hit">${match.euro_current_draw || ''}</span>` : (match.euro_current_draw || '');
-                const euroInitLose = euroResult === 'lose' ? `<span class="odds-hit">${match.euro_current_lose || ''}</span>` : (match.euro_current_lose || '');
-                const euroCurrWin = euroResult === 'win' ? `<span class="odds-hit">${match.euro_initial_win || ''}</span>` : (match.euro_initial_win || '');
-                const euroCurrDraw = euroResult === 'draw' ? `<span class="odds-hit">${match.euro_initial_draw || ''}</span>` : (match.euro_initial_draw || '');
-                const euroCurrLose = euroResult === 'lose' ? `<span class="odds-hit">${match.euro_initial_lose || ''}</span>` : (match.euro_initial_lose || '');
+                // 注意：数据库字段已修正
+                const euroHasInitial = (match.euro_initial_win || match.euro_initial_draw || match.euro_initial_lose);
+                const euroHasCurrent = (match.euro_current_win || match.euro_current_draw || match.euro_current_lose);
+                const euroInitWin = euroResult === 'win' ? `<span class="odds-hit">${match.euro_initial_win || ''}</span>` : (match.euro_initial_win || '');
+                const euroInitDraw = euroResult === 'draw' ? `<span class="odds-hit">${match.euro_initial_draw || ''}</span>` : (match.euro_initial_draw || '');
+                const euroInitLose = euroResult === 'lose' ? `<span class="odds-hit">${match.euro_initial_lose || ''}</span>` : (match.euro_initial_lose || '');
+                const euroCurrWin = euroResult === 'win' ? `<span class="odds-hit">${match.euro_current_win || ''}</span>` : (match.euro_current_win || '');
+                const euroCurrDraw = euroResult === 'draw' ? `<span class="odds-hit">${match.euro_current_draw || ''}</span>` : (match.euro_current_draw || '');
+                const euroCurrLose = euroResult === 'lose' ? `<span class="odds-hit">${match.euro_current_lose || ''}</span>` : (match.euro_current_lose || '');
                 const euroInit = `${euroInitWin}/${euroInitDraw}/${euroInitLose}`;
                 const euroCurr = `${euroCurrWin}/${euroCurrDraw}/${euroCurrLose}`;
                 
@@ -795,13 +795,13 @@
                 // 通用函数：格式化变动
                 const fmtChange = (diff) => diff == null ? '—' : ((diff > 0 ? '↑' : (diff < 0 ? '↓' : '—')) + (diff !== 0 ? Math.abs(diff).toFixed(2) : ''));
                 
-                // 计算欧赔变动（主/平/客）- 注意字段反转
-                const euroWinInitF = toFloat(match.euro_current_win);  // 实际初盘
-                const euroWinCurrF = toFloat(match.euro_initial_win);  // 实际即时
-                const euroDrawInitF = toFloat(match.euro_current_draw);
-                const euroDrawCurrF = toFloat(match.euro_initial_draw);
-                const euroLoseInitF = toFloat(match.euro_current_lose);
-                const euroLoseCurrF = toFloat(match.euro_initial_lose);
+                // 计算欧赔变动（主/平/客）
+                const euroWinInitF = toFloat(match.euro_initial_win);  // 实际初盘
+                const euroWinCurrF = toFloat(match.euro_current_win);  // 实际即时
+                const euroDrawInitF = toFloat(match.euro_initial_draw);
+                const euroDrawCurrF = toFloat(match.euro_current_draw);
+                const euroLoseInitF = toFloat(match.euro_initial_lose);
+                const euroLoseCurrF = toFloat(match.euro_current_lose);
                 const euroWinDiff = (euroWinCurrF != null && euroWinInitF != null) ? (euroWinCurrF - euroWinInitF) : null;
                 const euroDrawDiff = (euroDrawCurrF != null && euroDrawInitF != null) ? (euroDrawCurrF - euroDrawInitF) : null;
                 const euroLoseDiff = (euroLoseCurrF != null && euroLoseInitF != null) ? (euroLoseCurrF - euroLoseInitF) : null;
@@ -1528,10 +1528,10 @@
                 // 从allMatches中查找比赛数据获取赔率
                 const match = (allMatches || []).find(m => m.match_id === matchId) || {};
                 
-// 欧赔（字段反转：initial实际是即时，current实际是初盘）
-                                const euroWin = match.euro_initial_win || match.euro_current_win || '—';
-                                const euroDraw = match.euro_initial_draw || match.euro_current_draw || '—';
-                                const euroLose = match.euro_initial_lose || match.euro_current_lose || '—';
+// 欧赔（字段已修正：initial是初盘，current是即时）
+                                const euroWin = match.euro_current_win || match.euro_initial_win || '—';
+                                const euroDraw = match.euro_current_draw || match.euro_initial_draw || '—';
+                                const euroLose = match.euro_current_lose || match.euro_initial_lose || '—';
                 
                 // 亚盘
                 const asianHome = match.asian_current_home_odds || match.asian_initial_home_odds || '—';

@@ -567,8 +567,8 @@ def send_wechat_message(text):
 def format_all_odds(m):
     def val(x):
         return str(x) if x is not None else ''
-    euro_init = f"{val(m.get('euro_current_win'))}/{val(m.get('euro_current_draw'))}/{val(m.get('euro_current_lose'))}"
-    euro_curr = f"{val(m.get('euro_initial_win'))}/{val(m.get('euro_initial_draw'))}/{val(m.get('euro_initial_lose'))}"
+    euro_init = f"{val(m.get('euro_initial_win'))}/{val(m.get('euro_initial_draw'))}/{val(m.get('euro_initial_lose'))}"
+    euro_curr = f"{val(m.get('euro_current_win'))}/{val(m.get('euro_current_draw'))}/{val(m.get('euro_current_lose'))}"
     asian_init = f"{val(m.get('asian_initial_home_odds'))}/{val(m.get('asian_initial_handicap'))}/{val(m.get('asian_initial_away_odds'))}"
     asian_curr = f"{val(m.get('asian_current_home_odds'))}/{val(m.get('asian_current_handicap'))}/{val(m.get('asian_current_away_odds'))}"
     ou_init = f"{val(m.get('ou_initial_under_odds'))}/{val(m.get('ou_initial_total'))}/{val(m.get('ou_initial_over_odds'))}"
