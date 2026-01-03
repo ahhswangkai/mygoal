@@ -85,6 +85,11 @@ class MongoDBStorage:
         Returns:
             result: 插入结果
         """
+        # 校验数据有效性
+        if not match_data.get('home_team') or not match_data.get('away_team'):
+            self.logger.warning(f"比赛数据不完整(无主客队名)，跳过保存: {match_data.get('match_id')}")
+            return None
+
         try:
             # 添加时间戳
             match_data['created_at'] = datetime.now()
@@ -141,6 +146,17 @@ class MongoDBStorage:
         Returns:
             result: 插入结果
         """
+        # 校验数据有效性：至少包含一项数据
+        has_data = False
+        if odds_data.get('euro_odds'): has_data = True
+        elif odds_data.get('asian_handicap'): has_data = True
+        elif odds_data.get('over_under'): has_data = True
+        elif odds_data.get('handicap_index'): has_data = True
+        
+        if not has_data:
+            self.logger.warning(f"赔率数据为空，跳过保存: {match_id}")
+            return None
+
         try:
             # 构建赔率文档
             odds_doc = {
