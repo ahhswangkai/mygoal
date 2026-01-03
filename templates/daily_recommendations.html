@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>每日推荐</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background: #f5f5f5;
+            min-height: 100vh;
+            color: #2d3748;
+        }
+        
+        /* Header */
+        .app-header {
+            background: #e53e3e;
+            color: white;
+            padding: 12px 15px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+            font-size: 18px;
+            font-weight: 600;
+        }
+        .back-btn {
+            position: absolute;
+            left: 15px;
+            color: white;
+            text-decoration: none;
+            font-size: 24px;
+            line-height: 1;
+        }
+
+        /* Controls */
+        .controls {
+            background: white;
+            padding: 15px;
+            display: flex;
+            justify-content: center;
+            border-bottom: 1px solid #eee;
+        }
+        .date-input {
+            padding: 8px 12px;
+            border: 1px solid #e2e8f0;
+            border-radius: 6px;
+            font-size: 14px;
+            outline: none;
+        }
+
+        /* Content Area */
+        .container {
+            padding: 15px;
+            max-width: 800px;
+            margin: 0 auto;
+        }
+
+        /* Summary Card */
+        .summary-card {
+            background: white;
+            border-radius: 12px;
+            padding: 15px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+            display: flex;
+            justify-content: space-around;
+            text-align: center;
+        }
+        .stat-item .label {
+            font-size: 12px;
+            color: #718096;
+            margin-bottom: 4px;
+        }
+        .stat-item .value {
+            font-size: 20px;
+            font-weight: 700;
+            color: #e53e3e;
+        }
+
+        /* Section Title */
+        .section-title {
+            font-size: 16px;
+            font-weight: 600;
+            margin-bottom: 12px;
+            display: flex;
+            align-items: center;
+        }
+        .section-title::before {
+            content: '';
+            display: block;
+            width: 4px;
+            height: 16px;
+            background: #e53e3e;
+            margin-right: 8px;
+            border-radius: 2px;
+        }
+
+        /* Recommendation Cards */
+        .rec-card {
+            background: white;
+            border-radius: 10px;
+            padding: 15px;
+            margin-bottom: 15px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+            border-left: 4px solid #e2e8f0;
+        }
+        .rec-card.high-conf { border-left-color: #38a169; }
+        .rec-card.med-conf { border-left-color: #d69e2e; }
+
+        .rec-header {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 10px;
+            font-size: 13px;
+            color: #718096;
+        }
+        .rec-league { color: #3182ce; font-weight: 600; }
+        
+        .rec-teams {
+            font-size: 16px;
+            font-weight: 600;
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+        }
+        .vs { margin: 0 8px; color: #cbd5e0; font-size: 12px; }
+
+        .rec-content {
+            background: #f7fafc;
+            padding: 10px;
+            border-radius: 6px;
+        }
+        .rec-prediction {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 6px;
+        }
+        .pred-label { font-size: 13px; color: #4a5568; }
+        .pred-value { font-weight: 700; color: #e53e3e; }
+        .pred-conf { font-size: 12px; padding: 2px 6px; border-radius: 4px; background: #e2e8f0; color: #4a5568; }
+        
+        .rec-reason {
+            font-size: 12px;
+            color: #718096;
+            margin-top: 8px;
+            line-height: 1.4;
+            padding-top: 8px;
+            border-top: 1px dashed #cbd5e0;
+        }
+
+        /* Loading & Empty States */
+        .loading, .empty-state {
+            text-align: center;
+            padding: 40px;
+            color: #a0aec0;
+        }
+    </style>
+</head>
+<body>
+    <div class="app-header">
+        <a href="/" class="back-btn">‹</a>
+        每日推荐
+    </div>
+
+    <div class="controls">
+        <input type="date" id="datePicker" class="date-input">
+    </div>
+
+    <div class="container">
+        <div id="summaryArea"></div>
+        
+        <div class="section-title">精选推荐</div>
+        <div id="highConfArea"></div>
+
+        <div class="section-title" style="margin-top: 30px;">全部预测</div>
+        <div id="allPredsArea"></div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const dateInput = document.getElementById('datePicker');
+            const today = new Date().toISOString().split('T')[0];
+            dateInput.value = today;
+            
+            fetchData(today);
+
+            dateInput.addEventListener('change', (e) => {
+                fetchData(e.target.value);
+            });
+        });
+
+        async function fetchData(dateStr) {
+            const summaryArea = document.getElementById('summaryArea');
+            const highConfArea = document.getElementById('highConfArea');
+            const allPredsArea = document.getElementById('allPredsArea');
+
+            // Set loading state
+            highConfArea.innerHTML = '<div class="loading">加载中...</div>';
+            allPredsArea.innerHTML = '';
+            summaryArea.innerHTML = '';
+
+            try {
+                const res = await fetch(`/api/daily_predictions?date=${dateStr}`);
+                const data = await res.json();
+
+                if (!data.success) {
+                    highConfArea.innerHTML = `<div class="empty-state">${data.message || '加载失败'}</div>`;
+                    return;
+                }
+
+                renderData(data);
+            } catch (e) {
+                highConfArea.innerHTML = `<div class="empty-state">网络错误: ${e.message}</div>`;
+            }
+        }
+
+        function renderData(data) {
+            const { predictions, recommendations, count } = data;
+            
+            // Calculate some stats
+            const highConfCount = predictions.filter(p => p.result_conf >= 80 || p.hi_conf >= 80 || p.goal_conf >= 80).length;
+
+            // Render Summary
+            document.getElementById('summaryArea').innerHTML = `
+                <div class="summary-card">
+                    <div class="stat-item">
+                        <div class="label">比赛场次</div>
+                        <div class="value">${count}</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="label">高确信</div>
+                        <div class="value">${highConfCount}</div>
+                    </div>
+                </div>
+            `;
+
+            // Helper for confidence color
+            const getConfClass = (conf) => {
+                if (conf >= 85) return 'high-conf';
+                if (conf >= 70) return 'med-conf';
+                return '';
+            };
+            const getConfColor = (conf) => {
+                 if (conf >= 85) return '#38a169';
+                 if (conf >= 70) return '#d69e2e';
+                 return '#718096';
+            };
+
+            // Render Recommendations (Result, Handicap, Goals)
+            let recHtml = '';
+            
+            const renderRecType = (list, title, type) => {
+                if(!list || list.length === 0) return '';
+                return list.map(p => {
+                     let pred, conf, reasons;
+                     if (type === 'result') {
+                         pred = p.result_pred;
+                         conf = p.result_conf;
+                         reasons = p.result_reasons;
+                     } else if (type === 'handicap') {
+                         pred = p.hi_pred;
+                         conf = p.hi_conf;
+                         reasons = p.hi_reasons;
+                     } else {
+                         pred = p.goal_pred;
+                         conf = p.goal_conf;
+                         reasons = p.goal_reasons;
+                     }
+
+                     return `
+                        <div class="rec-card ${getConfClass(conf)}">
+                            <div class="rec-header">
+                                <span class="rec-league">${p.league}</span>
+                                <span>${p.match_time.slice(5, 16)}</span>
+                            </div>
+                            <div class="rec-teams">
+                                ${p.home_team} <span class="vs">vs</span> ${p.away_team}
+                            </div>
+                            <div class="rec-content">
+                                <div class="rec-prediction">
+                                    <span class="pred-label">${title}</span>
+                                    <span class="pred-value">${pred}</span>
+                                    <span class="pred-conf" style="color:${getConfColor(conf)}">${conf}%</span>
+                                </div>
+                                ${ reasons && reasons.length > 0 ? `<div class="rec-reason">${reasons.join('；')}</div>` : ''}
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+            };
+
+            recHtml += renderRecType(recommendations.result, '胜负推荐', 'result');
+            recHtml += renderRecType(recommendations.handicap, '让球推荐', 'handicap');
+            recHtml += renderRecType(recommendations.goals, '进球推荐', 'goals');
+
+            document.getElementById('highConfArea').innerHTML = recHtml || '<div class="empty-state">暂无精选推荐</div>';
+
+            // Render All Predictions (Table view)
+            const allPredsHtml = predictions.map(p => `
+                <div class="rec-card">
+                    <div class="rec-header">
+                        <span class="rec-league">${p.league}</span>
+                        <span>${p.match_time.slice(5, 16)}</span>
+                    </div>
+                    <div class="rec-teams" style="font-size:14px;">
+                        ${p.home_team} <span class="vs">vs</span> ${p.away_team}
+                    </div>
+                    <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:10px; text-align:center; font-size:12px;">
+                        <div>
+                            <div style="color:#718096;margin-bottom:2px;">胜平负</div>
+                            <div style="font-weight:bold;color:${getConfColor(p.result_conf)}">${p.result_pred}</div>
+                            <div style="color:#a0aec0">${p.result_conf}%</div>
+                        </div>
+                        <div>
+                            <div style="color:#718096;margin-bottom:2px;">让球</div>
+                            <div style="font-weight:bold;color:${getConfColor(p.hi_conf)}">${p.hi_pred || '-'}</div>
+                            <div style="color:#a0aec0">${p.hi_conf ? p.hi_conf+'%' : '-'}</div>
+                        </div>
+                        <div>
+                            <div style="color:#718096;margin-bottom:2px;">进球数</div>
+                            <div style="font-weight:bold;color:${getConfColor(p.goal_conf)}">${p.goal_pred}</div>
+                            <div style="color:#a0aec0">${p.goal_conf}%</div>
+                        </div>
+                    </div>
+                </div>
+            `).join('');
+            
+            document.getElementById('allPredsArea').innerHTML = allPredsHtml;
+        }
+    </script>
+</body>
+</html>

@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>赔率筛选</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background: #f5f5f5;
+            min-height: 100vh;
+            color: #2d3748;
+        }
+        
+        /* Header */
+        .app-header {
+            background: linear-gradient(135deg, #fc4a1a 0%, #f7b733 100%);
+            color: white;
+            padding: 12px 15px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+            font-size: 18px;
+            font-weight: 600;
+        }
+        .back-btn {
+            position: absolute;
+            left: 15px;
+            color: white;
+            text-decoration: none;
+            font-size: 24px;
+            line-height: 1;
+        }
+
+        /* Mode Select */
+        .mode-select {
+            background: white;
+            padding: 15px;
+            display: flex;
+            gap: 10px;
+            border-bottom: 1px solid #eee;
+        }
+        .mode-btn {
+            flex: 1;
+            padding: 8px;
+            text-align: center;
+            border: 1px solid #e2e8f0;
+            border-radius: 6px;
+            font-size: 13px;
+            color: #718096;
+            background: #fff;
+            cursor: pointer;
+        }
+        .mode-btn.active {
+            background: #fff5f5;
+            border-color: #fc8181;
+            color: #e53e3e;
+            font-weight: 600;
+        }
+
+        /* Filter Type Scroll */
+        .filter-scroll {
+            background: white;
+            padding: 10px 15px;
+            overflow-x: auto;
+            white-space: nowrap;
+            border-bottom: 1px solid #eee;
+            display: flex;
+            gap: 10px;
+        }
+        .filter-btn {
+            display: inline-block;
+            padding: 8px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            color: #4a5568;
+            background: #f7fafc;
+            border: 1px solid #e2e8f0;
+            cursor: pointer;
+        }
+        .filter-btn.active {
+            background: #2d3748;
+            color: white;
+            border-color: #2d3748;
+        }
+
+        /* Content Area */
+        .container {
+            padding: 15px;
+            max-width: 800px;
+            margin: 0 auto;
+        }
+
+        /* Stats Row */
+        .stats-row {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 20px;
+        }
+        .stat-box {
+            flex: 1;
+            padding: 10px;
+            border-radius: 8px;
+            text-align: center;
+            color: white;
+        }
+        .stat-val { font-size: 18px; font-weight: 700; }
+        .stat-lbl { font-size: 10px; opacity: 0.9; }
+
+        /* Tip Box */
+        .tip-box {
+            background: #fff3cd;
+            color: #856404;
+            padding: 12px;
+            border-radius: 8px;
+            font-size: 12px;
+            margin-bottom: 20px;
+            line-height: 1.4;
+            border-left: 4px solid #ffeeba;
+        }
+
+        /* Match List */
+        .match-card {
+            background: white;
+            border-radius: 10px;
+            padding: 12px;
+            margin-bottom: 10px;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+            position: relative;
+        }
+        
+        .match-header {
+            display: flex;
+            justify-content: space-between;
+            font-size: 12px;
+            color: #718096;
+            margin-bottom: 8px;
+            padding-bottom: 8px;
+            border-bottom: 1px solid #f7fafc;
+        }
+        .league-name { color: #3182ce; font-weight: 600; }
+
+        .teams-area {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+        .team-col { flex: 1; font-size: 14px; font-weight: 600; color: #2d3748; }
+        .team-col.right { text-align: right; }
+        .score-col { width: 60px; text-align: center; font-weight: 700; font-size: 18px; color: #2d3748; }
+        
+        .filter-info {
+            background: #f7fafc;
+            padding: 8px;
+            border-radius: 6px;
+            font-size: 11px;
+            color: #4a5568;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .filter-res { font-weight: 700; }
+        .res-win { color: #38a169; }
+        .res-lose { color: #e53e3e; }
+        .res-draw { color: #d69e2e; }
+
+        .loading, .empty-state { text-align: center; padding: 40px; color: #a0aec0; }
+    </style>
+</head>
+<body>
+    <div class="app-header">
+        <a href="/" class="back-btn">‹</a>
+        赔率筛选
+    </div>
+
+    <div class="mode-select">
+        <div class="mode-btn active" onclick="setMode('all')">全部</div>
+        <div class="mode-btn" onclick="setMode('upcoming')">未开始</div>
+        <div class="mode-btn" onclick="setMode('finished')">已完场</div>
+    </div>
+
+    <div class="filter-scroll">
+        <div class="filter-btn active" onclick="setFilter('hi_home_up')">让胜升水</div>
+        <div class="filter-btn" onclick="setFilter('hi_home_up_euro_down')">让胜升+欧主降</div>
+        <div class="filter-btn" onclick="setFilter('asian_up_euro_down')">亚升+欧主降</div>
+        <div class="filter-btn" onclick="setFilter('hi_away_down')">让负降水</div>
+        <div class="filter-btn" onclick="setFilter('hi_home_up_low')">低赔让胜升</div>
+    </div>
+
+    <div class="container">
+        <div id="tipArea" class="tip-box"></div>
+        <div id="statsArea"></div>
+        
+        <div style="font-size:14px;font-weight:700;color:#2d3748;margin: 0 0 10px;">比赛列表</div>
+        <div id="matchesArea"></div>
+    </div>
+
+    <script>
+        let currentMode = 'all';
+        let currentFilter = 'hi_home_up';
+
+        const filterTips = {
+            'hi_home_up': '💡 让胜升水是反向信号！让负率(42.7%)高于让胜率(32.7%)，应反向博让负。',
+            'hi_home_up_euro_down': '⚠️ 诱盘信号！机构通过欧赔降吸引买主队，让球升水暗示实际倾向客队。',
+            'asian_up_euro_down': '🔄 需分联赛判断：法甲/荷甲/意甲主不败率高，葡超/挪超反向博客胜。',
+            'hi_away_down': '✅ 让负降水利好下盘，机构真实看好受让方。',
+            'hi_home_up_low': '🎯 低赔让胜升水：赔率<5说明主队实力占优，但升水是反向信号。关注主胜概率。'
+        };
+
+        document.addEventListener('DOMContentLoaded', () => {
+            fetchData();
+        });
+
+        function setMode(mode) {
+            currentMode = mode;
+            document.querySelectorAll('.mode-btn').forEach(btn => {
+                btn.classList.toggle('active', btn.innerText === (mode === 'all' ? '全部' : (mode === 'upcoming' ? '未开始' : '已完场')));
+            });
+            fetchData();
+        }
+
+        function setFilter(type) {
+            currentFilter = type;
+            document.querySelectorAll('.filter-btn').forEach(btn => {
+                // Approximate match for active class toggle
+                btn.classList.remove('active');
+                if(btn.getAttribute('onclick').includes(type)) btn.classList.add('active');
+            });
+            fetchData();
+        }
+
+        async function fetchData() {
+            const matchesArea = document.getElementById('matchesArea');
+            const statsArea = document.getElementById('statsArea');
+            const tipArea = document.getElementById('tipArea');
+
+            matchesArea.innerHTML = '<div class="loading">加载中...</div>';
+            tipArea.innerText = filterTips[currentFilter] || '';
+
+            try {
+                const res = await fetch(`/api/odds_filter?type=${currentFilter}&mode=${currentMode}`);
+                const data = await res.json();
+
+                if (!data.success) {
+                    matchesArea.innerHTML = `<div class="empty-state">${data.message || '加载失败'}</div>`;
+                    return;
+                }
+
+                renderData(data);
+            } catch (e) {
+                matchesArea.innerHTML = `<div class="empty-state">网络错误: ${e.message}</div>`;
+            }
+        }
+
+        function renderData(data) {
+            const stats = data.stats;
+            const hasStats = stats.total > 0 && (stats.hi_win + stats.hi_draw + stats.hi_lose > 0);
+
+            // Render Stats
+            if (hasStats) {
+                document.getElementById('statsArea').innerHTML = `
+                    <div class="stats-row">
+                        <div class="stat-box" style="background:#38a169;">
+                            <div class="stat-val">${stats.hi_win}</div>
+                            <div class="stat-lbl">让胜 ${stats.hi_win_rate}%</div>
+                        </div>
+                        <div class="stat-box" style="background:#d69e2e;">
+                            <div class="stat-val">${stats.hi_draw}</div>
+                            <div class="stat-lbl">走水 ${stats.hi_draw_rate}%</div>
+                        </div>
+                        <div class="stat-box" style="background:#e53e3e;">
+                            <div class="stat-val">${stats.hi_lose}</div>
+                            <div class="stat-lbl">让负 ${stats.hi_lose_rate}%</div>
+                        </div>
+                    </div>
+                `;
+            } else {
+                document.getElementById('statsArea').innerHTML = '';
+            }
+
+            // Render Matches
+            if (!data.data || data.data.length === 0) {
+                document.getElementById('matchesArea').innerHTML = '<div class="empty-state">暂无符合条件的数据</div>';
+                return;
+            }
+
+            const matchesHtml = data.data.map(m => {
+                let resClass = '';
+                if (m.hi_result === '让胜') resClass = 'res-win';
+                else if (m.hi_result === '让负') resClass = 'res-lose';
+                else if (m.hi_result === '走水') resClass = 'res-draw';
+
+                return `
+                    <div class="match-card">
+                        <div class="match-header">
+                            <span class="league-name">${m.league}</span>
+                            <span>${m.match_time.slice(5, 16)}</span>
+                        </div>
+                        <div class="teams-area">
+                            <div class="team-col">${m.home_team}</div>
+                            <div class="score-col">${m.score === '-:-' ? 'vs' : m.score}</div>
+                            <div class="team-col right">${m.away_team}</div>
+                        </div>
+                        <div class="filter-info">
+                            <span>${m.filter_desc}</span>
+                            <span class="filter-res ${resClass}">${m.hi_result || '待定'}</span>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+            
+            document.getElementById('matchesArea').innerHTML = matchesHtml;
+        }
+    </script>
+</body>
+</html>

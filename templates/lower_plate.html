@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>下盘筛选</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background: #f5f5f5;
+            min-height: 100vh;
+            color: #2d3748;
+        }
+        
+        /* Header */
+        .app-header {
+            background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+            color: white;
+            padding: 12px 15px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+            font-size: 18px;
+            font-weight: 600;
+        }
+        .back-btn {
+            position: absolute;
+            left: 15px;
+            color: white;
+            text-decoration: none;
+            font-size: 24px;
+            line-height: 1;
+        }
+
+        /* Controls */
+        .controls {
+            background: white;
+            padding: 15px;
+            border-bottom: 1px solid #eee;
+        }
+        .btn-group {
+            display: flex;
+            gap: 10px;
+            overflow-x: auto;
+            padding-bottom: 5px;
+        }
+        .filter-btn {
+            flex: 1;
+            min-width: 120px;
+            padding: 12px;
+            border: none;
+            border-radius: 8px;
+            color: white;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            text-align: center;
+            opacity: 0.8;
+            transition: opacity 0.2s;
+        }
+        .filter-btn.active { opacity: 1; transform: scale(1.02); box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .filter-btn .sub-text { font-size: 10px; font-weight: normal; margin-top: 4px; opacity: 0.9; }
+
+        /* Content Area */
+        .container {
+            padding: 15px;
+            max-width: 800px;
+            margin: 0 auto;
+        }
+
+        /* Summary Stats */
+        .stats-row {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-bottom: 20px;
+        }
+        .stat-card {
+            flex: 1;
+            min-width: 100px;
+            padding: 15px;
+            border-radius: 10px;
+            text-align: center;
+            color: white;
+        }
+        .stat-value { font-size: 20px; font-weight: 700; }
+        .stat-label { font-size: 11px; opacity: 0.9; margin-top: 2px; }
+
+        /* League Stats */
+        .league-card {
+            background: white;
+            border-radius: 10px;
+            padding: 15px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        }
+        .league-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px solid #f7fafc;
+            font-size: 13px;
+        }
+        .league-row:last-child { border-bottom: none; }
+
+        /* Match List */
+        .match-card {
+            background: white;
+            border-radius: 10px;
+            padding: 12px;
+            margin-bottom: 10px;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+            display: flex;
+            align-items: center;
+            border-left: 4px solid transparent;
+        }
+        .match-card.cold { border-left-color: #f56565; background: #fffaf0; }
+        
+        .match-info {
+            width: 70px;
+            font-size: 12px;
+            color: #718096;
+            text-align: center;
+            margin-right: 10px;
+            border-right: 1px solid #f0f0f0;
+            padding-right: 10px;
+        }
+        .match-teams { flex: 1; }
+        .team-row { display: flex; justify-content: space-between; font-size: 14px; margin-bottom: 4px; }
+        .team-name { font-weight: 600; color: #2d3748; }
+        .team-score { font-weight: 700; color: #2d3748; }
+        .handicap-tag {
+            font-size: 11px;
+            color: #e53e3e;
+            background: #fff5f5;
+            padding: 2px 6px;
+            border-radius: 4px;
+            display: inline-block;
+        }
+
+        .match-result {
+            width: 80px;
+            text-align: right;
+            padding-left: 10px;
+        }
+        .result-val { font-weight: 700; font-size: 14px; }
+        .result-odds { font-size: 11px; color: #718096; margin-top: 2px; }
+
+        .loading, .empty-state { text-align: center; padding: 40px; color: #a0aec0; }
+    </style>
+</head>
+<body>
+    <div class="app-header">
+        <a href="/" class="back-btn">‹</a>
+        下盘筛选
+    </div>
+
+    <div class="controls">
+        <div class="btn-group">
+            <button class="filter-btn" onclick="setMode('upcoming')" style="background:linear-gradient(135deg, #11998e 0%, #38ef7d 100%);">
+                🔮 未来机会
+                <div class="sub-text">让负赔率≥3.0</div>
+            </button>
+            <button class="filter-btn" onclick="setMode('history')" style="background:linear-gradient(135deg, #667eea 0%, #764ba2 100%);">
+                📊 历史记录
+                <div class="sub-text">下盘获胜统计</div>
+            </button>
+            <button class="filter-btn" onclick="setMode('history', 5.0)" style="background:linear-gradient(135deg, #f5af19 0%, #f12711 100%);">
+                🔥 高赔冷门
+                <div class="sub-text">让负赔率≥5.0</div>
+            </button>
+        </div>
+    </div>
+
+    <div class="container">
+        <div id="statsArea"></div>
+        <div id="leagueArea"></div>
+        
+        <div style="font-size:16px;font-weight:700;color:#2d3748;margin: 20px 0 12px;">比赛列表</div>
+        <div id="matchesArea"></div>
+    </div>
+
+    <script>
+        let currentMode = 'upcoming';
+        let currentMinOdds = null;
+
+        document.addEventListener('DOMContentLoaded', () => {
+            setMode('upcoming');
+        });
+
+        function setMode(mode, minOdds = null) {
+            currentMode = mode;
+            currentMinOdds = minOdds;
+            
+            // Update UI buttons
+            document.querySelectorAll('.filter-btn').forEach(btn => {
+                // Simple logic to highlight active button based on onclick attribute text match
+                // Ideally should use IDs or data attributes
+                btn.classList.remove('active');
+                const onclickStr = btn.getAttribute('onclick');
+                if (minOdds) {
+                    if (onclickStr.includes(minOdds)) btn.classList.add('active');
+                } else {
+                    if (onclickStr.includes(`'${mode}'`) && !onclickStr.includes('5.0')) btn.classList.add('active');
+                }
+            });
+
+            fetchData();
+        }
+
+        async function fetchData() {
+            const matchesArea = document.getElementById('matchesArea');
+            const statsArea = document.getElementById('statsArea');
+            const leagueArea = document.getElementById('leagueArea');
+
+            matchesArea.innerHTML = '<div class="loading">加载中...</div>';
+            statsArea.innerHTML = '';
+            leagueArea.innerHTML = '';
+
+            try {
+                let url = `/api/lower_plate?mode=${currentMode}`;
+                if (currentMinOdds) url += `&min_odds=${currentMinOdds}`;
+
+                const res = await fetch(url);
+                const data = await res.json();
+
+                if (!data.success) {
+                    matchesArea.innerHTML = `<div class="empty-state">${data.message || '加载失败'}</div>`;
+                    return;
+                }
+
+                renderData(data);
+            } catch (e) {
+                matchesArea.innerHTML = `<div class="empty-state">网络错误: ${e.message}</div>`;
+            }
+        }
+
+        function renderData(data) {
+            const isUpcoming = data.mode === 'upcoming';
+            
+            // Render Stats
+            if (!isUpcoming) {
+                document.getElementById('statsArea').innerHTML = `
+                    <div class="stats-row">
+                        <div class="stat-card" style="background:linear-gradient(135deg, #667eea 0%, #764ba2 100%);">
+                            <div class="stat-value">${data.total_matches}</div>
+                            <div class="stat-label">总场次</div>
+                        </div>
+                        <div class="stat-card" style="background:linear-gradient(135deg, #11998e 0%, #38ef7d 100%);">
+                            <div class="stat-value">${data.lower_win_count}</div>
+                            <div class="stat-label">下盘获胜</div>
+                        </div>
+                        <div class="stat-card" style="background:linear-gradient(135deg, #f5af19 0%, #f12711 100%);">
+                            <div class="stat-value">${data.lower_win_rate}%</div>
+                            <div class="stat-label">获胜率</div>
+                        </div>
+                    </div>
+                `;
+            }
+
+            // Render League Stats
+            if (!isUpcoming && data.league_stats && data.league_stats.length > 0) {
+                const leagueHtml = data.league_stats.map(s => `
+                    <div class="league-row">
+                        <span style="font-weight:600;color:#2d3748;">${s.league}</span>
+                        <span>
+                            <span style="color:#718096;font-size:12px;">${s.lower_win}/${s.total}</span>
+                            <span style="color:#38a169;font-weight:700;margin-left:8px;">${s.rate}%</span>
+                        </span>
+                    </div>
+                `).join('');
+                document.getElementById('leagueArea').innerHTML = `
+                    <div class="league-card">
+                        <div style="font-size:14px;font-weight:700;color:#2d3748;margin-bottom:10px;">📈 联赛下盘率排行</div>
+                        ${leagueHtml}
+                    </div>
+                `;
+            }
+
+            // Render Matches
+            if (!data.data || data.data.length === 0) {
+                document.getElementById('matchesArea').innerHTML = '<div class="empty-state">暂无符合条件的数据</div>';
+                return;
+            }
+
+            const matchesHtml = data.data.map(m => {
+                const isCold = m.is_cold;
+                // Parse score for history
+                const scoreParts = m.score && m.score.includes('-') ? m.score.split('-') : ['-','-'];
+                
+                return `
+                    <div class="match-card ${isCold ? 'cold' : ''}">
+                        <div class="match-info">
+                            <div style="color:#4a5568;font-weight:600;margin-bottom:4px;">${m.league.substring(0,6)}</div>
+                            <div>${m.match_time.slice(5, 16)}</div>
+                        </div>
+                        <div class="match-teams">
+                            <div class="team-row">
+                                <span class="team-name">${m.home_team}</span>
+                                ${!isUpcoming ? `<span class="team-score">${scoreParts[0]}</span>` : ''}
+                            </div>
+                            <div class="team-row">
+                                <span class="team-name">${m.away_team}</span>
+                                ${!isUpcoming ? `<span class="team-score">${scoreParts[1]}</span>` : ''}
+                            </div>
+                            <div class="handicap-tag">${m.handicap_desc}</div>
+                        </div>
+                        <div class="match-result">
+                            <div class="result-val" style="color:#38a169;">${m.lower_team}</div>
+                            <div class="result-odds">赔率: <span style="color:${isCold ? '#e53e3e' : '#2d3748'};font-weight:bold;">${m.hi_away_odds?.toFixed(2)}</span></div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+            
+            document.getElementById('matchesArea').innerHTML = matchesHtml;
+        }
+    </script>
+</body>
+</html>

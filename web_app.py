@@ -59,6 +59,24 @@ def index():
     return render_template('index.html')
 
 
+@app.route('/daily_recommendations')
+def daily_recommendations():
+    """每日推荐页面"""
+    return render_template('daily_recommendations.html')
+
+
+@app.route('/lower_plate')
+def lower_plate():
+    """下盘筛选页面"""
+    return render_template('lower_plate.html')
+
+
+@app.route('/odds_filter')
+def odds_filter():
+    """赔率筛选页面"""
+    return render_template('odds_filter.html')
+
+
 @app.route('/api/matches')
 def get_matches():
     """API - 获取比赛列表"""
