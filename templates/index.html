@@ -982,7 +982,7 @@
                                 <button class="btn btn-warning" style="padding:4px 8px; font-size:11px; background:#f59e0b; color:white;" onclick="updateMatch('${match.match_id}');event.stopPropagation()">更新</button>
                                 <button class="btn btn-success" style="padding:4px 8px; font-size:11px; background:#667eea;" onclick="openManualPredict('${match.match_id}','${match.home_team}','${match.away_team}');event.stopPropagation()">手动</button>
                                 <button class="btn btn-primary" style="padding:4px 8px; font-size:11px;" onclick="predictSingle('${match.match_id}');event.stopPropagation()">AI</button>
-                                <a href="/match/${match.match_id}" class="btn btn-primary" style="padding:4px 8px; font-size:11px;">详情</a>
+                                <a href="https://odds.500.com/fenxi/shuju-${match.match_id}.shtml" class="btn btn-primary" style="padding:4px 8px; font-size:11px;" target="_blank" onclick="event.stopPropagation()">详情</a>
                              </div>
                             <div id="m-${predictionId}" class="prediction-cell" style="margin-top:5px;font-size:12px;color:#718096;text-align:right;"></div>
                         </div>
@@ -1009,7 +1009,7 @@
                         <td>${totalGoals}</td>
                         <td id="${predictionId}" class="prediction-cell" style="font-size:12px;color:#718096;">—</td>
                         <td>
-                            <a href="/match/${match.match_id}" class="btn btn-primary" style="padding:3px 6px; font-size:11px;">详情</a>
+                            <a href="https://odds.500.com/fenxi/shuju-${match.match_id}.shtml" class="btn btn-primary" style="padding:3px 6px; font-size:11px;" target="_blank" onclick="event.stopPropagation()">详情</a>
                             <a href="https://odds.500.com/fenxi/shuju-${match.match_id}.shtml" class="btn btn-primary" style="padding:3px 6px; font-size:11px; margin-left:4px;" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()">500</a>
                             <button class="btn btn-warning" style="padding:3px 6px; font-size:11px; margin-left:4px; background:#f59e0b; color:white;" onclick="updateMatch('${match.match_id}');event.stopPropagation()">更新</button>
                             <br/>

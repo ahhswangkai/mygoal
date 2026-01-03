@@ -245,13 +245,35 @@ class FootballCrawler:
                 raw_status = status_td.get_text(strip=True)
                 status_code = 0
                 status_classes = status_td.get('class') or []
+                
+                # 1. 优先根据class判断
                 if 'td_living' in status_classes:
                     status_code = 1
                 else:
-                    if raw_status and ('完' in raw_status or '结束' in raw_status):
-                        status_code = 2
-                    elif raw_status and raw_status not in ['未', '']:
-                        status_code = 1
+                    # 2. 根据文本内容判断
+                    if raw_status:
+                        # 完场
+                        if '完' in raw_status or '结束' in raw_status:
+                            status_code = 2
+                        # 进行中：分钟数 (如 34, 34', 90+2, 90+2') 或 特殊状态
+                        elif (re.match(r'^\d+\'?$', raw_status) or 
+                              re.match(r'^\d+\+\d+\'?$', raw_status) or
+                              any(k in raw_status for k in ["中场", "半场", "加时", "点球"])):
+                            status_code = 1
+                        # 未开始：时间格式 (19:30) 或 明确文本
+                        elif ':' in raw_status or raw_status in ['未', '未开', '推迟', '取消']:
+                            status_code = 0
+                        # 其他情况
+                        else:
+                            # 兜底：如果是纯数字认为是时间，设为进行中
+                            if raw_status.isdigit():
+                                status_code = 1
+                            else:
+                                status_code = 0 # 无法识别的文本，保守设为未开始
+                
+                # 3. 兜底逻辑：如果有比分且未完场，强制设为进行中
+                if status_code == 0 and home_score.isdigit() and away_score.isdigit():
+                    status_code = 1
                 
                 match_data = {
                     'match_id': match_id,
