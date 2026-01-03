@@ -269,7 +269,10 @@ def crawl_new_data():
         if not date_str:
             date_str = datetime.now().strftime('%Y-%m-%d')
         url = f"https://live.500.com/?e={date_str}"
-        matches = crawler.crawl_daily_matches(url)
+        
+        # 传入 mongo_storage 实现边爬边存
+        c = crawler.FootballCrawler(mongo_storage)
+        matches = c.crawl_daily_matches(url)
         
         if not matches:
             return jsonify({
@@ -280,18 +283,22 @@ def crawl_new_data():
         if not mongo_storage:
             return jsonify({'success': False, 'message': 'MongoDB不可用'}), 500
         
-        # 仅写入MongoDB
-        count = mongo_storage.save_matches(matches)
-        
-        # 爬取每场比赛的赔率（欧赔/亚盘/大小球）并发执行
+        # 之前在 crawl_daily_matches 内部已经逐条保存了比赛基本信息
+        # 现在需要爬取每场比赛的赔率（欧赔/亚盘/大小球）并发执行
+        count = len(matches)
         odds_count = 0
         workers = request.args.get('workers', '8')
         try:
             workers = max(1, min(16, int(workers)))
         except Exception:
             workers = 8
+        
         def fetch(mid):
+            # 这里的 crawl_match_odds 内部并没有自动保存赔率，所以需要在这里保存
+            # 如果也想改成边爬边存，需要修改 crawler.crawl_match_odds
+            # 暂时保持在这里手动保存，或者修改 crawler.crawl_match_odds
             return crawler.crawl_match_odds(mid)
+            
         with ThreadPoolExecutor(max_workers=workers) as executor:
             futures = {}
             for m in matches:
@@ -479,11 +486,48 @@ scheduler = None
 
 def _crawl_latest():
     try:
+        current_hour = datetime.now().hour
+        # 晚上11点(23)到早上11点(11)之间，不爬取指数信息
+        should_crawl_odds = (11 <= current_hour < 23)
+        
         date_str = datetime.now().strftime('%Y-%m-%d')
         url = f"https://live.500.com/?e={date_str}"
-        matches = crawler.crawl_daily_matches(url)
-        if mongo_storage and matches:
-            mongo_storage.save_matches(matches)
+        # 传入 mongo_storage 实现边爬边存
+        c = crawler.FootballCrawler(mongo_storage)
+        matches = c.crawl_daily_matches(url)
+        # crawl_daily_matches 内部已经调用了 save_match，这里不需要再批量保存
+        # if mongo_storage and matches:
+        #    mongo_storage.save_matches(matches)
+        
+        # 爬取赔率（指数信息），带时间限制
+        if should_crawl_odds:
+            print(f"当前时间 {current_hour}点，开始爬取赔率...")
+            workers = 8
+            def fetch(mid):
+                # 这里的 crawl_match_odds 内部并没有自动保存赔率，所以需要在这里保存
+                odds = crawler.crawl_match_odds(mid)
+                if odds and mongo_storage:
+                    mongo_storage.save_odds(mid, odds)
+                return odds
+
+            with ThreadPoolExecutor(max_workers=workers) as executor:
+                futures = {}
+                for m in matches or []:
+                    mid = m.get('match_id')
+                    # 仅对未开始或进行中的比赛爬取赔率，减少压力
+                    status = m.get('status')
+                    if mid and status in [0, 1]:
+                        futures[executor.submit(fetch, mid)] = mid
+                
+                # 等待所有任务完成
+                for fut in as_completed(futures):
+                    try:
+                        fut.result()
+                    except Exception:
+                        pass
+        else:
+            print(f"当前时间 {current_hour}点，跳过爬取赔率 (仅11:00-23:00爬取)")
+
         def to_float(x):
             try:
                 return float(x)

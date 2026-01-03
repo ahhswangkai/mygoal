@@ -18,9 +18,15 @@ from config import REQUEST_HEADERS, REQUEST_TIMEOUT, REQUEST_DELAY, MAX_RETRIES
 class FootballCrawler:
     """足球比赛和赔率数据爬虫"""
     
-    def __init__(self):
-        """初始化爬虫"""
+    def __init__(self, mongo_storage=None):
+        """
+        初始化爬虫
+        
+        Args:
+            mongo_storage: MongoDBStorage实例，用于实时保存
+        """
         self.logger = setup_logger()
+        self.mongo_storage = mongo_storage
         self.session = requests.Session()
         self.ua = UserAgent()
         self.headers = REQUEST_HEADERS.copy()
@@ -295,6 +301,10 @@ class FootballCrawler:
                 }
                 
                 matches.append(match_data)
+                
+                # 逐条保存
+                if self.mongo_storage:
+                    self.mongo_storage.save_match(match_data)
                 
             self.logger.info(f"解析到 {len(matches)} 场比赛")
             
