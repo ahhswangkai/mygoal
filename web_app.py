@@ -271,7 +271,7 @@ def crawl_new_data():
         url = f"https://live.500.com/?e={date_str}"
         
         # 传入 mongo_storage 实现边爬边存
-        c = crawler.FootballCrawler(mongo_storage)
+        c = FootballCrawler(mongo_storage)
         matches = c.crawl_daily_matches(url)
         
         if not matches:
@@ -493,7 +493,7 @@ def _crawl_latest():
         date_str = datetime.now().strftime('%Y-%m-%d')
         url = f"https://live.500.com/?e={date_str}"
         # 传入 mongo_storage 实现边爬边存
-        c = crawler.FootballCrawler(mongo_storage)
+        c = FootballCrawler(mongo_storage)
         matches = c.crawl_daily_matches(url)
         # crawl_daily_matches 内部已经调用了 save_match，这里不需要再批量保存
         # if mongo_storage and matches:
