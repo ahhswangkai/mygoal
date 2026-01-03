@@ -13,5 +13,10 @@ if ! python3 -c "import flask" 2>/dev/null; then
     python3 -m pip install flask==2.0.3 werkzeug==2.0.3
 fi
 
+if ! python3 -c "import apscheduler" 2>/dev/null; then
+    echo "正在安装APScheduler依赖..."
+    python3 -m pip install APScheduler>=3.10.4
+fi
+
 # 启动Web服务
 python3 web_app.py

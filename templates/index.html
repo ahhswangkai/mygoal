@@ -84,34 +84,38 @@
             background: white;
         }
         
-        .stats-bar {
-            background: white;
-            padding: 20px 30px;
-            border-radius: 15px;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
-            margin-bottom: 30px;
+        .nav-tabs {
             display: flex;
-            gap: 30px;
-            flex-wrap: wrap;
+            margin-bottom: 20px;
+            background: white;
+            padding: 5px;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.05);
         }
         
-        .stat-item {
+        .nav-tab {
             flex: 1;
-            min-width: 150px;
-        }
-        
-        .stat-label {
+            text-align: center;
+            padding: 12px;
+            cursor: pointer;
+            border-radius: 8px;
+            font-weight: 500;
             color: #718096;
-            font-size: 14px;
-            margin-bottom: 5px;
+            transition: all 0.3s ease;
         }
         
-        .stat-value {
-            color: #2d3748;
-            font-size: 28px;
-            font-weight: bold;
+        .nav-tab.active {
+            background: #667eea;
+            color: white;
+            font-weight: 600;
+            box-shadow: 0 2px 4px rgba(102, 126, 234, 0.3);
         }
         
+        .nav-tab:hover:not(.active) {
+            background: #f7fafc;
+            color: #4a5568;
+        }
+
         .matches-table {
             width: 100%;
             border-collapse: collapse;
@@ -454,9 +458,28 @@
                 grid-template-columns: 1fr;
             }
             
+            .header {
+                padding: 15px;
+            }
+
+            .header h1 {
+                font-size: 20px;
+                margin-bottom: 10px;
+            }
+
             .controls {
-                flex-direction: column;
-                align-items: stretch;
+                flex-direction: row;
+                flex-wrap: wrap;
+                align-items: center;
+                gap: 8px;
+            }
+
+            .controls .btn, 
+            .controls select, 
+            .controls input {
+                padding: 6px 10px;
+                font-size: 12px;
+                height: 32px;
             }
             
             .stats-bar {
@@ -584,6 +607,13 @@
                 gap: 8px;
             }
             
+            .m-update-time {
+                font-size: 11px;
+                color: #718096;
+                margin-top: 6px;
+                text-align: left;
+            }
+            
             .m-actions {
                 display: flex;
                 gap: 8px;
@@ -601,24 +631,10 @@
                 <select id="leagueFilter">
                     <option value="">所有联赛</option>
                 </select>
-                <select id="statusFilter">
-                    <option value="">所有状态</option>
-                    <option value="0">未开始</option>
-                    <option value="1">进行中</option>
-                    <option value="2">完场</option>
-                </select>
+                <input type="hidden" id="statusFilter" value="0">
                 <button class="btn btn-primary" onclick="loadMatches()">🔄 刷新数据</button>
                 <input type="date" id="datePicker" style="padding: 10px 15px; border: 2px solid #e2e8f0; border-radius: 8px; font-size: 14px;"> <button class="btn btn-success" onclick="crawlNewData()">📥 爬取新数据</button>
-                <a href="/stats" class="btn btn-primary">📊 查看统计</a>
-                <select id="parlayN" style="padding: 10px 15px; border: 2px solid #e2e8f0; border-radius: 8px; font-size: 14px;">
-                    <option value="2">2串1</option>
-                    <option value="3">3串1</option>
-                    <option value="4">4串1</option>
-                    <option value="5">5串1</option>
-                </select>
-                <input type="number" id="targetOdds" value="3.0" min="2" max="10" step="0.5" style="width: 80px; padding: 10px 15px; border: 2px solid #e2e8f0; border-radius: 8px; font-size: 14px;" placeholder="目标赔率">
-                <button class="btn btn-success" onclick="getRecommendation()" style="background: linear-gradient(135deg, #f6ad55 0%, #ed8936 100%);">🎯 AI推荐</button>
-                <button class="btn btn-primary" onclick="predictUpcoming()" style="background:#3182ce;">🤖 预测未开始</button>
+
                 <button class="btn btn-success" onclick="reviewFinished()" style="background:#48bb78;">🧾 复盘完场</button>
                 <button class="btn btn-success" onclick="showDailyPredictions()" style="background:linear-gradient(135deg, #f093fb 0%, #f5576c 100%);">📊 每日推荐</button>
                 <button class="btn btn-success" onclick="showLowerPlate()" style="background:linear-gradient(135deg, #11998e 0%, #38ef7d 100%);">🎲 下盘筛选</button>
@@ -627,26 +643,14 @@
             </div>
         </div>
         
-        <div class="stats-bar">
-            <div class="stat-item">
-                <div class="stat-label">总比赛数</div>
-                <div class="stat-value" id="totalMatches">0</div>
-            </div>
-            <div class="stat-item">
-                <div class="stat-label">联赛数</div>
-                <div class="stat-value" id="totalLeagues">0</div>
-            </div>
-            <div class="stat-item">
-                <div class="stat-label">未开始</div>
-                <div class="stat-value" id="upcomingMatches" style="color:#667eea;">0</div>
-            </div>
-            <div class="stat-item">
-                <div class="stat-label">已完场</div>
-                <div class="stat-value" id="finishedMatches" style="color:#48bb78;">0</div>
-            </div>
+        <div class="nav-tabs">
+            <div class="nav-tab active" onclick="switchTab('0', this)">未开始</div>
+            <div class="nav-tab" onclick="switchTab('1', this)">进行中</div>
+            <div class="nav-tab" onclick="switchTab('2', this)">已完场</div>
+            <div class="nav-tab" onclick="switchTab('', this)">全部</div>
         </div>
         
-        <div id="crawlLogs" style="background: white; padding: 15px; border-radius: 15px; box-shadow: 0 10px 30px rgba(0,0,0,0.2); margin-bottom: 20px; max-height: 200px; overflow: auto; font-size: 13px; color: #2d3748;"></div>
+        <div id="crawlLogs" style="display: none;"></div>
         <div id="matchesContainer">
             <div class="loading">加载中...</div>
         </div>
@@ -672,6 +676,13 @@
             loadLeagues();
         };
         
+        function switchTab(status, element) {
+            document.getElementById('statusFilter').value = status;
+            document.querySelectorAll('.nav-tab').forEach(tab => tab.classList.remove('active'));
+            element.classList.add('active');
+            loadMatches(1);
+        }
+
         // 加载比赛数据
         async function loadMatches(page = 1) {
             try {
@@ -691,7 +702,6 @@
                     totalPages = result.total_pages;
                     displayMatches(allMatches);
                     renderPagination(result);
-                    updateStats();
                 } else {
                     showEmpty('加载失败');
                 }
@@ -916,7 +926,7 @@
                                 <span class="m-league">${match.league || '未知'}</span>
                                 <span style="margin-left:5px;">${match.match_number || ''}</span>
                             </div>
-                            <span>${match.match_time ? match.match_time.substring(5, 16) : ''}</span>
+                            <span>${match.match_time || ''}</span>
                         </div>
                         <div class="m-body">
                             <div class="m-team home">${mHomeRank}${mHomeTeam}</div>
@@ -955,12 +965,14 @@
                                 </div>
                                 ` : '' }
                             </div>
+                            <div class="m-update-time">更新于: ${formatUpdated(match.updated_at)}</div>
                              <div class="m-actions">
+                                <button class="btn btn-secondary" style="padding:4px 8px; font-size:11px; background:#6b7280; color:white;" onclick="notifyTest('${match.match_id}');event.stopPropagation()">测试推送</button>
                                 <button class="btn btn-warning" style="padding:4px 8px; font-size:11px; background:#f59e0b; color:white;" onclick="updateMatch('${match.match_id}');event.stopPropagation()">更新</button>
                                 <button class="btn btn-success" style="padding:4px 8px; font-size:11px; background:#667eea;" onclick="openManualPredict('${match.match_id}','${match.home_team}','${match.away_team}');event.stopPropagation()">手动</button>
                                 <button class="btn btn-primary" style="padding:4px 8px; font-size:11px;" onclick="predictSingle('${match.match_id}');event.stopPropagation()">AI</button>
                                 <a href="/match/${match.match_id}" class="btn btn-primary" style="padding:4px 8px; font-size:11px;">详情</a>
-                            </div>
+                             </div>
                             <div id="m-${predictionId}" class="prediction-cell" style="margin-top:5px;font-size:12px;color:#718096;text-align:right;"></div>
                         </div>
                     </div>
@@ -992,6 +1004,7 @@
                             <br/>
                             <button class="btn btn-success" style="padding:3px 6px; font-size:11px; margin-top:4px; background:#667eea;" onclick="openManualPredict('${match.match_id}','${match.home_team}','${match.away_team}');event.stopPropagation()">手动</button>
                             <button class="btn btn-primary" style="padding:3px 6px; font-size:11px; margin-top:4px; margin-left:4px;" onclick="predictSingle('${match.match_id}');event.stopPropagation()">AI</button>
+                            <button class="btn btn-secondary" style="padding:3px 6px; font-size:11px; margin-top:4px; margin-left:4px; background:#6b7280; color:white;" onclick="notifyTest('${match.match_id}');event.stopPropagation()">测试</button>
                         </td>
                     </tr>
                 `;
@@ -1046,6 +1059,33 @@
             if (status === 2) return '完场';
             if (status === 1) return '进行中';
             return '未开始';
+        }
+        
+        function formatUpdated(updatedAt) {
+            if (!updatedAt) return '未知';
+            try {
+                const date = new Date(updatedAt);
+                // 使用UTC时间获取，避免因时区转换导致的时间偏差（后端返回的是GMT格式但内容可能是本地时间）
+                const year = date.getUTCFullYear();
+                const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+                const day = String(date.getUTCDate()).padStart(2, '0');
+                const hours = String(date.getUTCHours()).padStart(2, '0');
+                const minutes = String(date.getUTCMinutes()).padStart(2, '0');
+                
+                return `${year}-${month}-${day} ${hours}:${minutes}`;
+            } catch (e) {
+                return String(updatedAt);
+            }
+        }
+        
+        async function notifyTest(matchId) {
+            try {
+                const res = await fetch(`/api/notify_test/${matchId}`, { method: 'POST' });
+                const data = await res.json();
+                alert(data && data.success ? '已推送' : ('推送失败: ' + (data && data.message ? data.message : '')));
+            } catch (e) {
+                alert('推送失败');
+            }
         }
         
         // 渲染分页器
@@ -1325,23 +1365,6 @@
             }
         }
         
-        // 更新统计信息
-        async function updateStats() {
-            try {
-                const response = await fetch('/api/stats');
-                const result = await response.json();
-                
-                if (result.success) {
-                    const stats = result.data;
-                    document.getElementById('totalMatches').textContent = stats.total_matches;
-                    document.getElementById('totalLeagues').textContent = stats.total_leagues;
-                    document.getElementById('upcomingMatches').textContent = stats.status_stats['未开始'] || 0;
-                    document.getElementById('finishedMatches').textContent = stats.status_stats['完场'] || 0;
-                }
-            } catch (error) {
-                console.error('加载统计失败:', error);
-            }
-        }
         
         // 爬取新数据
         async function crawlNewData() {
@@ -1405,24 +1428,6 @@
             document.getElementById('statusFilter').addEventListener('change', () => loadMatches(1));
         });
         
-        // AI推荐N串1
-        async function getRecommendation() {
-            const n = document.getElementById('parlayN').value;
-            const targetOdds = document.getElementById('targetOdds').value;
-            
-            try {
-                const response = await fetch(`/api/recommend?n=${n}&target_odds=${targetOdds}`);
-                const result = await response.json();
-                
-                if (result.success) {
-                    showRecommendationModal(result.data);
-                } else {
-                    alert('推荐失败: ' + result.message);
-                }
-            } catch (error) {
-                alert('请求失败: ' + error.message);
-            }
-        }
         
         // 显示推荐弹窗
         function showRecommendationModal(data) {

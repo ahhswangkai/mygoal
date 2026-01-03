@@ -14,9 +14,11 @@ from prediction_review import PredictionReviewer
 try:
     from apscheduler.schedulers.background import BackgroundScheduler
     from apscheduler.triggers.cron import CronTrigger
-except Exception:
+except Exception as e:
+    print(f"⚠️  APScheduler导入失败: {str(e)}")
     BackgroundScheduler = None
     CronTrigger = None
+import os
 import requests
 from config import WECHAT_WEBHOOK_URL
 
@@ -489,7 +491,8 @@ def _crawl_latest():
             if hi_val and (hi_val in ['0', '平手'] or ('平' in hi_val)):
                 tags.append('让平')
             tag_str = '、'.join(tags) if tags else '提示'
-            return f"{num} {home} vs {away}\n时间: {tm}\n欧赔平: {draw_odds}\n让球: {hi_val}\n符合: {tag_str}"
+            odds_text = format_all_odds(m)
+            return f"{num} {home} vs {away}\n时间: {tm}\n符合: {tag_str}\n{odds_text}"
         def send_wechat(text):
             if not WECHAT_WEBHOOK_URL:
                 return
@@ -502,22 +505,79 @@ def _crawl_latest():
         for m in matches or []:
             if meets_alert(m):
                 send_wechat(build_msg(m))
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"❌ 定时爬取任务异常: {str(e)}")
+        import traceback
+        traceback.print_exc()
 
 def _start_scheduler():
     global scheduler
     try:
-        if BackgroundScheduler and CronTrigger and scheduler is None:
-            scheduler = BackgroundScheduler()
-            scheduler.add_job(_crawl_latest, CronTrigger(minute='*/15'), id='crawl_every_15m', replace_existing=True)
-            scheduler.start()
-    except Exception:
+        if BackgroundScheduler and CronTrigger:
+            if scheduler is None:
+                scheduler = BackgroundScheduler()
+                scheduler.add_job(_crawl_latest, CronTrigger(minute='*/15'), id='crawl_every_15m', replace_existing=True)
+                scheduler.start()
+                print("✅ 定时任务调度器已启动 (每15分钟刷新)")
+        else:
+            print("⚠️  无法启动定时任务: APScheduler未安装")
+    except Exception as e:
+        print(f"❌ 启动定时任务失败: {str(e)}")
         scheduler = None
 
 @app.before_first_request
 def _init_jobs():
     _start_scheduler()
+
+def send_wechat_message(text):
+    if not WECHAT_WEBHOOK_URL:
+        return False
+    try:
+        payload = {"msgtype": "text", "text": {"content": text}}
+        headers = {"Content-Type": "application/json"}
+        r = requests.post(WECHAT_WEBHOOK_URL, json=payload, headers=headers, timeout=10)
+        return r.status_code == 200
+    except Exception:
+        return False
+
+def format_all_odds(m):
+    def val(x):
+        return str(x) if x is not None else ''
+    euro_init = f"{val(m.get('euro_current_win'))}/{val(m.get('euro_current_draw'))}/{val(m.get('euro_current_lose'))}"
+    euro_curr = f"{val(m.get('euro_initial_win'))}/{val(m.get('euro_initial_draw'))}/{val(m.get('euro_initial_lose'))}"
+    asian_init = f"{val(m.get('asian_initial_home_odds'))}/{val(m.get('asian_initial_handicap'))}/{val(m.get('asian_initial_away_odds'))}"
+    asian_curr = f"{val(m.get('asian_current_home_odds'))}/{val(m.get('asian_current_handicap'))}/{val(m.get('asian_current_away_odds'))}"
+    ou_init = f"{val(m.get('ou_initial_under_odds'))}/{val(m.get('ou_initial_total'))}/{val(m.get('ou_initial_over_odds'))}"
+    ou_curr = f"{val(m.get('ou_current_under_odds'))}/{val(m.get('ou_current_total'))}/{val(m.get('ou_current_over_odds'))}"
+    hi_val = val(m.get('hi_handicap_value'))
+    hi_init = f"{val(m.get('hi_initial_home_odds'))}/{val(m.get('hi_initial_draw_odds'))}/{val(m.get('hi_initial_away_odds'))}"
+    hi_curr = f"{val(m.get('hi_current_home_odds'))}/{val(m.get('hi_current_draw_odds'))}/{val(m.get('hi_current_away_odds'))}"
+    parts = []
+    parts.append(f"欧赔 初:{euro_init} 即:{euro_curr}")
+    parts.append(f"亚盘 初:{asian_init} 即:{asian_curr}")
+    parts.append(f"大小球 初:{ou_init} 即:{ou_curr}")
+    parts.append(f"让球指数 盘:{hi_val} 初:{hi_init} 即:{hi_curr}")
+    return "\n".join(parts)
+
+@app.route('/api/notify_test/<match_id>', methods=['POST'])
+def notify_test(match_id):
+    try:
+        if not mongo_storage:
+            return jsonify({'success': False, 'message': 'MongoDB不可用'}), 500
+        m = mongo_storage.get_match_by_id(match_id)
+        if not m:
+            return jsonify({'success': False, 'message': '比赛不存在'}), 404
+        home = m.get('home_team', '')
+        away = m.get('away_team', '')
+        num = m.get('match_number', '')
+        tm = m.get('match_time', '')
+        league = m.get('league', '')
+        odds_text = format_all_odds(m)
+        text = f"{num} {home} vs {away}\n联赛: {league}\n时间: {tm}\n{odds_text}"
+        ok = send_wechat_message(text)
+        return jsonify({'success': ok})
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
 
 
 @app.route('/api/predict/<match_id>')
@@ -1707,4 +1767,9 @@ if __name__ == '__main__':
     print("访问地址: http://127.0.0.1:5002")
     print("=" * 50)
     
+    # 在主进程(reloader=False)或Reloader子进程中启动调度器
+    # 注意：app.run(debug=True)会启动reloader，WERKZEUG_RUN_MAIN在子进程为true
+    if os.environ.get('WERKZEUG_RUN_MAIN') == 'true':
+        _start_scheduler()
+        
     app.run(debug=True, host='0.0.0.0', port=5002)
