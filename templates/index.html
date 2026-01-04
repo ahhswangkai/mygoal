@@ -651,7 +651,7 @@
                 <select id="leagueFilter">
                     <option value="">所有联赛</option>
                 </select>
-                <input type="hidden" id="statusFilter" value="0">
+                <input type="hidden" id="statusFilter" value="">
                 <button class="btn btn-primary" onclick="loadMatches()">🔄 刷新数据</button>
                 <input type="date" id="datePicker" style="padding: 10px 15px; border: 2px solid #e2e8f0; border-radius: 8px; font-size: 14px;" onchange="loadMatches(1)"> <button class="btn btn-success" onclick="crawlNewData()">📥 爬取新数据</button>
 
@@ -664,10 +664,10 @@
         </div>
         
         <div class="nav-tabs">
-            <div class="nav-tab active" onclick="switchTab('0', this)">未开始</div>
+            <div class="nav-tab active" onclick="switchTab('', this)">全部</div>
+            <div class="nav-tab" onclick="switchTab('0', this)">未开始</div>
             <div class="nav-tab" onclick="switchTab('1', this)">进行中</div>
             <div class="nav-tab" onclick="switchTab('2', this)">已完场</div>
-            <div class="nav-tab" onclick="switchTab('', this)">全部</div>
         </div>
         
         <div id="crawlLogs" style="display: none;"></div>
