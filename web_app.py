@@ -79,8 +79,23 @@ def odds_filter():
 
 @app.route('/api/matches')
 def get_matches():
-    """API - 获取比赛列表"""
-    matches = load_match_data()
+    """API - 获取比赛列表 (实时接口)"""
+    # 获取日期参数
+    date_str = request.args.get('date')
+    if not date_str:
+        date_str = datetime.now().strftime('%Y-%m-%d')
+    
+    # 从数据库读取数据
+    filters = {}
+    if date_str:
+        # 使用 owner_date 进行筛选，而不是 match_time
+        # match_time 可能会跨天（例如凌晨比赛），导致 regex 匹配遗漏
+        filters['owner_date'] = date_str
+    
+    if mongo_storage:
+        matches = mongo_storage.get_matches(filters)
+    else:
+        matches = []
     
     # 支持按联赛筛选
     league = request.args.get('league')
@@ -95,13 +110,13 @@ def get_matches():
             matches = [m for m in matches if m.get('status') == status_code]
         except ValueError:
             pass
-    else:
-        # 默认仅展示未开始比赛
+    elif not date_str or date_str == datetime.now().strftime('%Y-%m-%d'):
+        # 默认仅展示未开始比赛（仅在未指定日期或指定为今天时生效）
+        # 如果用户明确查看历史日期，则不默认过滤状态
         matches = [m for m in matches if m.get('status') == 0]
     
     # 排序：未开始的比赛按时间升序（默认或明确传入status=0）
     try:
-        from datetime import datetime
         def parse_match_time(mt):
             if not mt:
                 return datetime.max
@@ -486,48 +501,56 @@ scheduler = None
 
 def _crawl_latest():
     try:
-        current_hour = datetime.now().hour
-        # 晚上11点(23)到早上11点(11)之间，不爬取指数信息
-        should_crawl_odds = (11 <= current_hour < 23)
+        print(f"⏰ 开始定时爬取任务: {datetime.now()}")
         
+        # 1. 爬取当天比赛列表 (逻辑与 /api/crawl_stream 保持一致)
         date_str = datetime.now().strftime('%Y-%m-%d')
         url = f"https://live.500.com/?e={date_str}"
-        # 传入 mongo_storage 实现边爬边存
-        c = FootballCrawler(mongo_storage)
-        matches = c.crawl_daily_matches(url)
-        # crawl_daily_matches 内部已经调用了 save_match，这里不需要再批量保存
-        # if mongo_storage and matches:
-        #    mongo_storage.save_matches(matches)
         
-        # 爬取赔率（指数信息），带时间限制
-        if should_crawl_odds:
-            print(f"当前时间 {current_hour}点，开始爬取赔率...")
-            workers = 8
-            def fetch(mid):
-                # 这里的 crawl_match_odds 内部并没有自动保存赔率，所以需要在这里保存
-                odds = crawler.crawl_match_odds(mid)
-                if odds and mongo_storage:
-                    mongo_storage.save_odds(mid, odds)
-                return odds
+        # 使用全局 crawler (不带 mongo_storage，需手动保存)
+        matches = crawler.crawl_daily_matches(url)
+        
+        if not matches:
+            print("⚠️  定时任务: 未爬取到比赛数据")
+            return
 
-            with ThreadPoolExecutor(max_workers=workers) as executor:
-                futures = {}
-                for m in matches or []:
-                    mid = m.get('match_id')
-                    # 仅对未开始或进行中的比赛爬取赔率，减少压力
-                    status = m.get('status')
-                    if mid and status in [0, 1]:
-                        futures[executor.submit(fetch, mid)] = mid
-                
-                # 等待所有任务完成
-                for fut in as_completed(futures):
-                    try:
-                        fut.result()
-                    except Exception:
-                        pass
-        else:
-            print(f"当前时间 {current_hour}点，跳过爬取赔率 (仅11:00-23:00爬取)")
+        # 2. 保存比赛基本信息
+        if mongo_storage:
+            count = mongo_storage.save_matches(matches)
+            print(f"✅ 定时任务: 已更新 {count} 场比赛基本信息")
+        
+        # 3. 并发爬取赔率 (逻辑与 /api/crawl_stream 保持一致)
+        # 去掉时间限制，只要有未开始或进行中的比赛就爬取
+        workers = 8
+        odds_count = 0
+        
+        def fetch(mid):
+            return crawler.crawl_match_odds(mid)
 
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = {}
+            for m in matches:
+                mid = m.get('match_id')
+                status = m.get('status')
+                # 仅对未开始(0)或进行中(1)的比赛爬取赔率
+                # 相比 crawl_stream，这里保留了状态过滤，避免重复爬取已完场比赛的赔率
+                if mid and status in [0, 1]:
+                    futures[executor.submit(fetch, mid)] = m
+            
+            for fut in as_completed(futures):
+                m = futures[fut]
+                mid = m.get('match_id')
+                try:
+                    odds = fut.result()
+                    if odds and mongo_storage:
+                        mongo_storage.save_odds(mid, odds)
+                        odds_count += 1
+                except Exception as e:
+                    print(f"❌ 定时任务: 爬取赔率失败 {mid}: {str(e)}")
+        
+        print(f"✅ 定时任务: 已更新 {odds_count} 场比赛赔率")
+
+        # 4. 微信推送逻辑 (保持不变)
         def to_float(x):
             try:
                 return float(x)
@@ -975,12 +998,8 @@ def get_daily_predictions():
         if not date_str:
             date_str = datetime.now().strftime('%Y-%m-%d')
         
-        # 提取月-日部分用于匹配（兼容 "12-09" 和 "2024-12-09" 格式）
-        date_short = date_str[-5:] if len(date_str) >= 5 else date_str  # "12-09"
-        
         # 获取指定日期的未开始比赛
-        all_matches = mongo_storage.get_matches()
-        matches = [m for m in all_matches if date_short in m.get('match_time', '') and m.get('status') == 0]
+        matches = mongo_storage.get_matches(filters={'owner_date': date_str, 'status': 0})
         
         if not matches:
             return jsonify({'success': False, 'message': f'{date_str} 暂无未开始的比赛'}), 404

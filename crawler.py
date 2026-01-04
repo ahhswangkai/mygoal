@@ -659,25 +659,456 @@ class FootballCrawler:
             
         return handicap_index_data
     
-    def crawl_daily_matches(self, url):
+    def parse_match_list_json(self, json_data):
         """
-        爬取每日比赛信息
+        解析比赛列表JSON数据 - 500彩票网新接口
         
         Args:
-            url: 目标网站URL
+            json_data: JSON数据字典
+            
+        Returns:
+            matches: 比赛列表
+        """
+        matches = []
+        try:
+            if not json_data or 'data' not in json_data or 'matches' not in json_data['data']:
+                self.logger.warning("JSON数据格式不正确")
+                return matches
+            
+            raw_matches = json_data['data']['matches']
+            if not raw_matches:
+                return matches
+                
+            for item in raw_matches:
+                # 提取基本信息
+                match_id = item.get('fid', '')
+                match_number = item.get('order', '')  # 场次，如：周日001
+                league = item.get('simpleleague', '')
+                round_str = item.get('matchround', '')
+                match_time = item.get('matchtime', '')
+                
+                # 格式化时间：保留 MM-DD HH:MM
+                if match_time:
+                    try:
+                        dt = datetime.strptime(match_time, '%Y-%m-%d %H:%M:%S')
+                        match_time = dt.strftime('%m-%d %H:%M')
+                    except Exception:
+                        pass
+                
+                # 状态映射
+                # JSON status: "0"=未开始, "100"=完场? Need to rely on status_desc mostly
+                status_desc = item.get('status_desc', '')
+                json_status = str(item.get('status', '0'))
+                
+                status_code = 0
+                if '完' in status_desc or '结束' in status_desc:
+                    status_code = 2
+                elif '未' in status_desc or '推迟' in status_desc or '取消' in status_desc:
+                    status_code = 0
+                else:
+                    # 其他情况视为进行中 (如 "上半场", "45+2", etc)
+                    status_code = 1
+                
+                # 针对已结束或进行中的比赛，强制更新状态
+                # 如果status_desc显示为完场，或者分数存在且不为空，则认为不是未开始
+                home_score = item.get('homescore', '')
+                away_score = item.get('awayscore', '')
+                
+                # if status_code == 0:
+                #     # 只有当比分都是数字，且不全为空时，才认为是进行中
+                #     # 注意：有些未开始的比赛 homescore可能是空字符串或者其他非数字字符，需要严谨判断
+                #     if home_score and away_score and home_score.strip().isdigit() and away_score.strip().isdigit():
+                #          # 有有效比分，大概率已开始或已结束
+                #          status_code = 1 # 先设为进行中
+                #          
+                #          # 如果描述里有“完”字，或者时间已过很久（这里暂不判断时间），设为2
+                #          if '完' in status_desc or '结束' in status_desc:
+                #              status_code = 2
+                    # 检查是否因为是空字符串而被误判
+                    # 有些接口返回 homescore="" awayscore="" 但实际比赛可能未开始
+                    # 所以必须确保 score 是非空的数字字符串才认为是进行中/完场
+                
+                # 比分和排名
+                home_team = item.get('homesxname', '')
+                home_rank = item.get('homestanding', '')
+                away_team = item.get('awaysxname', '')
+                away_rank = item.get('awaystanding', '')
+                
+                home_score = item.get('homescore', '')
+                away_score = item.get('awayscore', '')
+                handicap = item.get('rangqiu', '')
+                owner_date = item.get('ownerdate', '')
+                # 尝试标准化 owner_date 为 YYYY-MM-DD
+                if owner_date and '-' not in owner_date and len(owner_date) == 8:
+                    try:
+                        # 假设是 YYYYMMDD
+                        owner_date = f"{owner_date[:4]}-{owner_date[4:6]}-{owner_date[6:]}"
+                    except:
+                        pass
+                
+                score = '-'
+                if status_code != 0 and home_score and away_score:
+                    score = f"{home_score}-{away_score}"
+                
+                match_data = {
+                    'match_id': match_id,
+                    'match_number': match_number,
+                    'round_id': match_number,
+                    'league': league,
+                    'round': round_str,
+                    'match_time': match_time,
+                    'status': status_code,
+                    'status_text': status_desc,
+                    'home_team': home_team,
+                    'home_rank': home_rank,
+                    'score': score,
+                    'away_team': away_team,
+                    'away_rank': away_rank,
+                    'home_score': home_score,
+                    'away_score': away_score,
+                    'handicap': handicap,
+                    'owner_date': owner_date,
+                }
+                
+                matches.append(match_data)
+                
+                # 逐条保存
+                if self.mongo_storage:
+                    self.mongo_storage.save_match(match_data)
+                    
+            self.logger.info(f"解析到 {len(matches)} 场比赛 (JSON)")
+            
+        except Exception as e:
+            self.logger.error(f"解析比赛列表JSON失败: {str(e)}")
+            import traceback
+            self.logger.error(traceback.format_exc())
+            
+        return matches
+
+    def crawl_daily_matches(self, url_or_date):
+        """
+        爬取每日比赛信息
+        支持传入日期字符串(YYYY-MM-DD)或旧版URL
+        会自动转换为新版JSON接口获取数据
+        
+        Args:
+            url_or_date: 日期字符串 或 目标网站URL
             
         Returns:
             matches: 比赛数据列表
         """
         try:
-            response = self._make_request(url)
-            html = self._decode_html(response)
-            matches = self.parse_match_list(html)
+            # 解析日期
+            target_date = None
+            if 'live.500.com' in url_or_date and 'e=' in url_or_date:
+                # 从URL提取日期
+                try:
+                    query = urlparse(url_or_date).query
+                    params = dict(p.split('=') for p in query.split('&') if '=' in p)
+                    date_str = params.get('e')
+                    if date_str:
+                        target_date = datetime.strptime(date_str, '%Y-%m-%d')
+                except Exception:
+                    pass
+            else:
+                # 尝试直接解析日期字符串
+                try:
+                    target_date = datetime.strptime(url_or_date, '%Y-%m-%d')
+                except Exception:
+                    pass
+            
+            # 如果无法解析日期，默认使用今天
+            if not target_date:
+                target_date = datetime.now()
+                
+            # 构建JSON接口URL
+            # 格式: https://ews.500.com/static/ews/jczq/YYYYMM/YYYYMMDD.json
+            ym = target_date.strftime('%Y%m')
+            ymd = target_date.strftime('%Y%m%d')
+            ts = int(time.time() * 1000)
+            json_url = f"https://ews.500.com/static/ews/jczq/{ym}/{ymd}.json?random={ts}"
+            
+            self.logger.info(f"使用新接口抓取比赛: {json_url}")
+            
+            response = self._make_request(json_url)
+            # JSON接口通常返回JSON，不需要复杂的HTML解码，但_make_request会自动处理编码
+            try:
+                json_data = response.json()
+            except Exception:
+                # 如果自动解析失败，尝试手动解码
+                content = self._decode_html(response)
+                import json
+                json_data = json.loads(content)
+                
+            matches = self.parse_match_list_json(json_data)
+            
+            # 获取并合并让球赔率信息
+            try:
+                odds_data = self.crawl_match_odds_xml()
+                euro_odds_data = self.crawl_euro_odds_xml()
+                asian_odds_data = self.crawl_asian_odds_xml()
+                
+                for match in matches:
+                    order = match.get('match_number', '')  # 例如: "周日001"
+                    if order:
+                        # 转换场次号: 周日001 -> 7001
+                        day_map = {'周一': '1', '周二': '2', '周三': '3', '周四': '4', '周五': '5', '周六': '6', '周日': '7'}
+                        matchnum = ''
+                        for day_cn, day_num in day_map.items():
+                            if order.startswith(day_cn):
+                                num_part = order[len(day_cn):]
+                                matchnum = day_num + num_part
+                                break
+                        
+                        if matchnum:
+                            # 1. 合并让球赔率
+                            if matchnum in odds_data:
+                                odd_info = odds_data[matchnum]
+                                if 'currodds' in odd_info:
+                                    match['handicap_odds'] = odd_info['currodds']
+                                if 'updatetime' in odd_info:
+                                    match['odds_update_time'] = odd_info['updatetime']
+                                
+                                # 存储更详细的让球赔率信息
+                                if 'initial_win' in odd_info:
+                                    match['hi_initial_home_odds'] = odd_info['initial_win']
+                                    match['hi_initial_draw_odds'] = odd_info['initial_draw']
+                                    match['hi_initial_away_odds'] = odd_info['initial_lost']
+                                if 'current_win' in odd_info:
+                                    match['hi_current_home_odds'] = odd_info['current_win']
+                                    match['hi_current_draw_odds'] = odd_info['current_draw']
+                                    match['hi_current_away_odds'] = odd_info['current_lost']
+                                
+                                # 将rangqiu字段也映射到hi_handicap_value
+                                if match.get('handicap'):
+                                    try:
+                                        match['hi_handicap_value'] = float(match.get('handicap'))
+                                    except:
+                                        pass
+                            
+                            # 2. 合并欧赔（胜平负）赔率
+                            if matchnum in euro_odds_data:
+                                euro_info = euro_odds_data[matchnum]
+                                if 'currodds' in euro_info:
+                                    match['euro_odds'] = euro_info['currodds']
+                                
+                                # 存储更详细的欧赔信息
+                                if 'initial_win' in euro_info:
+                                    match['euro_initial_win'] = euro_info['initial_win']
+                                if 'initial_draw' in euro_info:
+                                    match['euro_initial_draw'] = euro_info['initial_draw']
+                                if 'initial_lost' in euro_info:
+                                    match['euro_initial_lose'] = euro_info['initial_lost']
+                                    
+                                if 'current_win' in euro_info:
+                                    match['euro_current_win'] = euro_info['current_win']
+                                if 'current_draw' in euro_info:
+                                    match['euro_current_draw'] = euro_info['current_draw']
+                                if 'current_lost' in euro_info:
+                                    match['euro_current_lose'] = euro_info['current_lost']
+                            
+                            # 3. 合并亚盘赔率
+                            if matchnum in asian_odds_data:
+                                asian_info = asian_odds_data[matchnum]
+                                if 'asian_odds' in asian_info:
+                                    match['asian_odds'] = asian_info['asian_odds']
+                                  
+            except Exception as e:
+                self.logger.error(f"获取XML赔率数据失败: {str(e)}")
+            
             return matches
+            
         except Exception as e:
             self.logger.error(f"爬取比赛信息失败: {str(e)}")
+            import traceback
+            self.logger.error(traceback.format_exc())
             return []
     
+    def crawl_match_odds_xml(self):
+        """
+        从XML接口获取让球赔率数据
+        URL: https://trade.500.com/static/public/jczq/newxml/pl/pl_spf_2.xml
+        
+        Returns:
+            odds_data: 字典，key为matchnum，value为赔率信息
+        """
+        odds_data = {}
+        try:
+            # 修正：让球赔率应该是 pl_spf_2.xml (SPF = 让球胜平负)
+            url = "https://trade.500.com/static/public/jczq/newxml/pl/pl_spf_2.xml"
+            self.logger.info(f"获取让球赔率XML数据: {url}")
+            
+            response = self._make_request(url)
+            content = self._decode_html(response)
+            
+            # 简单的XML解析，不引入额外依赖
+            import xml.etree.ElementTree as ET
+            root = ET.fromstring(content)
+            
+            for m in root.findall('m'):
+                matchnum = m.get('matchnum')
+                if not matchnum:
+                    continue
+                    
+                # 获取最新的一条赔率记录（第一条row通常是即时盘，最后一条是初盘）
+                rows = m.findall('row')
+                if not rows:
+                    continue
+                    
+                # 第一条是即时盘
+                current_row = rows[0]
+                # 最后一条是初盘
+                initial_row = rows[-1]
+                
+                # 获取即时盘赔率
+                curr_win = current_row.get('win')
+                curr_draw = current_row.get('draw')
+                curr_lost = current_row.get('lost')
+                
+                # 获取初盘赔率
+                init_win = initial_row.get('win')
+                init_draw = initial_row.get('draw')
+                init_lost = initial_row.get('lost')
+                
+                if current_row is not None:
+                    odds_str = f"{curr_win}/{curr_draw}/{curr_lost}"
+                    odds_data[matchnum] = {
+                        'currodds': odds_str,
+                        'updatetime': current_row.get('updatetime'),
+                        # 保存更详细的赔率信息
+                        'initial_win': init_win,
+                        'initial_draw': init_draw,
+                        'initial_lost': init_lost,
+                        'current_win': curr_win,
+                        'current_draw': curr_draw,
+                        'current_lost': curr_lost
+                    }
+                    
+            self.logger.info(f"解析到 {len(odds_data)} 条赔率数据")
+            
+        except Exception as e:
+            self.logger.error(f"解析赔率XML失败: {str(e)}")
+            import traceback
+            self.logger.error(traceback.format_exc())
+            
+        return odds_data
+
+    def crawl_euro_odds_xml(self):
+        """
+        从XML接口获取欧赔（胜平负）赔率数据
+        URL: https://trade.500.com/static/public/jczq/newxml/pl/pl_nspf_2.xml
+        
+        Returns:
+            odds_data: 字典，key为matchnum，value为赔率信息
+        """
+        odds_data = {}
+        try:
+            # 修正：欧赔（胜平负）应该是 pl_nspf_2.xml (nSPF = 胜平负)
+            url = "https://trade.500.com/static/public/jczq/newxml/pl/pl_nspf_2.xml"
+            self.logger.info(f"获取欧赔XML数据: {url}")
+            
+            response = self._make_request(url)
+            content = self._decode_html(response)
+            
+            # 简单的XML解析
+            import xml.etree.ElementTree as ET
+            root = ET.fromstring(content)
+            for m in root.findall('m'):
+                matchnum = m.get('matchnum')
+                if not matchnum:
+                    continue
+              
+                rows = m.findall('row')
+                if not rows:
+                    continue
+                    
+                # 获取最新的一条赔率记录（第一条row通常是即时盘，最后一条是初盘）
+                # 第一条是即时盘
+                current_row = rows[0]
+                # 最后一条是初盘
+                initial_row = rows[-1]            
+                
+                # 获取即时盘赔率
+                curr_win = current_row.get('win')
+                curr_draw = current_row.get('draw')
+                curr_lost = current_row.get('lost')
+                
+                # 获取初盘赔率
+                init_win = initial_row.get('win')
+                init_draw = initial_row.get('draw')
+                init_lost = initial_row.get('lost')
+                
+                if current_row is not None:
+                    odds_str = f"{curr_win}/{curr_draw}/{curr_lost}"
+                    odds_data[matchnum] = {
+                        'currodds': odds_str,
+                        'updatetime': current_row.get('updatetime'),
+                        # 保存更详细的赔率信息
+                        'initial_win': init_win,
+                        'initial_draw': init_draw,
+                        'initial_lost': init_lost,
+                        'current_win': curr_win,
+                        'current_draw': curr_draw,
+                        'current_lost': curr_lost
+                    }
+                    
+            self.logger.info(f"解析到 {len(odds_data)} 条欧赔数据")
+            
+        except Exception as e:
+            self.logger.error(f"解析欧赔XML失败: {str(e)}")
+            import traceback
+            self.logger.error(traceback.format_exc())
+            
+        return odds_data
+
+    def crawl_asian_odds_xml(self):
+        """
+        从XML接口获取亚盘赔率数据
+        URL: https://www.500.com/static/public/jczq/xml/odds/odds.xml
+        
+        Returns:
+            odds_data: 字典，key为matchnum，value为赔率信息
+        """
+        odds_data = {}
+        try:
+            url = "https://www.500.com/static/public/jczq/xml/odds/odds.xml"
+            self.logger.info(f"获取亚盘XML数据: {url}")
+            
+            response = self._make_request(url)
+            content = self._decode_html(response)
+
+            # 简单的XML解析
+            import xml.etree.ElementTree as ET
+            root = ET.fromstring(content).find('matches')
+            
+            for m in root.findall('match'):
+                # 注意：这里的 processname 对应 matchnum (e.g. 6031, 7001)
+                matchnum = m.get('processname')
+                if not matchnum:
+                    continue
+                
+                # 获取 asian 节点
+                asian_node = m.find('asian')
+                if asian_node is not None:
+                    # 获取 bet365 属性
+                    # 格式: "0.800,受一球/球半,1.050"
+                    bet365_data = asian_node.get('bet365')
+                    if bet365_data:
+                        # 我们可以直接存储这个字符串，或者解析它
+                        # 这里直接存储，由前端或后续逻辑处理显示
+                        odds_data[matchnum] = {
+                            'asian_odds': bet365_data
+                        }
+                    
+            self.logger.info(f"解析到 {len(odds_data)} 条亚盘数据")
+            
+        except Exception as e:
+            self.logger.error(f"解析亚盘XML失败: {str(e)}")
+            import traceback
+            self.logger.error(traceback.format_exc())
+            
+        return odds_data
+
     def _fetch_data(self, url, parser_func, retries=3):
         """
         获取并解析数据，带重试机制
@@ -743,10 +1174,10 @@ class FootballCrawler:
         
         try:
             # 1. 爬取欧赔（使用欧赔专门页面）
-            euro_url = f"https://odds.500.com/fenxi/ouzhi-{match_id}.shtml"
-            euro_data = self._fetch_data(euro_url, self.parse_odds)
-            if euro_data and euro_data.get('euro_odds'):
-                odds_data['euro_odds'] = euro_data['euro_odds']
+            # euro_url = f"https://odds.500.com/fenxi/ouzhi-{match_id}.shtml"
+            # euro_data = self._fetch_data(euro_url, self.parse_odds)
+            # if euro_data and euro_data.get('euro_odds'):
+            #     odds_data['euro_odds'] = euro_data['euro_odds']
             
             # 2. 爬取亚盘（使用亚盘专门页面）
             asian_url = f"https://odds.500.com/fenxi/yazhi-{match_id}.shtml"
@@ -761,10 +1192,10 @@ class FootballCrawler:
                 odds_data['over_under'] = over_under_data
             
             # 4. 爬取让球指数（使用让球指数专门页面）
-            handicap_index_url = f"https://odds.500.com/fenxi/rangqiu-{match_id}.shtml"
-            handicap_index_data = self._fetch_data(handicap_index_url, self.parse_handicap_index)
-            if handicap_index_data:
-                odds_data['handicap_index'] = handicap_index_data
+            # handicap_index_url = f"https://odds.500.com/fenxi/rangqiu-{match_id}.shtml"
+            # handicap_index_data = self._fetch_data(handicap_index_url, self.parse_handicap_index)
+            # if handicap_index_data:
+            #     odds_data['handicap_index'] = handicap_index_data
             
             return odds_data
             

@@ -653,7 +653,7 @@
                 </select>
                 <input type="hidden" id="statusFilter" value="0">
                 <button class="btn btn-primary" onclick="loadMatches()">🔄 刷新数据</button>
-                <input type="date" id="datePicker" style="padding: 10px 15px; border: 2px solid #e2e8f0; border-radius: 8px; font-size: 14px;"> <button class="btn btn-success" onclick="crawlNewData()">📥 爬取新数据</button>
+                <input type="date" id="datePicker" style="padding: 10px 15px; border: 2px solid #e2e8f0; border-radius: 8px; font-size: 14px;" onchange="loadMatches(1)"> <button class="btn btn-success" onclick="crawlNewData()">📥 爬取新数据</button>
 
                 <button class="btn btn-success" onclick="reviewFinished()" style="background:#48bb78;">🧾 复盘完场</button>
                 <button class="btn btn-success" onclick="location.href='/daily_recommendations'" style="background:linear-gradient(135deg, #f093fb 0%, #f5576c 100%);">📊 每日推荐</button>
@@ -719,10 +719,12 @@
             try {
                 const league = document.getElementById('leagueFilter').value;
                 const status = document.getElementById('statusFilter').value;
+                const date = document.getElementById('datePicker').value;
                 
                 let url = `/api/matches?page=${page}&page_size=${pageSize}`;
                 if (league) url += `&league=${encodeURIComponent(league)}`;
                 if (status) url += `&status=${encodeURIComponent(status)}`;
+                if (date) url += `&date=${encodeURIComponent(date)}`;
                 
                 const response = await fetch(url);
                 const result = await response.json();
@@ -940,15 +942,18 @@
                 const predictionId = `pred-${match.match_id}`;
                 
                 // 球队名称前显示排名
-                const homeDisplay = match.home_rank ? `<span style="color:#718096;font-size:11px;margin-right:4px;">[${match.home_rank}]</span>${match.home_team}` : (match.home_team || '主队');
-                const awayDisplay = match.away_rank ? `<span style="color:#718096;font-size:11px;margin-right:4px;">[${match.away_rank}]</span>${match.away_team}` : (match.away_team || '客队');
+                const showHomeRank = match.home_rank && parseInt(match.home_rank) >= 1;
+                const showAwayRank = match.away_rank && parseInt(match.away_rank) >= 1;
+
+                const homeDisplay = showHomeRank ? `<span style="color:#718096;font-size:11px;margin-right:4px;">[${match.home_rank}]</span>${match.home_team}` : (match.home_team || '主队');
+                const awayDisplay = showAwayRank ? `<span style="color:#718096;font-size:11px;margin-right:4px;">[${match.away_rank}]</span>${match.away_team}` : (match.away_team || '客队');
                 
                 // 生成移动端卡片
                 const mHomeTeam = match.home_team || '主队';
                 const mAwayTeam = match.away_team || '客队';
                 // 强制显示排名以便调试（如果有值的话），并且使用独立的span
-                const mHomeRank = match.home_rank ? `<span class="m-rank">[${match.home_rank}]</span>` : '';
-                const mAwayRank = match.away_rank ? `<span class="m-rank">[${match.away_rank}]</span>` : '';
+                const mHomeRank = showHomeRank ? `<span class="m-rank">[${match.home_rank}]</span>` : '';
+                const mAwayRank = showAwayRank ? `<span class="m-rank">[${match.away_rank}]</span>` : '';
 
                 mobileCardsArr.push(`
                     <div class="mobile-card" onclick="viewMatchDetail('${match.match_id}')">
@@ -962,7 +967,7 @@
                         <div class="m-body">
                             <div class="m-team home">${mHomeRank}${mHomeTeam}</div>
                             <div class="m-score-box">
-                                <div class="m-score">${score}</div>
+                                ${ (match.status === 1 || match.status === 2) ? `<div class="m-score">${score}</div>` : '' }
                                 <div class="m-status">${statusText}</div>
                             </div>
                             <div class="m-team away">${mAwayRank}${mAwayTeam}</div>
