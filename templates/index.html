@@ -817,6 +817,15 @@
                 // 通用函数：格式化变动
                 const fmtChange = (diff) => diff == null ? '—' : ((diff > 0 ? '↑' : (diff < 0 ? '↓' : '—')) + (diff !== 0 ? Math.abs(diff).toFixed(2) : ''));
                 
+                // 赔率更新时间
+                const fmtTimeShort = (t) => {
+                    if (!t) return '';
+                    const full = formatUpdated(t);
+                    return full === '未知' ? '' : full.substring(5); // MM-dd HH:mm
+                };
+                const euroTime = fmtTimeShort(match.euro_odds_update_time);
+                const handicapTime = fmtTimeShort(match.odds_update_time);
+
                 // 计算欧赔变动（主/平/客）
                 const euroWinInitF = toFloat(match.euro_initial_win);  // 实际初盘
                 const euroWinCurrF = toFloat(match.euro_current_win);  // 实际即时
@@ -834,7 +843,7 @@
                 const euroLoseMove = highlightEuroMove(fmtChange(euroLoseDiff), euroLoseDiff);
                 const euroMoveHtml = (euroHasInitial && euroHasCurrent) ? `<div style="color:#718096;font-size:12px;margin-top:4px;">主${euroWinMove} 平${euroDrawMove} 客${euroLoseMove}</div>` : '';
                 const euro = (euroHasInitial || euroHasCurrent)
-                    ? (euroHasInitial ? '<div>初: ' + euroInit + '</div>' : '') + (euroHasCurrent ? '<div>即: ' + euroCurr + '</div>' : '') + euroMoveHtml
+                    ? (euroHasInitial ? '<div>初: ' + euroInit + '</div>' : '') + (euroHasCurrent ? '<div>即: ' + euroCurr + '</div>' : '') + euroMoveHtml + (euroTime ? `<div style="color:#a0aec0;font-size:10px;margin-top:2px;">${euroTime}</div>` : '')
                     : '—';
                 const asianHasCurrent = (match.asian_current_home_odds || match.asian_current_handicap || match.asian_current_away_odds);
                 const asianHasInitial = (match.asian_initial_home_odds || match.asian_initial_handicap || match.asian_initial_away_odds);
@@ -980,6 +989,7 @@
                                     <div class="m-odds-content">
                                         <div class="m-odds-row-text"><span>初: ${euroInit}</span></div>
                                         <div class="m-odds-row-text"><span>即: ${euroCurr}</span></div>
+                                        ${euroTime ? `<div style="font-size:10px;color:#a0aec0;margin-top:2px;">${euroTime}</div>` : ''}
                                     </div>
                                 </div>
                                 <!-- 亚盘 -->
@@ -997,6 +1007,7 @@
                                     <div class="m-odds-content">
                                         ${hiHasInitial ? `<div class="m-odds-row-text"><span>初: ${hiInit}</span></div>` : ''}
                                         ${hiHasCurrent ? `<div class="m-odds-row-text"><span>即: ${hiCurr}</span></div>` : ''}
+                                        ${handicapTime ? `<div style="font-size:10px;color:#a0aec0;margin-top:2px;">${handicapTime}</div>` : ''}
                                     </div>
                                 </div>
                                 ` : '' }
@@ -1100,13 +1111,26 @@
         function formatUpdated(updatedAt) {
             if (!updatedAt) return '未知';
             try {
+                // 如果是 YYYY-MM-DD 格式（通常是爬虫直接抓取的本地时间字符串），直接返回
+                // 简单的正则检查：以4位数字-2位数字开头
+                if (typeof updatedAt === 'string' && /^\d{4}-\d{2}-\d{2}/.test(updatedAt)) {
+                    return updatedAt;
+                }
+                
                 const date = new Date(updatedAt);
-                // 使用UTC时间获取，避免因时区转换导致的时间偏差（后端返回的是GMT格式但内容可能是本地时间）
-                const year = date.getUTCFullYear();
-                const month = String(date.getUTCMonth() + 1).padStart(2, '0');
-                const day = String(date.getUTCDate()).padStart(2, '0');
-                const hours = String(date.getUTCHours()).padStart(2, '0');
-                const minutes = String(date.getUTCMinutes()).padStart(2, '0');
+                // 检查日期是否有效
+                if (isNaN(date.getTime())) {
+                    return String(updatedAt);
+                }
+
+                // 修正时区：减去8小时
+                date.setHours(date.getHours() - 8);
+
+                const year = date.getFullYear();
+                const month = String(date.getMonth() + 1).padStart(2, '0');
+                const day = String(date.getDate()).padStart(2, '0');
+                const hours = String(date.getHours()).padStart(2, '0');
+                const minutes = String(date.getMinutes()).padStart(2, '0');
                 
                 return `${year}-${month}-${day} ${hours}:${minutes}`;
             } catch (e) {

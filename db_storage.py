@@ -198,6 +198,12 @@ class MongoDBStorage:
         try:
             update_fields = {'updated_at': datetime.now()}
             
+            # 更新时间字段（如果有）
+            if 'euro_odds_update_time' in odds_data:
+                update_fields['euro_odds_update_time'] = odds_data['euro_odds_update_time']
+            if 'odds_update_time' in odds_data:
+                update_fields['odds_update_time'] = odds_data['odds_update_time']
+            
             # 欧赔
             if odds_data.get('euro_odds') and len(odds_data['euro_odds']) > 0:
                 euro = odds_data['euro_odds'][0]

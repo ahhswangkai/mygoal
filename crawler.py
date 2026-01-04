@@ -892,6 +892,10 @@ class FootballCrawler:
                                 if 'currodds' in euro_info:
                                     match['euro_odds'] = euro_info['currodds']
                                 
+                                # 保存欧赔更新时间
+                                if 'updatetime' in euro_info:
+                                    match['euro_odds_update_time'] = euro_info['updatetime']
+                                
                                 # 存储更详细的欧赔信息
                                 if 'initial_win' in euro_info:
                                     match['euro_initial_win'] = euro_info['initial_win']

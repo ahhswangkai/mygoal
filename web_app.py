@@ -1786,10 +1786,10 @@ def get_my_picks():
             }
             options_text = [label_map.get(o, o) for o in options]
             
-            # 获取赔率
-            euro_win = match.get('euro_initial_win') or match.get('euro_current_win')  # 即时盘
-            euro_draw = match.get('euro_initial_draw') or match.get('euro_current_draw')
-            euro_lose = match.get('euro_initial_lose') or match.get('euro_current_lose')
+            # 获取赔率 - 优先获取即时赔率，如果没有再获取初赔
+            euro_win = match.get('euro_current_win') or match.get('euro_initial_win')
+            euro_draw = match.get('euro_current_draw') or match.get('euro_initial_draw')
+            euro_lose = match.get('euro_current_lose') or match.get('euro_initial_lose')
             hi_home = match.get('hi_current_home_odds') or match.get('hi_initial_home_odds')
             hi_draw = match.get('hi_current_draw_odds') or match.get('hi_initial_draw_odds')
             hi_away = match.get('hi_current_away_odds') or match.get('hi_initial_away_odds')
