@@ -755,14 +755,18 @@
             
             const mobileCardsArr = [];
             const rows = matches.map(match => {
-                const score = (match.home_score && match.away_score && match.home_score !== '-' && match.away_score !== '-')
-                    ? `${match.home_score}-${match.away_score}`
-                    : (match.handicap || '-');
+                let score = (match.handicap || '-');
+                if (match.status === 6) {
+                    score = '改期';
+                } else if (match.home_score && match.away_score && match.home_score !== '-' && match.away_score !== '-') {
+                    score = `${match.home_score}-${match.away_score}`;
+                }
                 
                 // 计算命中逻辑（仅完场比赛）
                 let euroResult = null;  // 'win', 'draw', 'lose'
                 let asianResult = null; // 'home', 'away'
                 let ouResult = null;    // 'over', 'under'
+                let hiResult = null;    // 'win', 'draw', 'lose' (让球结果)
                 
                 if (match.status === 2 && match.home_score && match.away_score && match.home_score !== '-' && match.away_score !== '-') {
                     try {
@@ -793,6 +797,15 @@
                                 const actualTotal = home + away;
                                 if (actualTotal > total) ouResult = 'over';
                                 else if (actualTotal < total) ouResult = 'under';
+                            }
+
+                            // 让球结果
+                            const hiHandicap = parseFloat(match.hi_handicap_value);
+                            if (!isNaN(hiHandicap)) {
+                                const adjustedHome = home + hiHandicap;
+                                if (adjustedHome > away) hiResult = 'win';
+                                else if (adjustedHome < away) hiResult = 'lose';
+                                else hiResult = 'draw';
                             }
                         }
                     } catch (e) {}
@@ -909,8 +922,17 @@
                 const hiHasInitial = match.hi_initial_home_odds && match.hi_initial_draw_odds && match.hi_initial_away_odds;
                 const hiHasCurrent = match.hi_current_home_odds && match.hi_current_draw_odds && match.hi_current_away_odds;
                 const hiHandicap = match.hi_handicap_value || '';
-                const hiInit = hiHasInitial ? `${match.hi_initial_home_odds}/${match.hi_initial_draw_odds}/${match.hi_initial_away_odds}` : '';
-                const hiCurr = hiHasCurrent ? `${match.hi_current_home_odds}/${match.hi_current_draw_odds}/${match.hi_current_away_odds}` : '';
+                
+                const hiInitHome = hiResult === 'win' ? `<span class="odds-hit">${match.hi_initial_home_odds || ''}</span>` : (match.hi_initial_home_odds || '');
+                const hiInitDraw = hiResult === 'draw' ? `<span class="odds-hit">${match.hi_initial_draw_odds || ''}</span>` : (match.hi_initial_draw_odds || '');
+                const hiInitAway = hiResult === 'lose' ? `<span class="odds-hit">${match.hi_initial_away_odds || ''}</span>` : (match.hi_initial_away_odds || '');
+                
+                const hiCurrHome = hiResult === 'win' ? `<span class="odds-hit">${match.hi_current_home_odds || ''}</span>` : (match.hi_current_home_odds || '');
+                const hiCurrDraw = hiResult === 'draw' ? `<span class="odds-hit">${match.hi_current_draw_odds || ''}</span>` : (match.hi_current_draw_odds || '');
+                const hiCurrAway = hiResult === 'lose' ? `<span class="odds-hit">${match.hi_current_away_odds || ''}</span>` : (match.hi_current_away_odds || '');
+
+                const hiInit = hiHasInitial ? `${hiInitHome}/${hiInitDraw}/${hiInitAway}` : '';
+                const hiCurr = hiHasCurrent ? `${hiCurrHome}/${hiCurrDraw}/${hiCurrAway}` : '';
                 // 计算让球指数变动（主/平/客）
                 const hiHomeInitF = toFloat(match.hi_initial_home_odds);
                 const hiHomeCurrF = toFloat(match.hi_current_home_odds);
@@ -976,7 +998,7 @@
                         <div class="m-body">
                             <div class="m-team home">${mHomeRank}${mHomeTeam}</div>
                             <div class="m-score-box">
-                                ${ (match.status === 1 || match.status === 2) ? `<div class="m-score">${score}</div>` : '' }
+                                ${ (match.status === 1 || match.status === 2 || match.status === 6) ? `<div class="m-score">${score}</div>` : '' }
                                 <div class="m-status">${statusText}</div>
                             </div>
                             <div class="m-team away">${mAwayRank}${mAwayTeam}</div>
@@ -1105,6 +1127,7 @@
         function getStatusText(status) {
             if (status === 2) return '完场';
             if (status === 1) return '进行中';
+            if (status === 6) return '改期';
             return '未开始';
         }
         

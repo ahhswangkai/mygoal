@@ -113,7 +113,8 @@ def get_matches():
     elif not date_str or date_str == datetime.now().strftime('%Y-%m-%d'):
         # 默认仅展示未开始比赛（仅在未指定日期或指定为今天时生效）
         # 如果用户明确查看历史日期，则不默认过滤状态
-        matches = [m for m in matches if m.get('status') == 0]
+        # 修改：同时展示未开始(0)和改期(6)的比赛
+        matches = [m for m in matches if m.get('status') in [0, 6]]
     
     # 排序：未开始的比赛按时间升序（默认或明确传入status=0）
     try:

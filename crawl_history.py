@@ -18,8 +18,7 @@ def crawl_history():
         logger.error(f"初始化失败: {e}")
         return
 
-    # Start date: 2025-07-01 (Assuming user means the most recent July 1st)
-    # If today is 2026-01-04, then July 1st 2025 is the target.
+    # Start date: 2025-08-01
     start_date = datetime(2025, 8, 1)
     end_date = datetime.now()
     
@@ -34,9 +33,31 @@ def crawl_history():
         logger.info(f"[{count+1}/{total_days}] 正在爬取 {date_str} 的数据...")
         
         try:
-            # crawl_daily_matches will automatically use JSON list + Hybrid Odds
-            matches = crawler.crawl_daily_matches(date_str)
-            logger.info(f"日期 {date_str} 爬取完成，共 {len(matches)} 场比赛")
+            # 1. 先获取并保存基本比赛列表 (fetch_odds=False)
+            logger.info(f"正在获取 {date_str} 的比赛列表...")
+            matches = crawler.crawl_daily_matches(date_str, fetch_odds=False)
+            logger.info(f"日期 {date_str} 列表获取完成，共 {len(matches)} 场比赛")
+            
+            # 2. 逐个更新赔率
+            logger.info(f"正在更新 {len(matches)} 场比赛的赔率详情...")
+            for i, match in enumerate(matches):
+                match_id = match.get('match_id')
+                if not match_id: continue
+                
+                # 进度日志
+                if (i + 1) % 5 == 0:
+                    logger.info(f"进度: {i + 1}/{len(matches)}")
+                
+                # 更新赔率
+                try:
+                    if crawler.update_single_match_odds(match):
+                        # 保存更新后的比赛信息
+                        storage.save_match(match)
+                        # 随机延时
+                        time.sleep(0.5)
+                except Exception as e:
+                    logger.error(f"更新比赛 {match_id} 赔率失败: {e}")
+
         except Exception as e:
             logger.error(f"爬取 {date_str} 失败: {e}")
         

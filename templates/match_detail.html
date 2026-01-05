@@ -310,6 +310,24 @@
         function displayMatchDetail(match) {
             const hasOdds = match.euro_current_win || match.asian_current_handicap || match.ou_current_total || match.hi_handicap_value;
             
+            // Calculate hiResult
+            let hiResult = null;
+            if (match.status === 2 && match.home_score && match.away_score && match.home_score !== '-' && match.away_score !== '-' && match.hi_handicap_value) {
+                try {
+                    const home = parseInt(match.home_score);
+                    const away = parseInt(match.away_score);
+                    const handicap = parseFloat(match.hi_handicap_value);
+                    if (!isNaN(home) && !isNaN(away) && !isNaN(handicap)) {
+                         const adjustedHome = home + handicap;
+                         if (adjustedHome > away) hiResult = 'win';
+                         else if (adjustedHome < away) hiResult = 'lose';
+                         else hiResult = 'draw';
+                    }
+                } catch(e) {}
+            }
+            
+            const hl = (val, hit) => hit ? `<span style="color:#e53e3e;font-weight:bold;">${val}</span>` : val;
+
             const html = `
                 <div class="match-header">
                     <div class="league-badge">${match.league || '未知联赛'}</div>
@@ -320,14 +338,14 @@
                 <div class="teams-display">
                     <div class="team-section">
                         <div class="team-name">${match.home_team || '主队'}</div>
-                        <div class="team-score">${match.home_score || '-'}</div>
+                        <div class="team-score">${match.status === 6 ? '改期' : (match.home_score || '-')}</div>
                     </div>
                     
                     <div class="vs-separator">VS</div>
                     
                     <div class="team-section">
                         <div class="team-name">${match.away_team || '客队'}</div>
-                        <div class="team-score">${match.away_score || '-'}</div>
+                        <div class="team-score">${match.status === 6 ? '改期' : (match.away_score || '-')}</div>
                     </div>
                 </div>
                 
@@ -406,7 +424,7 @@
                                     <div class="odds-type">大小球</div>
                                     <div class="odds-row">
                                         <span class="odds-label">即时盘 - 大球:</span>
-                                        <span class="odds-value">${match.ou_current_over_odds}</span>
+                                        <span class="odds-value">${match.ou_current_over}</span>
                                     </div>
                                     <div class="odds-row">
                                         <span class="odds-label">即时盘 - 盘口:</span>
@@ -414,13 +432,13 @@
                                     </div>
                                     <div class="odds-row">
                                         <span class="odds-label">即时盘 - 小球:</span>
-                                        <span class="odds-value">${match.ou_current_under_odds}</span>
+                                        <span class="odds-value">${match.ou_current_under}</span>
                                     </div>
                                     ${match.ou_initial_total ? `
                                         <hr style="margin: 15px 0; border: none; border-top: 1px solid #e2e8f0;">
                                         <div class="odds-row">
                                             <span class="odds-label">初盘 - 大球:</span>
-                                            <span class="odds-value">${match.ou_initial_over_odds}</span>
+                                            <span class="odds-value">${match.ou_initial_over}</span>
                                         </div>
                                         <div class="odds-row">
                                             <span class="odds-label">初盘 - 盘口:</span>
@@ -428,7 +446,7 @@
                                         </div>
                                         <div class="odds-row">
                                             <span class="odds-label">初盘 - 小球:</span>
-                                            <span class="odds-value">${match.ou_initial_under_odds}</span>
+                                            <span class="odds-value">${match.ou_initial_under}</span>
                                         </div>
                                     ` : ''}
                                 </div>
@@ -443,29 +461,29 @@
                                     </div>
                                     <div class="odds-row">
                                         <span class="odds-label">即时盘 - 主胜:</span>
-                                        <span class="odds-value">${match.hi_current_home_odds}</span>
+                                        <span class="odds-value">${hl(match.hi_current_home_odds, hiResult === 'win')}</span>
                                     </div>
                                     <div class="odds-row">
                                         <span class="odds-label">即时盘 - 平局:</span>
-                                        <span class="odds-value">${match.hi_current_draw_odds}</span>
+                                        <span class="odds-value">${hl(match.hi_current_draw_odds, hiResult === 'draw')}</span>
                                     </div>
                                     <div class="odds-row">
                                         <span class="odds-label">即时盘 - 客胜:</span>
-                                        <span class="odds-value">${match.hi_current_away_odds}</span>
+                                        <span class="odds-value">${hl(match.hi_current_away_odds, hiResult === 'lose')}</span>
                                     </div>
                                     ${match.hi_initial_home_odds ? `
                                         <hr style="margin: 15px 0; border: none; border-top: 1px solid #e2e8f0;">
                                         <div class="odds-row">
                                             <span class="odds-label">初盘 - 主胜:</span>
-                                            <span class="odds-value">${match.hi_initial_home_odds}</span>
+                                            <span class="odds-value">${hl(match.hi_initial_home_odds, hiResult === 'win')}</span>
                                         </div>
                                         <div class="odds-row">
                                             <span class="odds-label">初盘 - 平局:</span>
-                                            <span class="odds-value">${match.hi_initial_draw_odds}</span>
+                                            <span class="odds-value">${hl(match.hi_initial_draw_odds, hiResult === 'draw')}</span>
                                         </div>
                                         <div class="odds-row">
                                             <span class="odds-label">初盘 - 客胜:</span>
-                                            <span class="odds-value">${match.hi_initial_away_odds}</span>
+                                            <span class="odds-value">${hl(match.hi_initial_away_odds, hiResult === 'lose')}</span>
                                         </div>
                                     ` : ''}
                                 </div>

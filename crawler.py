@@ -700,6 +700,8 @@ class FootballCrawler:
                 status_code = 0
                 if '完' in status_desc or '结束' in status_desc:
                     status_code = 2
+                elif '改期' in status_desc:
+                    status_code = 6
                 elif '未' in status_desc or '推迟' in status_desc or '取消' in status_desc:
                     status_code = 0
                 else:
@@ -847,10 +849,14 @@ class FootballCrawler:
         # 实际情况中，可能需要寻找其他XML或忽略
         return {}
 
-    def crawl_daily_matches(self, url_or_date):
+    def crawl_daily_matches(self, url_or_date, fetch_odds=True):
         """
         爬取每日比赛信息
         支持传入日期字符串(YYYY-MM-DD)或旧版URL
+        
+        Args:
+            url_or_date: 日期或URL
+            fetch_odds: 是否同时爬取赔率详情（仅对历史数据有效）
         """
         try:
             # 解析日期
@@ -895,6 +901,10 @@ class FootballCrawler:
             is_history = target_date.date() < datetime.now().date()
             
             if is_history:
+                if not fetch_odds:
+                    self.logger.info("历史数据模式: fetch_odds=False, 跳过详细赔率抓取")
+                    return matches
+
                 # 历史模式: 页面爬取详细赔率
                 self.logger.info(f"历史数据模式: 正在抓取 {len(matches)} 场比赛的详细赔率(页面方式)...")
                 for i, match in enumerate(matches):
@@ -907,27 +917,7 @@ class FootballCrawler:
                     try:
                         time.sleep(random.uniform(0.2, 0.5))
                         odds_details = self.crawl_match_odds(match_id)
-                        
-                        # 映射赔率数据
-                        if odds_details.get('euro_odds'):
-                            euro = odds_details['euro_odds'][0]
-                            match['euro_current_win'] = euro.get('current_win')
-                            match['euro_current_draw'] = euro.get('current_draw')
-                            match['euro_current_lose'] = euro.get('current_lose')
-                            match['euro_initial_win'] = euro.get('initial_win')
-                            match['euro_initial_draw'] = euro.get('initial_draw')
-                            match['euro_initial_lose'] = euro.get('initial_lose')
-                            match['euro_odds'] = f"{match['euro_current_win']}/{match['euro_current_draw']}/{match['euro_current_lose']}"
-                            
-                        if odds_details.get('asian_handicap'):
-                            asian = odds_details['asian_handicap'][0]
-                            match['asian_initial_home'] = asian.get('initial_home_odds')
-                            match['asian_initial_handicap'] = asian.get('initial_handicap')
-                            match['asian_initial_away'] = asian.get('initial_away_odds')
-                            match['asian_current_home'] = asian.get('current_home_odds')
-                            match['asian_current_handicap'] = asian.get('current_handicap')
-                            match['asian_current_away'] = asian.get('current_away_odds')
-                            match['asian_odds'] = f"{match['asian_current_home']}/{match['asian_current_handicap']}/{match['asian_current_away']}"
+                        self._map_odds_details(match, odds_details)
                             
                     except Exception as e:
                         self.logger.error(f"抓取比赛 {match_id} 详情失败: {e}")
@@ -1081,6 +1071,69 @@ class FootballCrawler:
             self.logger.error(f"爬取赔率信息失败: {str(e)}")
             return {}
     
+    def _map_odds_details(self, match, odds_details):
+        """将爬取的详细赔率数据映射到比赛对象"""
+        # 1. 欧赔
+        if odds_details.get('euro_odds'):
+            euro = odds_details['euro_odds'][0]
+            match['euro_current_win'] = euro.get('current_win')
+            match['euro_current_draw'] = euro.get('current_draw')
+            match['euro_current_lose'] = euro.get('current_lose')
+            match['euro_initial_win'] = euro.get('initial_win')
+            match['euro_initial_draw'] = euro.get('initial_draw')
+            match['euro_initial_lose'] = euro.get('initial_lose')
+            match['euro_odds'] = f"{match['euro_current_win']}/{match['euro_current_draw']}/{match['euro_current_lose']}"
+            
+        # 2. 亚盘
+        if odds_details.get('asian_handicap'):
+            asian = odds_details['asian_handicap'][0]
+            match['asian_initial_home_odds'] = asian.get('initial_home_odds')
+            match['asian_initial_handicap'] = asian.get('initial_handicap')
+            match['asian_initial_away_odds'] = asian.get('initial_away_odds')
+            match['asian_current_home_odds'] = asian.get('current_home_odds')
+            match['asian_current_handicap'] = asian.get('current_handicap')
+            match['asian_current_away_odds'] = asian.get('current_away_odds')
+            match['asian_odds'] = f"{match['asian_current_home_odds']}/{match['asian_current_handicap']}/{match['asian_current_away_odds']}"
+
+        # 3. 大小球
+        if odds_details.get('over_under'):
+            ou = odds_details['over_under'][0]
+            match['ou_initial_over_odds'] = ou.get('initial_over_odds')
+            match['ou_initial_total'] = ou.get('initial_total')
+            match['ou_initial_under_odds'] = ou.get('initial_under_odds')
+            match['ou_current_over_odds'] = ou.get('current_over_odds')
+            match['ou_current_total'] = ou.get('current_total')
+            match['ou_current_under_odds'] = ou.get('current_under_odds')
+            match['ou_odds'] = f"{match['ou_current_over_odds']}/{match['ou_current_total']}/{match['ou_current_under_odds']}"
+
+        # 4. 让球指数 (Handicap Index)
+        if odds_details.get('handicap_index'):
+            hi = odds_details['handicap_index']
+            # 直接从hi字典中获取，因为parse_handicap_index返回的是扁平字典
+            match['hi_initial_home_odds'] = hi.get('initial_home_odds')
+            match['hi_initial_draw_odds'] = hi.get('initial_draw_odds')
+            match['hi_initial_away_odds'] = hi.get('initial_away_odds')
+            match['hi_current_home_odds'] = hi.get('current_home_odds')
+            match['hi_current_draw_odds'] = hi.get('current_draw_odds')
+            match['hi_current_away_odds'] = hi.get('current_away_odds')
+            match['hi_handicap_value'] = hi.get('handicap_value')
+
+    def update_single_match_odds(self, match):
+        """
+        更新单个比赛的赔率信息（历史模式）
+        """
+        match_id = match.get('match_id')
+        if not match_id:
+            return False
+            
+        try:
+            odds_details = self.crawl_match_odds(match_id)
+            self._map_odds_details(match, odds_details)
+            return True
+        except Exception as e:
+            self.logger.error(f"更新比赛 {match_id} 赔率失败: {e}")
+            return False
+
     def close(self):
         """关闭会话"""
         self.session.close()
