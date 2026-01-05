@@ -82,12 +82,17 @@ def get_matches():
     """API - 获取比赛列表 (实时接口)"""
     # 获取日期参数
     date_str = request.args.get('date')
-    if not date_str:
+    start_date = request.args.get('start_date')
+    end_date = request.args.get('end_date')
+
+    if not date_str and not start_date:
         date_str = datetime.now().strftime('%Y-%m-%d')
     
     # 从数据库读取数据
     filters = {}
-    if date_str:
+    if start_date and end_date:
+        filters['owner_date'] = {'$gte': start_date, '$lte': end_date}
+    elif date_str:
         # 使用 owner_date 进行筛选，而不是 match_time
         # match_time 可能会跨天（例如凌晨比赛），导致 regex 匹配遗漏
         filters['owner_date'] = date_str
@@ -110,7 +115,7 @@ def get_matches():
             matches = [m for m in matches if m.get('status') == status_code]
         except ValueError:
             pass
-    elif not date_str or date_str == datetime.now().strftime('%Y-%m-%d'):
+    elif (not start_date) and (not date_str or date_str == datetime.now().strftime('%Y-%m-%d')):
         # 默认仅展示未开始比赛（仅在未指定日期或指定为今天时生效）
         # 如果用户明确查看历史日期，则不默认过滤状态
         # 修改：同时展示未开始(0)和改期(6)的比赛

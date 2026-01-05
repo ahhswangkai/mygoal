@@ -653,7 +653,12 @@
                 </select>
                 <input type="hidden" id="statusFilter" value="">
                 <button class="btn btn-primary" onclick="loadMatches()">🔄 刷新数据</button>
-                <input type="date" id="datePicker" style="padding: 10px 15px; border: 2px solid #e2e8f0; border-radius: 8px; font-size: 14px;" onchange="loadMatches(1)"> <button class="btn btn-success" onclick="crawlNewData()">📥 爬取新数据</button>
+                <div style="display:flex;align-items:center;gap:5px;">
+                    <input type="date" id="startDate" style="padding: 10px 15px; border: 2px solid #e2e8f0; border-radius: 8px; font-size: 14px;" onchange="loadMatches(1)">
+                    <span style="color:#718096;">至</span>
+                    <input type="date" id="endDate" style="padding: 10px 15px; border: 2px solid #e2e8f0; border-radius: 8px; font-size: 14px;" onchange="loadMatches(1)">
+                </div>
+                <button class="btn btn-success" onclick="crawlNewData()">📥 爬取新数据</button>
 
                 <button class="btn btn-success" onclick="reviewFinished()" style="background:#48bb78;">🧾 复盘完场</button>
                 <button class="btn btn-success" onclick="location.href='/daily_recommendations'" style="background:linear-gradient(135deg, #f093fb 0%, #f5576c 100%);">📊 每日推荐</button>
@@ -694,17 +699,109 @@
         let totalPages = 1;
         let pageSize = 50;
         
+        // 状态持久化键名
+        const STORAGE_KEY_PREFIX = 'football_app_home_';
+
+        function saveState() {
+            try {
+                const state = {
+                    startDate: document.getElementById('startDate').value,
+                    endDate: document.getElementById('endDate').value,
+                    league: document.getElementById('leagueFilter').value,
+                    status: document.getElementById('statusFilter').value,
+                    scrollY: window.scrollY,
+                    page: currentPage // 保存当前页码
+                };
+                sessionStorage.setItem(STORAGE_KEY_PREFIX + 'state', JSON.stringify(state));
+            } catch (e) {
+                console.error('保存状态失败:', e);
+            }
+        }
+
+        function restoreState() {
+            try {
+                const saved = sessionStorage.getItem(STORAGE_KEY_PREFIX + 'state');
+                if (saved) {
+                    const state = JSON.parse(saved);
+                    
+                    // 恢复日期
+                    if (state.startDate) document.getElementById('startDate').value = state.startDate;
+                    if (state.endDate) document.getElementById('endDate').value = state.endDate;
+                    
+                    // 恢复状态标签
+                    if (state.status !== undefined) {
+                        document.getElementById('statusFilter').value = state.status;
+                        const tabs = document.querySelectorAll('.nav-tab');
+                        tabs.forEach(tab => tab.classList.remove('active'));
+                        
+                        // 根据状态找到对应的标签并激活
+                        // tabs顺序: 全部(''), 未开始('0'), 进行中('1'), 已完场('2')
+                        const statusMap = {'': 0, '0': 1, '1': 2, '2': 3};
+                        const index = statusMap[state.status];
+                        if (index !== undefined && tabs[index]) {
+                            tabs[index].classList.add('active');
+                        }
+                    }
+                    
+                    return state;
+                }
+            } catch (e) {
+                console.error('恢复状态失败:', e);
+            }
+            return null;
+        }
+
         // 页面加载时获取数据
-        window.onload = function() {
-            // 设置日期选择器默认为今天
+        window.onload = async function() {
+            // 设置默认日期（如果没有保存的状态）
             const today = new Date();
             const year = today.getFullYear();
             const month = String(today.getMonth() + 1).padStart(2, '0');
             const day = String(today.getDate()).padStart(2, '0');
-            document.getElementById('datePicker').value = `${year}-${month}-${day}`;
+            const todayStr = `${year}-${month}-${day}`;
             
-            loadMatches();
-            loadLeagues();
+            // 先设置默认值
+            document.getElementById('startDate').value = todayStr;
+            document.getElementById('endDate').value = todayStr;
+            
+            // 尝试恢复状态
+            const savedState = restoreState();
+            
+            // 加载联赛数据（需要等待完成以便设置选中的联赛）
+            await loadLeagues();
+            
+            // 恢复联赛选择
+            if (savedState && savedState.league) {
+                const leagueSelect = document.getElementById('leagueFilter');
+                // 检查该联赛是否在选项中存在，存在才选中
+                if ([...leagueSelect.options].some(opt => opt.value === savedState.league)) {
+                    leagueSelect.value = savedState.league;
+                }
+            }
+            
+            // 确定加载的页码
+            let pageToLoad = 1;
+            if (savedState && savedState.page) {
+                pageToLoad = savedState.page;
+            }
+
+            // 加载比赛数据
+            await loadMatches(pageToLoad);
+            
+            // 恢复滚动位置
+            if (savedState && savedState.scrollY) {
+                window.scrollTo(0, savedState.scrollY);
+            }
+            
+            // 注册保存状态的事件
+            // 1. 页面卸载/隐藏前保存
+            window.addEventListener('beforeunload', saveState);
+            document.addEventListener('visibilitychange', () => {
+                if (document.visibilityState === 'hidden') {
+                    saveState();
+                }
+            });
+            // 2. 筛选条件改变时也可保存（可选，这里主要依靠离开时保存）
         };
         
         function switchTab(status, element) {
@@ -719,12 +816,14 @@
             try {
                 const league = document.getElementById('leagueFilter').value;
                 const status = document.getElementById('statusFilter').value;
-                const date = document.getElementById('datePicker').value;
+                const startDate = document.getElementById('startDate').value;
+                const endDate = document.getElementById('endDate').value;
                 
                 let url = `/api/matches?page=${page}&page_size=${pageSize}`;
                 if (league) url += `&league=${encodeURIComponent(league)}`;
                 if (status) url += `&status=${encodeURIComponent(status)}`;
-                if (date) url += `&date=${encodeURIComponent(date)}`;
+                if (startDate) url += `&start_date=${encodeURIComponent(startDate)}`;
+                if (endDate) url += `&end_date=${encodeURIComponent(endDate)}`;
                 
                 const response = await fetch(url);
                 const result = await response.json();
@@ -1457,7 +1556,7 @@
             const logsEl = document.getElementById('crawlLogs');
             if (logsEl) { logsEl.innerHTML = ''; }
             try {
-                const date = document.getElementById('datePicker').value;
+                const date = document.getElementById('endDate').value;
                 const url = '/api/crawl_stream' + (date ? ('?date=' + encodeURIComponent(date)) : '');
                 const es = new EventSource(url);
                 es.onmessage = (e) => {
