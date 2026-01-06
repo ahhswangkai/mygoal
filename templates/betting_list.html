@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>投注记录 - 足球计算器</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background: #f5f5f5;
+            min-height: 100vh;
+        }
+        
+        .app-header {
+            background: #e53e3e;
+            color: white;
+            padding: 12px 15px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+        .back-btn {
+            position: absolute; left: 15px; color: white; text-decoration: none; font-size: 24px;
+        }
+        .header-title { font-size: 18px; font-weight: 600; }
+        
+        .summary-card {
+            background: linear-gradient(135deg, #e53e3e 0%, #fc8181 100%);
+            color: white;
+            padding: 20px;
+            margin: 15px;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(229, 62, 62, 0.2);
+        }
+        
+        .summary-row {
+            display: flex; justify-content: space-between; margin-bottom: 15px;
+        }
+        .summary-item { text-align: center; flex: 1; }
+        .summary-label { font-size: 12px; opacity: 0.9; margin-bottom: 5px; }
+        .summary-val { font-size: 20px; font-weight: bold; }
+        .profit-val { font-size: 24px; font-weight: bold; }
+        
+        .section-title {
+            padding: 0 15px; margin-bottom: 10px; font-size: 14px; color: #718096; font-weight: 600;
+        }
+        
+        .bet-list { padding: 0 15px 20px 15px; }
+        .bet-card {
+            background: white; border-radius: 8px; padding: 15px; margin-bottom: 12px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.05); position: relative;
+        }
+        
+        .bet-header {
+            display: flex; justify-content: space-between; align-items: center;
+            margin-bottom: 10px; padding-bottom: 8px; border-bottom: 1px solid #f7fafc;
+        }
+        .bet-time { font-size: 12px; color: #a0aec0; }
+        .bet-status {
+            font-size: 12px; padding: 2px 8px; border-radius: 10px; font-weight: 500;
+        }
+        .status-pending { background: #edf2f7; color: #718096; }
+        .status-won { background: #c6f6d5; color: #276749; }
+        .status-lost { background: #fed7d7; color: #9b2c2c; }
+        
+        .bet-content { font-size: 14px; color: #2d3748; margin-bottom: 10px; line-height: 1.5; }
+        
+        .bet-footer {
+            display: flex; justify-content: space-between; align-items: center; font-size: 13px;
+        }
+        .bet-stake { color: #718096; }
+        .bet-return { font-weight: bold; }
+        .return-pos { color: #e53e3e; }
+        .return-neg { color: #718096; }
+        
+        .daily-chart {
+            background: white; margin: 15px; padding: 15px; border-radius: 12px;
+            height: 200px; display: flex; align-items: flex-end; gap: 4px;
+            overflow-x: auto;
+        }
+        .chart-bar {
+            flex: 1; min-width: 20px; background: #cbd5e0; border-radius: 4px 4px 0 0;
+            position: relative; transition: all 0.3s;
+        }
+        .chart-bar.pos { background: #e53e3e; }
+        .chart-bar.neg { background: #38a169; }
+        
+        .btn-delete {
+            background: none; border: none; color: #cbd5e0; font-size: 18px; cursor: pointer; padding: 0 5px;
+        }
+        .btn-delete:hover { color: #e53e3e; }
+        .loading { text-align: center; padding: 30px; color: #a0aec0; }
+    </style>
+</head>
+<body>
+    <div class="app-header">
+        <a href="/" class="back-btn">‹</a>
+        <div class="header-title">投注记录</div>
+    </div>
+    
+    <div class="summary-card">
+        <div class="summary-label" style="text-align:center;">总盈亏 (元)</div>
+        <div class="profit-val" style="text-align:center;margin-bottom:20px;" id="totalProfit">0.00</div>
+        <div class="summary-row">
+            <div class="summary-item">
+                <div class="summary-label">总投入</div>
+                <div class="summary-val" id="totalStake">0</div>
+            </div>
+            <div class="summary-item">
+                <div class="summary-label">总返奖</div>
+                <div class="summary-val" id="totalReturn">0</div>
+            </div>
+            <div class="summary-item">
+                <div class="summary-label">红单率</div>
+                <div class="summary-val" id="winRate">0%</div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="section-title">每日趋势 (近30天)</div>
+    <div class="daily-chart" id="dailyChart">
+        <!-- Bars -->
+    </div>
+    
+    <div class="section-title">最近投注</div>
+    <div class="bet-list" id="betList">
+        <div class="loading">加载中...</div>
+    </div>
+
+    <script>
+        function getDeviceId() {
+            return localStorage.getItem('football_device_id');
+        }
+        
+        async function loadData() {
+            const deviceId = getDeviceId();
+            if (!deviceId) {
+                document.getElementById('betList').innerHTML = '<div class="loading">未找到设备ID</div>';
+                return;
+            }
+            
+            try {
+                const res = await fetch(`/api/bets?device_id=${deviceId}`);
+                const json = await res.json();
+                
+                if (json.success) {
+                    renderStats(json.stats);
+                    renderDaily(json.daily);
+                    renderList(json.data);
+                } else {
+                    document.getElementById('betList').innerHTML = `<div class="loading">${json.message}</div>`;
+                }
+            } catch (e) {
+                console.error(e);
+                document.getElementById('betList').innerHTML = '<div class="loading">加载失败</div>';
+            }
+        }
+        
+        function renderStats(stats) {
+            if (!stats) return;
+            document.getElementById('totalProfit').textContent = (stats.net_profit || 0).toFixed(2);
+            document.getElementById('totalStake').textContent = (stats.total_stake || 0).toFixed(0);
+            document.getElementById('totalReturn').textContent = (stats.total_return || 0).toFixed(2);
+            
+            const total = stats.total_bets - stats.pending_bets;
+            const rate = total > 0 ? (stats.won_bets / total * 100) : 0;
+            document.getElementById('winRate').textContent = rate.toFixed(1) + '%';
+        }
+        
+        function renderDaily(daily) {
+            const container = document.getElementById('dailyChart');
+            if (!daily || daily.length === 0) {
+                container.innerHTML = '<div style="margin:auto;color:#cbd5e0;">暂无数据</div>';
+                return;
+            }
+            
+            // Find max abs value for scaling
+            let maxVal = 0;
+            daily.forEach(d => {
+                const p = Math.abs(d.profit);
+                if (p > maxVal) maxVal = p;
+            });
+            if (maxVal === 0) maxVal = 100;
+            
+            // Reverse to show oldest left? Usually charts show newest right.
+            // API returns sorted by date DESC (newest first). So reverse it.
+            const sorted = [...daily].reverse();
+            
+            container.innerHTML = sorted.map(d => {
+                const h = Math.abs(d.profit) / maxVal * 80; // max 80% height
+                const isPos = d.profit >= 0;
+                const colorClass = isPos ? 'pos' : 'neg';
+                const date = d.date.substring(5); // MM-DD
+                
+                return `
+                    <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%;">
+                        <div style="font-size:10px;color:#718096;margin-bottom:2px;">${d.profit > 0 ? '+' : ''}${d.profit.toFixed(0)}</div>
+                        <div class="chart-bar ${colorClass}" style="width:100%;height:${Math.max(4, h)}%;"></div>
+                        <div style="font-size:10px;color:#a0aec0;margin-top:4px;transform:scale(0.8);white-space:nowrap;">${date}</div>
+                    </div>
+                `;
+            }).join('');
+        }
+        
+        function renderList(groups) {
+            const container = document.getElementById('betList');
+            if (!groups || groups.length === 0) {
+                container.innerHTML = '<div class="loading">暂无投注记录</div>';
+                return;
+            }
+            
+            container.innerHTML = groups.map(group => {
+                const statusMap = { 'pending': '进行中', 'won': '中奖', 'lost': '未中' };
+                const statusClass = `status-${group.status}`;
+                const time = new Date(group.created_at).toLocaleString();
+                
+                const isWin = group.status === 'won';
+                const returnVal = isWin ? `+${group.total_return.toFixed(2)}` : (group.status === 'lost' ? '-'+group.total_stake : '0.00');
+                const returnClass = isWin ? 'return-pos' : 'return-neg';
+                
+                // 组合描述
+                const betCount = group.ticket_count > 1 ? `<span style="font-size:11px;color:#718096;background:#f0f0f0;padding:1px 5px;border-radius:4px;margin-left:5px;">共${group.ticket_count}注</span>` : '';
+                
+                // 详情展示 (如果有多个注单，只显示第一注的详情，或者汇总)
+                // 这里简单展示第一注的描述，或者 "多注组合"
+                const desc = group.desc; 
+                
+                return `
+                    <div class="bet-card" id="group-${group.group_id}">
+                        <div class="bet-header">
+                            <div>
+                                <span class="bet-time">${time}</span>
+                                ${betCount}
+                            </div>
+                            <div style="display:flex;align-items:center;gap:8px;">
+                                <span class="bet-status ${statusClass}">${statusMap[group.status] || group.status}</span>
+                                <button class="btn-delete" onclick="deleteBet('${group.group_id}')">×</button>
+                            </div>
+                        </div>
+                        <div class="bet-content">
+                            ${desc}
+                        </div>
+                        <div class="bet-footer">
+                            <span class="bet-stake">投入: ${group.total_stake}元</span>
+                            <span class="bet-return ${returnClass}">
+                                ${group.status === 'pending' ? '待开奖' : '返奖: ' + returnVal}
+                            </span>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+        
+        async function deleteBet(groupId) {
+            if (!confirm('确定删除这条记录吗？')) return;
+            
+            try {
+                const res = await fetch(`/api/bets/${groupId}?device_id=${getDeviceId()}`, {
+                    method: 'DELETE'
+                });
+                const json = await res.json();
+                
+                if (json.success) {
+                    const el = document.getElementById(`group-${groupId}`);
+                    if (el) el.remove();
+                    // 重新加载统计数据
+                    loadData();
+                } else {
+                    alert('删除失败: ' + json.message);
+                }
+            } catch (e) {
+                alert('删除出错');
+            }
+        }
+        
+        loadData();
+    </script>
+</body>
+</html>

@@ -44,6 +44,7 @@ class MongoDBStorage:
         self.odds_collection = self.db['odds']
         self.predictions_collection = self.db['predictions']
         self.user_picks_collection = self.db['user_picks']
+        self.bets_collection = self.db['bets']
         
         # 创建索引
         self._create_indexes()
@@ -70,6 +71,11 @@ class MongoDBStorage:
             # 用户选择表索引
             self.user_picks_collection.create_index([('device_id', ASCENDING), ('match_id', ASCENDING)], unique=True)
             self.user_picks_collection.create_index([('created_at', DESCENDING)])
+            
+            # 投注表索引
+            self.bets_collection.create_index([('device_id', ASCENDING)])
+            self.bets_collection.create_index([('created_at', DESCENDING)])
+            self.bets_collection.create_index([('status', ASCENDING)])
             
             self.logger.info("数据库索引创建成功")
         except Exception as e:
@@ -721,6 +727,199 @@ class MongoDBStorage:
             self.logger.info("MongoDB连接已关闭")
         except Exception as e:
             self.logger.error(f"关闭MongoDB连接失败: {str(e)}")
+
+    def save_bet(self, bet_data):
+        """
+        保存投注记录
+        """
+        try:
+            if 'created_at' not in bet_data:
+                bet_data['created_at'] = datetime.now()
+            bet_data['updated_at'] = datetime.now()
+            
+            # 自动生成 bet_id (如果未提供)
+            if 'bet_id' not in bet_data:
+                import uuid
+                bet_data['bet_id'] = str(uuid.uuid4())
+            
+            # 兼容旧数据：如果没有group_id，使用bet_id
+            if 'group_id' not in bet_data:
+                bet_data['group_id'] = bet_data['bet_id']
+            
+            self.bets_collection.insert_one(bet_data)
+            self.logger.info(f"保存投注记录: {bet_data['bet_id']}")
+            return True
+        except Exception as e:
+            self.logger.error(f"保存投注失败: {str(e)}")
+            return False
+
+    def get_bets(self, device_id, limit=100, status=None):
+        """获取投注列表"""
+        try:
+            query = {'device_id': device_id}
+            if status:
+                query['status'] = status
+            
+            cursor = self.bets_collection.find(query, {'_id': 0}).sort('created_at', DESCENDING)
+            if limit:
+                cursor = cursor.limit(limit)
+            return list(cursor)
+        except Exception as e:
+            self.logger.error(f"获取投注列表失败: {str(e)}")
+            return []
+            
+    def get_bet_groups(self, device_id, limit=50):
+        """获取分组后的投注列表"""
+        try:
+            pipeline = [
+                {'$match': {'device_id': device_id}},
+                {'$sort': {'created_at': -1}},
+                {'$group': {
+                    '_id': {'$ifNull': ['$group_id', '$bet_id']},
+                    'created_at': {'$max': '$created_at'},
+                    'total_stake': {'$sum': '$stake'},
+                    'total_return': {'$sum': {'$ifNull': ['$actual_return', 0]}},
+                    'ticket_count': {'$sum': 1},
+                    'statuses': {'$addToSet': '$status'},
+                    'desc_list': {'$push': '$desc'},
+                    'bets': {'$push': '$$ROOT'}
+                }},
+                {'$sort': {'created_at': -1}},
+                {'$limit': limit}
+            ]
+            
+            groups = list(self.bets_collection.aggregate(pipeline))
+            
+            # 处理分组状态和结构
+            result = []
+            for g in groups:
+                statuses = g['statuses']
+                # 状态逻辑：
+                # 只要有一个pending -> pending
+                # 只要有一个won -> won (或者finished)
+                # 全部lost -> lost
+                # 实际上如果是一单多注，通常是只要有一注中奖就算中奖（total_return > 0）
+                
+                final_status = 'lost'
+                if 'pending' in statuses:
+                    final_status = 'pending'
+                elif g['total_return'] > 0:
+                    final_status = 'won'
+                
+                # 提取第一注的信息作为摘要
+                first_bet = g['bets'][0] if g['bets'] else {}
+                
+                # 处理 bets 中的 ObjectId
+                cleaned_bets = []
+                for b in g['bets']:
+                    if '_id' in b:
+                        b['_id'] = str(b['_id'])
+                    cleaned_bets.append(b)
+                
+                result.append({
+                    'group_id': g['_id'],
+                    'created_at': g['created_at'],
+                    'total_stake': g['total_stake'],
+                    'total_return': g['total_return'],
+                    'ticket_count': g['ticket_count'],
+                    'status': final_status,
+                    'desc': first_bet.get('desc', '多注组合'), # 简单展示
+                    'bets': cleaned_bets # 包含详情
+                })
+            return result
+            
+        except Exception as e:
+            self.logger.error(f"获取分组投注失败: {str(e)}")
+            return []
+
+    def delete_bet_group(self, device_id, group_id):
+        """删除投注记录（按组）"""
+        try:
+            # 兼容：如果group_id匹配不到，尝试匹配bet_id
+            result = self.bets_collection.delete_many({
+                'device_id': device_id,
+                '$or': [
+                    {'group_id': group_id},
+                    {'bet_id': group_id}
+                ]
+            })
+            if result.deleted_count > 0:
+                self.logger.info(f"删除投注组: {group_id} - {device_id}")
+                return True
+            return False
+        except Exception as e:
+            self.logger.error(f"删除投注组失败: {str(e)}")
+            return False
+
+    def update_bet(self, bet_id, updates):
+        """更新投注状态"""
+        try:
+            updates['updated_at'] = datetime.now()
+            result = self.bets_collection.update_one(
+                {'bet_id': bet_id},
+                {'$set': updates}
+            )
+            return result.modified_count > 0
+        except Exception as e:
+            self.logger.error(f"更新投注失败: {str(e)}")
+            return False
+
+    def get_bet_stats(self, device_id):
+        """获取投注统计"""
+        try:
+            pipeline = [
+                {'$match': {'device_id': device_id}},
+                {'$group': {
+                    '_id': None,
+                    'total_bets': {'$sum': 1},
+                    'total_stake': {'$sum': '$stake'},
+                    'total_return': {'$sum': {'$ifNull': ['$actual_return', 0]}},
+                    'pending_bets': {'$sum': {'$cond': [{'$eq': ['$status', 'pending']}, 1, 0]}},
+                    'won_bets': {'$sum': {'$cond': [{'$eq': ['$status', 'won']}, 1, 0]}}
+                }}
+            ]
+            result = list(self.bets_collection.aggregate(pipeline))
+            if result:
+                stats = result[0]
+                stats.pop('_id', None)
+                stats['net_profit'] = stats['total_return'] - stats['total_stake']
+                return stats
+            return {'total_bets': 0, 'total_stake': 0, 'total_return': 0, 'net_profit': 0, 'pending_bets': 0, 'won_bets': 0}
+        except Exception as e:
+            self.logger.error(f"获取投注统计失败: {str(e)}")
+            return {}
+
+    def get_daily_stats(self, device_id):
+        """获取每日收益统计"""
+        try:
+            pipeline = [
+                {'$match': {'device_id': device_id}},
+                {'$addFields': {
+                    'date_str': {'$dateToString': {'format': '%Y-%m-%d', 'date': '$created_at'}}
+                }},
+                {'$group': {
+                    '_id': '$date_str',
+                    'daily_stake': {'$sum': '$stake'},
+                    'daily_return': {'$sum': {'$ifNull': ['$actual_return', 0]}},
+                    'bet_count': {'$sum': 1}
+                }},
+                {'$sort': {'_id': -1}},
+                {'$limit': 30}
+            ]
+            results = list(self.bets_collection.aggregate(pipeline))
+            formatted = []
+            for r in results:
+                formatted.append({
+                    'date': r['_id'],
+                    'stake': r['daily_stake'],
+                    'return': r['daily_return'],
+                    'profit': r['daily_return'] - r['daily_stake'],
+                    'count': r['bet_count']
+                })
+            return formatted
+        except Exception as e:
+            self.logger.error(f"获取每日统计失败: {str(e)}")
+            return []
 
 
 # 数据分析辅助函数

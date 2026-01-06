@@ -396,6 +396,7 @@
     <div class="app-header">
         <a href="/" class="back-btn">‹</a>
         足球计算器
+        <a href="/bets" style="position:absolute;right:15px;color:white;text-decoration:none;font-size:14px;">记录</a>
     </div>
     
     <div class="game-types">
@@ -741,17 +742,20 @@
             if (selectedGates.size === 0 || Object.keys(selections).length < 2) {
                 document.getElementById('totalAmount').textContent = '0';
                 document.getElementById('maxBonus').textContent = '0.00';
+                currentTickets = []; // Clear tickets
                 return;
             }
             
             // Generate tickets to count them accurately
             const tickets = generateTickets();
+            // Assign global multiple to each ticket
+            tickets.forEach(t => t.multiple = multiple);
+            
             const totalNotes = tickets.length;
             
             const activeMatches = matches.filter(m => selections[m.match_id]);
             
-            // Max Bonus Calculation: 
-            // 1. Find the BEST odds for each match (since options in same match are mutually exclusive)
+            // Max Bonus Calculation
             const matchMaxOdds = activeMatches.map(m => {
                 const sel = selections[m.match_id];
                 let maxO = 0;
@@ -769,13 +773,9 @@
                 return maxO;
             });
 
-            // 2. Sum up the max possible payout for all selected gates
-            // If we hit the best outcome for all matches, how many tickets win and what's the total?
             let theoreticalMaxPrize = 0;
             
             selectedGates.forEach(gate => {
-                // Get all combinations of matches for this gate
-                // For each combination, product of their max odds is the payout for that ticket
                 const indices = Array.from({length: activeMatches.length}, (_, i) => i);
                 const combos = getCombinations(indices, gate);
                 
@@ -911,7 +911,14 @@
                 if (tickets[maxIdx].multiple < 1) tickets[maxIdx].multiple = 1;
             }
             
+            // Update global tickets
+            currentTickets = tickets;
             renderOptTable(tickets);
+            
+            // Update total amount display on main page
+            let totalMoney = 0;
+            tickets.forEach(t => totalMoney += t.multiple * 2);
+            document.getElementById('totalAmount').textContent = totalMoney;
         }
         
         function renderOptTable(tickets) {
@@ -944,17 +951,17 @@
         }
         
         function updateTicketMultiple(idx, val) {
-            // Recalculate just the total and that row's prize
-            // But we need the tickets array.
-            // For simplicity, just let user edit and see visual update?
-            // Or better: update the underlying object and re-sum.
-            // Since tickets are derived inside runOptimization, we can't easily access them here
-            // unless we make 'currentOptTickets' global.
-            // Let's just update the prize in DOM for now.
+            const m = parseInt(val) || 0;
+            
+            // Update global tickets
+            if (currentTickets[idx]) {
+                currentTickets[idx].multiple = m;
+            }
+            
+            // Update DOM
             const row = document.querySelectorAll('#optTableBody tr')[idx];
             const odds = parseFloat(row.cells[1].textContent);
             const prizeCell = row.cells[3];
-            const m = parseInt(val) || 0;
             prizeCell.textContent = (odds * m * 2).toFixed(2);
             
             // Update total
@@ -963,6 +970,7 @@
                 total += (parseInt(inp.value) || 0) * 2;
             });
             document.getElementById('realTotal').textContent = total;
+            document.getElementById('totalAmount').textContent = total;
         }
 
         // --- View Plan Logic ---
@@ -971,44 +979,103 @@
                 alert('请先选择过关方式');
                 return;
             }
-            const activeMatches = matches.filter(m => selections[m.match_id]);
-            if (activeMatches.length < 2) {
-                alert('至少选择2场比赛');
-                return;
+            if (currentTickets.length === 0) {
+                calculate();
+                if (currentTickets.length === 0) {
+                    alert('无法生成注单');
+                    return;
+                }
             }
 
             // Update Title
             const gates = Array.from(selectedGates).sort((a,b)=>a-b).map(g => `${g}关`).join(', ');
-            document.getElementById('planTitle').textContent = `过关方式: ${gates}`;
+            
+            // Calculate total money directly from tickets
+            let totalMoney = 0;
+            currentTickets.forEach(t => totalMoney += t.multiple * 2);
+            
+            document.getElementById('planTitle').textContent = `确认注单 (${gates})`;
 
-            // Build List
+            // Build Ticket List
             const list = document.getElementById('planList');
-            list.innerHTML = activeMatches.map(m => {
+            
+            // Generate active match list for summary
+            const activeMatches = matches.filter(m => selections[m.match_id]);
+            const matchSummary = activeMatches.map(m => {
                 const sel = selections[m.match_id];
                 const grid = m.grid_data;
-                const opts = Array.from(sel).map(key => {
-                    let name = getOptionName(key);
-                    // Simplify name: h_win -> 让胜, win -> 胜
-                    // getOptionName already does this
-                    let odds = 0;
-                    if (key === 'win') odds = grid.euro.win;
-                    else if (key === 'draw') odds = grid.euro.draw;
-                    else if (key === 'lose') odds = grid.euro.lose;
-                    else if (key === 'h_win') odds = grid.handicap.win;
-                    else if (key === 'h_draw') odds = grid.handicap.draw;
-                    else if (key === 'h_lose') odds = grid.handicap.lose;
-                    return `${name}(${odds.toFixed(2)})`;
-                }).join('、');
-
-                return `
-                <div class="plan-item">
-                    <div class="plan-item-title">${m.match_number || ''} ${m.home_team} VS ${m.away_team}</div>
-                    <div class="plan-item-detail">${opts}</div>
-                </div>
-                `;
+                const opts = Array.from(sel).map(key => getOptionName(key)).join(',');
+                return `<div style="font-size:13px;color:#4a5568;margin-bottom:4px;">${m.home_team} vs ${m.away_team} <span style="color:#e53e3e;">[${opts}]</span></div>`;
             }).join('');
 
+            list.innerHTML = `
+                <div style="padding:15px;background:white;border-bottom:1px solid #eee;">
+                    <div style="font-weight:bold;margin-bottom:10px;font-size:15px;">投注内容</div>
+                    ${matchSummary}
+                    <div style="margin-top:10px;padding-top:10px;border-top:1px dashed #eee;display:flex;justify-content:space-between;align-items:center;">
+                        <span style="color:#718096;font-size:13px;">过关方式</span>
+                        <span style="font-weight:bold;color:#2d3748;">${gates}</span>
+                    </div>
+                </div>
+                
+                <div style="padding:15px;background:#f7fafc;border-bottom:1px solid #eee;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                        <span style="color:#718096;font-size:13px;">注数</span>
+                        <span style="font-weight:bold;">${currentTickets.length} 注</span>
+                    </div>
+                    <div style="display:flex;justify-content:space-between;align-items:center;">
+                        <span style="color:#718096;font-size:13px;">总金额</span>
+                        <span style="font-weight:bold;color:#e53e3e;font-size:18px;">${totalMoney} 元</span>
+                    </div>
+                </div>
+
+                <div style="padding:15px;">
+                    <button class="btn-submit" style="width:100%;" onclick="submitBet()">确认投注</button>
+                </div>
+            `;
+
             document.getElementById('planModal').classList.add('active');
+        }
+
+        async function submitBet() {
+            if (currentTickets.length === 0) return;
+            
+            const btn = document.querySelector('#planList .btn-submit');
+            btn.disabled = true;
+            btn.textContent = '提交中...';
+            
+            try {
+                // Prepare data
+                // Add stake amount to each ticket
+                const ticketsToSend = currentTickets.map(t => ({
+                    ...t,
+                    stake: t.multiple * 2
+                }));
+                
+                const res = await fetch('/api/bets', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        device_id: deviceId,
+                        tickets: ticketsToSend
+                    })
+                });
+                
+                const json = await res.json();
+                if (json.success) {
+                    alert('投注成功！');
+                    window.location.href = '/bets'; // Redirect to betting list
+                } else {
+                    alert('投注失败: ' + json.message);
+                    btn.disabled = false;
+                    btn.textContent = '确认投注';
+                }
+            } catch (e) {
+                alert('提交错误');
+                console.error(e);
+                btn.disabled = false;
+                btn.textContent = '确认投注';
+            }
         }
 
         function closePlan() {

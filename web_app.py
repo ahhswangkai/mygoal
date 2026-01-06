@@ -1907,6 +1907,194 @@ def get_review_summary():
         }), 500
 
 
+# --- Betting System Routes ---
+
+@app.route('/bets')
+def betting_list_page():
+    """投注记录页面"""
+    return render_template('betting_list.html')
+
+@app.route('/api/bets', methods=['POST'])
+def place_bet():
+    """保存投注"""
+    try:
+        if not mongo_storage:
+            return jsonify({'success': False, 'message': 'MongoDB不可用'}), 500
+            
+        data = request.get_json(silent=True) or {}
+        device_id = data.get('device_id')
+        tickets = data.get('tickets') # List of tickets
+        
+        if not device_id or not tickets:
+            return jsonify({'success': False, 'message': '参数不完整'}), 400
+            
+        count = 0
+        import uuid
+        group_id = str(uuid.uuid4())
+        
+        for t in tickets:
+            # t structure: { odds, desc, combo: [...], multiple, stake }
+            bet = {
+                'bet_id': str(uuid.uuid4()),
+                'group_id': group_id,
+                'device_id': device_id,
+                'type': 'parlay' if len(t['combo']) > 1 else 'single',
+                'items': t['combo'], # List of {mid, opt, odds, name, team}
+                'desc': t['desc'],
+                'odds': t['odds'],
+                'stake': t['stake'], # Total amount for this ticket
+                'multiple': t['multiple'],
+                'status': 'pending', # pending, won, lost
+                'actual_return': 0,
+                'created_at': datetime.now()
+            }
+            if mongo_storage.save_bet(bet):
+                count += 1
+                
+        return jsonify({'success': True, 'count': count})
+        
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/bets', methods=['GET'])
+def get_bets():
+    """获取投注列表并更新状态"""
+    try:
+        if not mongo_storage:
+            return jsonify({'success': False, 'message': 'MongoDB不可用'}), 500
+            
+        device_id = request.args.get('device_id')
+        if not device_id:
+            return jsonify({'success': False, 'message': '未提供设备ID'}), 400
+            
+        # 1. 获取所有Pending的投注并更新状态
+        pending_bets = mongo_storage.get_bets(device_id, status='pending', limit=1000)
+        _update_bets_status(pending_bets)
+        
+        # 2. 获取分组后的列表
+        # 使用 get_bet_groups 替代 get_bets
+        groups = mongo_storage.get_bet_groups(device_id, limit=50)
+        stats = mongo_storage.get_bet_stats(device_id)
+        daily = mongo_storage.get_daily_stats(device_id)
+        
+        return jsonify({
+            'success': True,
+            'data': groups,
+            'stats': stats,
+            'daily': daily
+        })
+        
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/bets/<group_id>', methods=['DELETE'])
+def delete_bet_group(group_id):
+    """删除投注记录"""
+    try:
+        if not mongo_storage:
+            return jsonify({'success': False, 'message': 'MongoDB不可用'}), 500
+            
+        device_id = request.args.get('device_id')
+        if not device_id:
+            return jsonify({'success': False, 'message': '未提供设备ID'}), 400
+            
+        if mongo_storage.delete_bet_group(device_id, group_id):
+            return jsonify({'success': True})
+        else:
+            return jsonify({'success': False, 'message': '删除失败或记录不存在'}), 404
+            
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+def _update_bets_status(bets):
+    """更新投注状态逻辑"""
+    if not bets:
+        return
+        
+    # 批量获取比赛信息缓存
+    match_ids = set()
+    for b in bets:
+        for item in b['items']:
+            match_ids.add(item['mid'])
+    
+    matches_cache = {}
+    for mid in match_ids:
+        m = mongo_storage.get_match_by_id(mid)
+        if m: matches_cache[mid] = m
+        
+    for bet in bets:
+        is_finished = True
+        all_win = True
+        any_lose = False
+        
+        # 检查每一场
+        for item in bet['items']:
+            mid = item['mid']
+            opt = item['opt'] # win, draw, lose, h_win, h_draw, h_lose
+            match = matches_cache.get(mid)
+            
+            # 如果比赛不存在或未完场
+            if not match or match.get('status') != 2:
+                is_finished = False
+                break
+            
+            # 判断单场结果
+            res = _check_leg_result(match, opt)
+            if res == 'lose':
+                any_lose = True
+            elif res == 'pending':
+                is_finished = False
+                break
+                
+        if is_finished:
+            new_status = 'lost' if any_lose else 'won'
+            actual_return = (bet['stake'] * bet['odds']) if new_status == 'won' else 0
+            
+            mongo_storage.update_bet(bet['bet_id'], {
+                'status': new_status,
+                'actual_return': actual_return,
+                'settled_at': datetime.now()
+            })
+
+def _check_leg_result(match, opt):
+    """判断单注输赢"""
+    try:
+        home = int(match['home_score'])
+        away = int(match['away_score'])
+    except:
+        return 'pending' # 分数无效
+        
+    # 胜平负
+    if opt in ['win', 'draw', 'lose']:
+        if home > away: res = 'win'
+        elif home == away: res = 'draw'
+        else: res = 'lose'
+        return 'win' if opt == res else 'lose'
+        
+    # 让球
+    if opt in ['h_win', 'h_draw', 'h_lose']:
+        try:
+            handicap = float(match.get('hi_handicap_value', 0))
+            diff = (home + handicap) - away
+            if diff > 0: res = 'h_win'
+            elif diff == 0: res = 'h_draw' # 走水暂按赢处理？或者算1赔率？简单起见算h_draw命中
+            else: res = 'h_lose'
+            
+            # 如果是走水 (diff==0)，且用户选的不是让平
+            # 简化处理：如果 diff==0，且用户买 h_draw，算赢。
+            # 实际上走水应该是赔率变1。这里为了简化，先严格判断。
+            # 如果真实业务，走水应该把单场赔率置为1，重新计算总赔率。
+            # 简单实现：只有买中才算赢。
+            
+            return 'win' if opt == res else 'lose'
+        except:
+            return 'pending'
+            
+    return 'pending'
+
+
 if __name__ == '__main__':
     # 确保data目录存在
 
