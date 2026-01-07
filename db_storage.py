@@ -455,7 +455,7 @@ class MongoDBStorage:
             
             # 按状态统计
             status_stats = {}
-            status_map = {0: '未开始', 1: '进行中', 2: '完场'}
+            status_map = {0: '未开始', 1: '进行中', 2: '完场', 6: '改期'}
             status_pipeline = [
                 {'$group': {'_id': '$status', 'count': {'$sum': 1}}}
             ]

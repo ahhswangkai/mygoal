@@ -710,7 +710,8 @@
                             team: m.home_team,
                             opt: opt,
                             odds: getOdds(m.match_id, opt),
-                            name: getOptionName(opt)
+                            name: getOptionName(opt),
+                            handicap: m.grid_data && m.grid_data.handicap ? m.grid_data.handicap.val : null
                         }));
                     });
                     

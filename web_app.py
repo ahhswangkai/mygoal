@@ -112,7 +112,11 @@ def get_matches():
     if status:
         try:
             status_code = int(status)
-            matches = [m for m in matches if m.get('status') == status_code]
+            # 如果请求未开始(0)，同时也返回改期(6)
+            if status_code == 0:
+                matches = [m for m in matches if m.get('status') in [0, 6]]
+            else:
+                matches = [m for m in matches if m.get('status') == status_code]
         except ValueError:
             pass
     elif (not start_date) and (not date_str or date_str == datetime.now().strftime('%Y-%m-%d')):
@@ -556,12 +560,13 @@ def _crawl_latest():
         
         print(f"✅ 定时任务: 已更新 {odds_count} 场比赛赔率")
 
-        # 4. 微信推送逻辑 (保持不变)
+        # 4. 微信推送逻辑
         def to_float(x):
             try:
                 return float(x)
             except Exception:
                 return None
+                
         def meets_alert(m):
             if m.get('status') != 1:
                 return False
@@ -570,26 +575,7 @@ def _crawl_latest():
             cond_ping = draw_odds is not None and 2.85 <= draw_odds <= 3.5
             cond_rangping = let_val in ['0', '平手'] or ('平' in let_val)
             return cond_ping or cond_rangping
-        def build_msg(m):
-            home = m.get('home_team', '')
-            away = m.get('away_team', '')
-            tm = m.get('match_time', '')
-            num = m.get('match_number', '')
-            draw_odds = m.get('euro_current_draw') or m.get('euro_initial_draw') or ''
-            hi_val = m.get('hi_handicap_value') or ''
-            tags = []
-            if draw_odds:
-                try:
-                    v = float(draw_odds)
-                    if 2.85 <= v <= 3.5:
-                        tags.append('平')
-                except Exception:
-                    pass
-            if hi_val and (hi_val in ['0', '平手'] or ('平' in hi_val)):
-                tags.append('让平')
-            tag_str = '、'.join(tags) if tags else '提示'
-            odds_text = format_all_odds(m)
-            return f"{num} {home} vs {away}\n时间: {tm}\n符合: {tag_str}\n{odds_text}"
+            
         def send_wechat(text):
             if not WECHAT_WEBHOOK_URL:
                 return
@@ -599,9 +585,44 @@ def _crawl_latest():
                 requests.post(WECHAT_WEBHOOK_URL, json=payload, headers=headers, timeout=10)
             except Exception:
                 pass
+
+        alert_matches = []
         for m in matches or []:
             if meets_alert(m):
-                send_wechat(build_msg(m))
+                alert_matches.append(m)
+                
+        if alert_matches:
+            # 聚合通知
+            lines = [f"🔔 发现 {len(alert_matches)} 场符合条件的比赛"]
+            lines.append("-" * 20)
+            
+            for m in alert_matches:
+                home = m.get('home_team', '')
+                away = m.get('away_team', '')
+                tm = m.get('match_time', '')
+                # 尝试提取时间部分 HH:MM
+                if tm and len(tm) >= 5:
+                    tm = tm[-5:]
+                    
+                num = m.get('match_number', '')
+               
+                # 识别标签
+                tags = []
+                draw_odds = to_float(m.get('euro_current_draw') or m.get('euro_initial_draw'))
+                hi_val = m.get('hi_handicap_value') or ''
+                
+                if draw_odds and 2.85 <= draw_odds <= 3.5:
+                    tags.append(f'平{draw_odds}')
+                if hi_val and (hi_val in ['0', '平手'] or ('平' in hi_val)):
+                    tags.append('让平')
+                
+                tag_str = ' '.join(tags)
+                lines.append(f"{num} {tm} {home} vs {away}")
+                lines.append(f"   [{tag_str}]")
+                lines.append("") # 空行分隔
+                
+            send_wechat("\n".join(lines))
+            print(f"✅ 已推送 {len(alert_matches)} 场比赛通知")
     except Exception as e:
         print(f"❌ 定时爬取任务异常: {str(e)}")
         import traceback
@@ -2040,8 +2061,11 @@ def _update_bets_status(bets):
                 is_finished = False
                 break
             
+            # 提取盘口（如果有）
+            item_handicap = item.get('handicap')
+            
             # 判断单场结果
-            res = _check_leg_result(match, opt)
+            res = _check_leg_result(match, opt, item_handicap)
             if res == 'lose':
                 any_lose = True
             elif res == 'pending':
@@ -2058,7 +2082,7 @@ def _update_bets_status(bets):
                 'settled_at': datetime.now()
             })
 
-def _check_leg_result(match, opt):
+def _check_leg_result(match, opt, item_handicap=None):
     """判断单注输赢"""
     try:
         home = int(match['home_score'])
@@ -2076,20 +2100,23 @@ def _check_leg_result(match, opt):
     # 让球
     if opt in ['h_win', 'h_draw', 'h_lose']:
         try:
-            handicap = float(match.get('hi_handicap_value', 0))
+            # 优先使用投注时的盘口，如果没有则使用比赛当前盘口
+            if item_handicap is not None:
+                handicap = float(item_handicap)
+            else:
+                val = match.get('hi_handicap_value')
+                if val is None or val == '':
+                    return 'pending' # 无盘口数据
+                handicap = float(val)
+                
             diff = (home + handicap) - away
             if diff > 0: res = 'h_win'
-            elif diff == 0: res = 'h_draw' # 走水暂按赢处理？或者算1赔率？简单起见算h_draw命中
+            elif diff == 0: res = 'h_draw'
             else: res = 'h_lose'
             
-            # 如果是走水 (diff==0)，且用户选的不是让平
-            # 简化处理：如果 diff==0，且用户买 h_draw，算赢。
-            # 实际上走水应该是赔率变1。这里为了简化，先严格判断。
-            # 如果真实业务，走水应该把单场赔率置为1，重新计算总赔率。
-            # 简单实现：只有买中才算赢。
-            
             return 'win' if opt == res else 'lose'
-        except:
+        except Exception as e:
+            print(f"计算让球结果出错: {str(e)}")
             return 'pending'
             
     return 'pending'

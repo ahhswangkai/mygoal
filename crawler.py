@@ -278,8 +278,8 @@ class FootballCrawler:
                                 status_code = 0 # 无法识别的文本，保守设为未开始
                 
                 # 3. 兜底逻辑：如果有比分且未完场，强制设为进行中
-                if status_code == 0 and home_score.isdigit() and away_score.isdigit():
-                    status_code = 1
+                # if status_code == 0 and home_score.isdigit() and away_score.isdigit():
+                #     status_code = 1
                 
                 match_data = {
                     'match_id': match_id,
@@ -697,26 +697,35 @@ class FootballCrawler:
                 
                 # 状态映射
                 status_desc = item.get('status_desc', '')
+                raw_status = str(item.get('status', ''))
                 status_code = 0
-                if '完' in status_desc or '结束' in status_desc:
-                    status_code = 2
-                elif '改期' in status_desc:
-                    status_code = 6
-                elif '未' in status_desc or '推迟' in status_desc or '取消' in status_desc:
-                    status_code = 0
+                
+                if raw_status == '4':
+                    status_code = 2  # 完场
+                elif raw_status == '0':
+                    status_code = 0  # 未开始
+                elif raw_status == '6':
+                    status_code = 6  # 改期
+                elif raw_status in ['1', '2', '3']:
+                    status_code = 1  # 进行中
                 else:
-                    status_code = 1
+                    # 兜底逻辑：如果status字段无法识别，尝试使用status_desc
+                    if '完' in status_desc or '结束' in status_desc:
+                        status_code = 2
+                    elif '改期' in status_desc:
+                        status_code = 6
+                    elif '未' in status_desc or '推迟' in status_desc or '取消' in status_desc:
+                        status_code = 0
+                    else:
+                        status_code = 1
                 
                 # 针对已结束或进行中的比赛，强制更新状态
                 home_score = item.get('homescore', '')
                 away_score = item.get('awayscore', '')
                 
-                if status_code == 0 and home_score and away_score:
-                     # 简单判断：如果有比分，可能不是未开始
-                     # 但需注意有些未开始比赛也会有空字符串，这里假设非空
-                     if home_score.strip() and away_score.strip():
-                         status_code = 1
-
+                # 移除强制更新状态的逻辑，因为API返回的status=0是可信的
+                # 有些未开始比赛 homescore/awayscore 可能是 "0"
+                
                 # 比分和排名
                 home_team = item.get('homesxname', '')
                 home_rank = item.get('homestanding', '')
