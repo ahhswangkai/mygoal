@@ -1780,7 +1780,7 @@
                         </div>
                     </div>
                     <div style="text-align:right;display:flex;justify-content:flex-end;gap:10px;">
-                        <button class="btn btn-primary" onclick="this.closest('div').parentNode.remove()">取消</button>
+                        <button class="btn btn-primary" onclick="this.closest('#manualPredictOverlay').remove()">取消</button>
                         <button class="btn btn-success" onclick="(function(btn){
                             const box = btn.closest('div').parentNode;
                             const opts = Array.from(box.querySelectorAll('input[type=checkbox][data-option]:checked')).map(i=>i.getAttribute('data-option'));

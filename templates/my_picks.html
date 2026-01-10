@@ -211,6 +211,46 @@
             border-color: #e53e3e;
         }
         
+        /* Keypad */
+        .keyboard-overlay {
+            position: fixed; bottom: -100%; left: 0; right: 0;
+            background: #f0f2f5; z-index: 1000;
+            transition: bottom 0.3s ease;
+            border-radius: 12px 12px 0 0;
+            box-shadow: 0 -2px 10px rgba(0,0,0,0.1);
+            display: flex; flex-direction: column;
+        }
+        .keyboard-overlay.active { bottom: 0; }
+        .keyboard-header {
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 10px 15px; background: white; border-bottom: 1px solid #eee;
+            border-radius: 12px 12px 0 0;
+        }
+        .keyboard-title { font-size: 16px; font-weight: bold; color: #333; }
+        .keyboard-close { font-size: 14px; color: #4a5568; cursor: pointer; padding: 5px 10px; }
+        .keyboard-body { padding: 15px; }
+        .keyboard-quick-opts {
+            display: flex; gap: 10px; margin-bottom: 15px;
+        }
+        .quick-btn {
+            flex: 1; background: white; border: 1px solid #e2e8f0;
+            border-radius: 6px; padding: 10px 0; text-align: center;
+            font-size: 14px; color: #4a5568; cursor: pointer;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+        }
+        .quick-btn:active { background: #edf2f7; }
+        .keyboard-grid {
+            display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;
+        }
+        .key-btn {
+            background: white; border-radius: 8px; padding: 12px 0;
+            text-align: center; font-size: 22px; font-weight: 500;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.1); cursor: pointer; color: #2d3748;
+        }
+        .key-btn:active { background: #edf2f7; }
+        .key-btn.bg-gray { background: #cbd5e0; color: white; }
+        .key-btn.bg-red { background: #e53e3e; color: white; }
+
         /* Summary Row */
         .summary-row {
             padding: 10px 15px;
@@ -424,8 +464,8 @@
             <div class="summary-info">
                 <div style="display:flex;align-items:center;gap:10px;">
                     <span class="status-text" id="selectionCount">已选 0 场</span>
-                    <div class="multiple-box">
-                        <input type="number" class="multiple-input" id="multipleInput" value="1" min="1">
+                    <div class="multiple-box" onclick="openKeypad()">
+                        <input type="text" class="multiple-input" id="multipleInput" value="1" readonly style="background:transparent;caret-color: transparent;">
                         <div class="multiple-label">倍</div>
                     </div>
                 </div>
@@ -439,6 +479,36 @@
                 <button class="btn-optimize" onclick="openOptimization()">奖金优化</button>
                 <button class="btn-submit" style="flex:1;" onclick="showPlan()">查看方案</button>
             </div>
+        </div>
+    </div>
+
+    <!-- Keypad Overlay -->
+    <div class="keyboard-overlay" id="keyboardOverlay">
+        <div class="keyboard-header">
+            <div class="keyboard-title">修改倍数</div>
+            <div class="keyboard-close" onclick="closeKeypad()">收起</div>
+        </div>
+        <div class="keyboard-body">
+             <div class="keyboard-quick-opts">
+                <div class="quick-btn" onclick="setMultiple(10)">10倍</div>
+                <div class="quick-btn" onclick="setMultiple(20)">20倍</div>
+                <div class="quick-btn" onclick="setMultiple(50)">50倍</div>
+                <div class="quick-btn" onclick="setMultiple(100)">100倍</div>
+             </div>
+             <div class="keyboard-grid">
+                <div class="key-btn" onclick="onKeyClick(1)">1</div>
+                <div class="key-btn" onclick="onKeyClick(2)">2</div>
+                <div class="key-btn" onclick="onKeyClick(3)">3</div>
+                <div class="key-btn" onclick="onKeyClick(4)">4</div>
+                <div class="key-btn" onclick="onKeyClick(5)">5</div>
+                <div class="key-btn" onclick="onKeyClick(6)">6</div>
+                <div class="key-btn" onclick="onKeyClick(7)">7</div>
+                <div class="key-btn" onclick="onKeyClick(8)">8</div>
+                <div class="key-btn" onclick="onKeyClick(9)">9</div>
+                <div class="key-btn bg-gray" onclick="onKeyClick('del')">←</div>
+                <div class="key-btn" onclick="onKeyClick(0)">0</div>
+                <div class="key-btn bg-red" onclick="closeKeypad()">确定</div>
+             </div>
         </div>
     </div>
 
@@ -816,7 +886,58 @@
             }, [[]]);
         }
         
-        document.getElementById('multipleInput').addEventListener('change', calculate);
+        // document.getElementById('multipleInput').addEventListener('change', calculate); // Removed for keypad
+        
+        // --- Keypad Logic ---
+        let isFirstKey = true;
+        
+        function openKeypad() {
+            document.getElementById('keyboardOverlay').classList.add('active');
+            isFirstKey = true;
+        }
+        
+        function closeKeypad() {
+            document.getElementById('keyboardOverlay').classList.remove('active');
+            calculate();
+        }
+        
+        function setMultiple(val) {
+            document.getElementById('multipleInput').value = val;
+            calculate();
+        }
+        
+        function onKeyClick(key) {
+            const input = document.getElementById('multipleInput');
+            let val = input.value.toString();
+            
+            if (key === 'del') {
+                val = val.slice(0, -1);
+                if (val === '') val = '1';
+                isFirstKey = false;
+            } else {
+                if (isFirstKey) {
+                    val = '';
+                    isFirstKey = false;
+                }
+                val += key;
+            }
+            
+            // Limit length and ensure valid number
+            if (val === '') val = '0'; // Temporary 0 allowed while typing? 
+            // Better to force min 1 if it's the final value, but while typing '10' -> delete '0' -> '1' -> delete '1' -> '' -> '1'
+            // If user wants to type '50', starts with '1'. Click '5' -> '5'. Click '0' -> '50'.
+            
+            // Handle leading zeros
+            if (val.length > 1 && val.startsWith('0')) {
+                val = val.substring(1);
+            }
+            if (val === '') val = '1';
+
+            if (parseInt(val) > 99999) val = '99999';
+            
+            input.value = val;
+            calculate();
+        }
         
         // --- Optimization Logic ---
         
