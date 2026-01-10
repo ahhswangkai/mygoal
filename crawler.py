@@ -879,6 +879,15 @@ class FootballCrawler:
                         target_date = datetime.strptime(date_str, '%Y-%m-%d')
                 except Exception:
                     pass
+            elif 'ews.500.com' in url_or_date and '.json' in url_or_date:
+                # 从JSON URL中提取日期 (e.g. .../20260109.json)
+                try:
+                    match = re.search(r'/(\d{8})\.json', url_or_date)
+                    if match:
+                        date_str = match.group(1)
+                        target_date = datetime.strptime(date_str, '%Y%m%d')
+                except Exception:
+                    pass
             else:
                 try:
                     target_date = datetime.strptime(url_or_date, '%Y-%m-%d')
@@ -889,10 +898,15 @@ class FootballCrawler:
                 target_date = datetime.now()
                 
             # 1. 始终使用JSON接口获取比赛列表
-            ym = target_date.strftime('%Y%m')
-            ymd = target_date.strftime('%Y%m%d')
-            ts = int(time.time() * 1000)
-            json_url = f"https://ews.500.com/static/ews/jczq/{ym}/{ymd}.json?random={ts}"
+            if '500.com' in url_or_date and 'json' in url_or_date:
+                # 如果传入的是完整的API URL，直接使用
+                json_url = url_or_date
+            else:
+                # 否则构造URL
+                ym = target_date.strftime('%Y%m')
+                ymd = target_date.strftime('%Y%m%d')
+                ts = int(time.time() * 1000)
+                json_url = f"https://ews.500.com/static/ews/jczq/{ym}/{ymd}.json?random={ts}"
             
             self.logger.info(f"使用JSON接口抓取比赛列表: {json_url}")
             
@@ -927,6 +941,12 @@ class FootballCrawler:
                         time.sleep(random.uniform(0.2, 0.5))
                         odds_details = self.crawl_match_odds(match_id)
                         self._map_odds_details(match, odds_details)
+                        
+                        # 保存赔率数据到数据库
+                        if self.mongo_storage:
+                            self.mongo_storage.save_odds(match_id, odds_details)
+                            # 同时更新比赛基础表中的赔率字段
+                            self.mongo_storage.save_match(match)
                             
                     except Exception as e:
                         self.logger.error(f"抓取比赛 {match_id} 详情失败: {e}")
@@ -975,6 +995,10 @@ class FootballCrawler:
                                     match['euro_current_win'] = euro_info['current_win']
                                     match['euro_current_draw'] = euro_info['current_draw']
                                     match['euro_current_lose'] = euro_info['current_lost']
+                                    
+                        # 保存更新后的比赛数据
+                        if self.mongo_storage:
+                            self.mongo_storage.save_match(match)
                                     
                 except Exception as e:
                     self.logger.error(f"获取XML赔率数据失败: {str(e)}")

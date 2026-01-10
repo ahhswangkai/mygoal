@@ -930,6 +930,12 @@
                 // 通用函数：格式化变动
                 const fmtChange = (diff) => diff == null ? '—' : ((diff > 0 ? '↑' : (diff < 0 ? '↓' : '—')) + (diff !== 0 ? Math.abs(diff).toFixed(2) : ''));
                 
+                // 通用函数：格式化赔率行 (left/middle/right)
+                const fmtOddsLine = (l, m, r) => {
+                    if (!l && !m && !r) return '';
+                    return `${l || ''}/${m || ''}/${r || ''}`;
+                };
+                
                 // 赔率更新时间
                 const fmtTimeShort = (t) => {
                     if (!t) return '';
@@ -957,7 +963,7 @@
                 const euroMoveHtml = (euroHasInitial && euroHasCurrent) ? `<div style="color:#718096;font-size:12px;margin-top:4px;">主${euroWinMove} 平${euroDrawMove} 客${euroLoseMove}</div>` : '';
                 const euro = (euroHasInitial || euroHasCurrent)
                     ? (euroHasInitial ? '<div>初: ' + euroInit + '</div>' : '') + (euroHasCurrent ? '<div>即: ' + euroCurr + '</div>' : '') + euroMoveHtml + (euroTime ? `<div style="color:#a0aec0;font-size:10px;margin-top:2px;">${euroTime}</div>` : '')
-                    : '—';
+                    : '';
                 const asianHasCurrent = (match.asian_current_home_odds || match.asian_current_handicap || match.asian_current_away_odds);
                 const asianHasInitial = (match.asian_initial_home_odds || match.asian_initial_handicap || match.asian_initial_away_odds);
                 const asianInitHome = asianResult === 'home' ? `<span class="odds-hit">${match.asian_initial_home_odds || ''}</span>` : (match.asian_initial_home_odds || '');
@@ -1005,18 +1011,18 @@
                     : '';
                 const asian = (asianHasInitial || asianHasCurrent)
                     ? (asianHasInitial ? '<div>初: ' + asianInit + '</div>' : '') + (asianHasCurrent ? '<div>即: ' + asianCurr + '</div>' : '') + moveHtml + labelHtml
-                    : '—';
+                    : '';
                 const ouHasCurrent = (match.ou_current_over_odds || match.ou_current_total || match.ou_current_under_odds);
                 const ouHasInitial = (match.ou_initial_over_odds || match.ou_initial_total || match.ou_initial_under_odds);
                 const ouInitOver = ouResult === 'over' ? `<span class="odds-hit">${match.ou_initial_over_odds || ''}</span>` : (match.ou_initial_over_odds || '');
                 const ouInitUnder = ouResult === 'under' ? `<span class="odds-hit">${match.ou_initial_under_odds || ''}</span>` : (match.ou_initial_under_odds || '');
                 const ouCurrOver = ouResult === 'over' ? `<span class="odds-hit">${match.ou_current_over_odds || ''}</span>` : (match.ou_current_over_odds || '');
                 const ouCurrUnder = ouResult === 'under' ? `<span class="odds-hit">${match.ou_current_under_odds || ''}</span>` : (match.ou_current_under_odds || '');
-                const ouInit = `${ouInitUnder}/${match.ou_initial_total || ''}/${ouInitOver}`;
-                const ouCurr = `${ouCurrUnder}/${match.ou_current_total || ''}/${ouCurrOver}`;
+                const ouInit = fmtOddsLine(ouInitUnder, match.ou_initial_total, ouInitOver);
+                const ouCurr = fmtOddsLine(ouCurrUnder, match.ou_current_total, ouCurrOver);
                 const ou = (ouHasInitial || ouHasCurrent)
                     ? (ouHasInitial ? '<div>初: ' + ouInit + '</div>' : '') + (ouHasCurrent ? '<div>即: ' + ouCurr + '</div>' : '')
-                    : '—';
+                    : '';
                 
                 // 让球指数
                 const hiHasInitial = match.hi_initial_home_odds && match.hi_initial_draw_odds && match.hi_initial_away_odds;
@@ -1031,8 +1037,8 @@
                 const hiCurrDraw = hiResult === 'draw' ? `<span class="odds-hit">${match.hi_current_draw_odds || ''}</span>` : (match.hi_current_draw_odds || '');
                 const hiCurrAway = hiResult === 'lose' ? `<span class="odds-hit">${match.hi_current_away_odds || ''}</span>` : (match.hi_current_away_odds || '');
 
-                const hiInit = hiHasInitial ? `${hiInitHome}/${hiInitDraw}/${hiInitAway}` : '';
-                const hiCurr = hiHasCurrent ? `${hiCurrHome}/${hiCurrDraw}/${hiCurrAway}` : '';
+                const hiInit = hiHasInitial ? fmtOddsLine(hiInitHome, hiInitDraw, hiInitAway) : '';
+                const hiCurr = hiHasCurrent ? fmtOddsLine(hiCurrHome, hiCurrDraw, hiCurrAway) : '';
                 // 计算让球指数变动（主/平/客）
                 const hiHomeInitF = toFloat(match.hi_initial_home_odds);
                 const hiHomeCurrF = toFloat(match.hi_current_home_odds);
@@ -1054,7 +1060,7 @@
                       (hiHasInitial ? '<div>初: ' + hiInit + '</div>' : '') + 
                       (hiHasCurrent ? '<div>即: ' + hiCurr + '</div>' : '') + 
                       hiMoveHtml
-                    : '—';
+                    : '';
                 // 计算总进球数
                 let totalGoals = '—';
                 if (match.home_score && match.away_score && match.home_score !== '-' && match.away_score !== '-') {
@@ -1106,6 +1112,7 @@
                         <div class="m-footer">
                             <div class="m-odds-grid">
                                 <!-- 欧赔 -->
+                                ${ (euroHasInitial || euroHasCurrent) ? `
                                 <div class="m-odds-item">
                                     <div class="m-odds-label">竞</div>
                                     <div class="m-odds-content">
@@ -1114,7 +1121,9 @@
                                         ${euroTime ? `<div style="font-size:10px;color:#a0aec0;margin-top:2px;">${euroTime}</div>` : ''}
                                     </div>
                                 </div>
+                                ` : '' }
                                 <!-- 亚盘 -->
+                                ${ (asianHasInitial || asianHasCurrent) ? `
                                 <div class="m-odds-item">
                                     <div class="m-odds-label">亚</div>
                                     <div class="m-odds-content">
@@ -1122,6 +1131,7 @@
                                         <div class="m-odds-row-text"><span>即: ${asianCurr}</span></div>
                                     </div>
                                 </div>
+                                ` : '' }
                                 <!-- 让球 -->
                                 ${ (hiHasInitial || hiHasCurrent) ? `
                                 <div class="m-odds-item">

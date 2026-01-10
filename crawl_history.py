@@ -50,8 +50,14 @@ def crawl_history():
                 
                 # 更新赔率
                 try:
-                    if crawler.update_single_match_odds(match):
-                        # 保存更新后的比赛信息
+                    # 显式获取赔率详情
+                    odds = crawler.crawl_match_odds(match_id)
+                    if odds:
+                        # 映射到match对象
+                        crawler._map_odds_details(match, odds)
+                        # 1. 保存详细赔率到odds表
+                        storage.save_odds(match_id, odds)
+                        # 2. 保存更新后的比赛信息到matches表
                         storage.save_match(match)
                         # 随机延时
                         time.sleep(0.5)

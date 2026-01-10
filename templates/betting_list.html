@@ -24,7 +24,7 @@
             z-index: 100;
         }
         .back-btn {
-            position: absolute; left: 15px; color: white; text-decoration: none; font-size: 24px;
+            position: absolute; left: 15px; color: white; text-decoration: none; font-size: 40px;
         }
         .header-title { font-size: 18px; font-weight: 600; }
         
@@ -131,7 +131,22 @@
         <div class="loading">加载中...</div>
     </div>
 
+    <!-- 详情弹窗 -->
+    <div id="detailModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.6);z-index:1000;align-items:center;justify-content:center;padding:20px;">
+        <div style="background:white;border-radius:16px;width:100%;max-width:500px;max-height:90vh;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 25px 50px rgba(0,0,0,0.3);">
+            <div style="background:#f7fafc;padding:15px 20px;border-bottom:1px solid #e2e8f0;display:flex;justify-content:space-between;align-items:center;">
+                <div style="font-weight:600;color:#2d3748;">投注详情</div>
+                <button onclick="document.getElementById('detailModal').style.display='none'" style="background:none;border:none;font-size:24px;color:#a0aec0;cursor:pointer;">&times;</button>
+            </div>
+            <div id="modalContent" style="overflow-y:auto;padding:20px;flex:1;">
+                <!-- Content -->
+            </div>
+        </div>
+    </div>
+
     <script>
+        let currentGroups = []; // Store groups globally for modal access
+
         function getDeviceId() {
             return localStorage.getItem('football_device_id');
         }
@@ -148,6 +163,7 @@
                 const json = await res.json();
                 
                 if (json.success) {
+                    currentGroups = json.data;
                     renderStats(json.stats);
                     renderDaily(json.daily);
                     renderList(json.data);
@@ -213,7 +229,7 @@
                 return;
             }
             
-            container.innerHTML = groups.map(group => {
+            container.innerHTML = groups.map((group, index) => {
                 const statusMap = { 'pending': '进行中', 'won': '中奖', 'lost': '未中' };
                 const statusClass = `status-${group.status}`;
                 const time = new Date(group.created_at).toLocaleString();
@@ -230,7 +246,7 @@
                 const desc = group.desc; 
                 
                 return `
-                    <div class="bet-card" id="group-${group.group_id}">
+                    <div class="bet-card" id="group-${group.group_id}" onclick="showDetail(${index})">
                         <div class="bet-header">
                             <div>
                                 <span class="bet-time">${time}</span>
@@ -238,7 +254,7 @@
                             </div>
                             <div style="display:flex;align-items:center;gap:8px;">
                                 <span class="bet-status ${statusClass}">${statusMap[group.status] || group.status}</span>
-                                <button class="btn-delete" onclick="deleteBet('${group.group_id}')">×</button>
+                                <button class="btn-delete" onclick="event.stopPropagation(); deleteBet('${group.group_id}')">×</button>
                             </div>
                         </div>
                         <div class="bet-content">
@@ -255,6 +271,81 @@
             }).join('');
         }
         
+        function showDetail(index) {
+            const group = currentGroups[index];
+            if (!group) return;
+
+            const modal = document.getElementById('detailModal');
+            const content = document.getElementById('modalContent');
+            
+            const statusMap = { 'pending': '进行中', 'won': '中奖', 'lost': '未中' };
+            const statusColor = group.status === 'won' ? '#276749' : (group.status === 'lost' ? '#9b2c2c' : '#718096');
+            const statusBg = group.status === 'won' ? '#c6f6d5' : (group.status === 'lost' ? '#fed7d7' : '#edf2f7');
+            
+            // Generate Bets HTML
+            const betsHtml = (group.bets || []).map((bet, bIdx) => {
+                const itemsHtml = (bet.items || []).map(item => {
+                    const isCorrect = item.result === 'win' || item.result === 'won';
+                    const isWrong = item.result === 'lost' || item.result === 'lose';
+                    const mark = isCorrect ? '<span style="color:#38a169;font-weight:bold;margin-left:5px;">✓</span>' : (isWrong ? '<span style="color:#e53e3e;font-weight:bold;margin-left:5px;">✗</span>' : '');
+                    
+                    // Format score/status
+                    const statusText = item.status === '4' ? '完' : (item.status === '0' ? '未' : (item.status || '-'));
+                    const scoreText = item.score || '-:-';
+                    
+                    return `
+                        <div style="background:#f7fafc;padding:10px;margin-top:8px;border-radius:6px;font-size:13px;">
+                            <div style="display:flex;justify-content:space-between;color:#718096;margin-bottom:4px;font-size:12px;">
+                                <span>${item.league || ''} ${item.match_time ? item.match_time.substring(5, 16) : ''}</span>
+                                <span>${statusText}</span>
+                            </div>
+                            <div style="display:flex;justify-content:space-between;font-weight:600;color:#2d3748;margin-bottom:4px;">
+                                <span>${item.home_team || '主队'} vs ${item.away_team || '客队'}</span>
+                                <span>${scoreText}</span>
+                            </div>
+                            <div style="color:#4a5568;display:flex;align-items:center;background:white;padding:6px;border-radius:4px;border:1px solid #edf2f7;">
+                                <span style="color:#718096;margin-right:6px;">投注:</span>
+                                <span>${item.name} @ ${item.odds}</span> ${mark}
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+                
+                const betStatusColor = bet.status === 'won' ? '#38a169' : (bet.status === 'lost' ? '#e53e3e' : '#718096');
+                const betStatusText = bet.status === 'won' ? '中奖' : (bet.status === 'lost' ? '未中' : '进行中');
+                
+                const potentialReturn = (bet.stake * bet.odds).toFixed(2);
+                const actualReturn = bet.actual_return ? bet.actual_return.toFixed(2) : '0.00';
+                
+                return `
+                    <div style="border:1px solid #e2e8f0;border-radius:8px;padding:12px;margin-bottom:15px;">
+                        <div style="display:flex;justify-content:space-between;margin-bottom:8px;font-weight:600;font-size:14px;color:#2d3748;">
+                            <span>注单 ${bIdx + 1} <span style="font-weight:normal;color:#718096;font-size:12px;margin-left:5px;">${bet.gate_name || '单关'}</span></span>
+                            <span style="color:${betStatusColor}">${betStatusText}</span>
+                        </div>
+                        <div>${itemsHtml}</div>
+                        <div style="margin-top:10px;padding-top:8px;border-top:1px dashed #e2e8f0;display:flex;justify-content:space-between;font-size:13px;">
+                            <span style="color:#718096;">投入: ${bet.stake}元</span>
+                            <span>${bet.status === 'won' ? '返奖: ' : '预计: '}<span style="color:#e53e3e;font-weight:bold;">${bet.status === 'won' ? actualReturn : potentialReturn}</span></span>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            content.innerHTML = `
+                <div style="text-align:center;margin-bottom:20px;">
+                    <div style="font-size:32px;font-weight:bold;color:${statusColor}">${group.status === 'won' ? '+' + group.total_return.toFixed(2) : (group.status === 'lost' ? '-' + group.total_stake : '待开奖')}</div>
+                    <div style="font-size:12px;color:#a0aec0;margin-top:5px;">总投入: ${group.total_stake}元</div>
+                    <div style="margin-top:10px;">
+                        <span style="background:${statusBg};color:${statusColor};padding:4px 12px;border-radius:12px;font-size:12px;font-weight:600;">${statusMap[group.status]}</span>
+                    </div>
+                </div>
+                ${betsHtml}
+            `;
+
+            modal.style.display = 'flex';
+        }
+
         async function deleteBet(groupId) {
             if (!confirm('确定删除这条记录吗？')) return;
             

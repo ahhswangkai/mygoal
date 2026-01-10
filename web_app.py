@@ -230,7 +230,8 @@ def crawl_stream():
                 date_str = datetime.now().strftime('%Y-%m-%d')
             url = f"https://live.500.com/?e={date_str}"
             yield f"data: 开始爬取日期 {date_str}\n\n"
-            matches = crawler.crawl_daily_matches(url)
+            # 批量获取比赛列表 (fetch_odds=False 避免在crawler内部进行耗时的赔率抓取)
+            matches = crawler.crawl_daily_matches(url, fetch_odds=False)
             if not matches:
                 yield "data: 未能爬取到数据\n\n"
                 yield "event: done\ndata: fail\n\n"
@@ -271,7 +272,12 @@ def crawl_stream():
                     try:
                         odds = fut.result()
                         if odds:
+                            # 映射赔率详情到比赛对象
+                            crawler._map_odds_details(m, odds)
+                            # 保存赔率数据
                             mongo_storage.save_odds(mid, odds)
+                            # 更新比赛基础数据(包含映射后的赔率字符串)
+                            mongo_storage.save_match(m)
                             odds_count += 1
                             yield f"data: 完成[{completed}/{i}] 写入赔率 {mid} - {home} vs {away}\n\n"
                         else:
@@ -297,7 +303,8 @@ def crawl_new_data():
         
         # 传入 mongo_storage 实现边爬边存
         c = FootballCrawler(mongo_storage)
-        matches = c.crawl_daily_matches(url)
+        # 批量获取比赛列表
+        matches = c.crawl_daily_matches(url, fetch_odds=False)
         
         if not matches:
             return jsonify({
@@ -518,7 +525,8 @@ def _crawl_latest():
         url = f"https://live.500.com/?e={date_str}"
         
         # 使用全局 crawler (不带 mongo_storage，需手动保存)
-        matches = crawler.crawl_daily_matches(url)
+        # 批量获取比赛列表
+        matches = crawler.crawl_daily_matches(url, fetch_odds=False)
         
         if not matches:
             print("⚠️  定时任务: 未爬取到比赛数据")
@@ -1967,7 +1975,7 @@ def place_bet():
                 'multiple': t['multiple'],
                 'status': 'pending', # pending, won, lost
                 'actual_return': 0,
-                'created_at': datetime.now()
+                'created_at': datetime.utcnow()
             }
             if mongo_storage.save_bet(bet):
                 count += 1
@@ -1995,6 +2003,10 @@ def get_bets():
         # 2. 获取分组后的列表
         # 使用 get_bet_groups 替代 get_bets
         groups = mongo_storage.get_bet_groups(device_id, limit=50)
+        
+        # 3. 丰富数据（添加比赛比分和单场结果）
+        _enrich_bet_groups(groups)
+        
         stats = mongo_storage.get_bet_stats(device_id)
         daily = mongo_storage.get_daily_stats(device_id)
         
@@ -2079,8 +2091,55 @@ def _update_bets_status(bets):
             mongo_storage.update_bet(bet['bet_id'], {
                 'status': new_status,
                 'actual_return': actual_return,
-                'settled_at': datetime.now()
+                'settled_at': datetime.utcnow()
             })
+
+def _enrich_bet_groups(groups):
+    """
+    丰富投注分组数据，添加比赛实时信息和单场结果
+    """
+    if not groups:
+        return
+
+    # 1. 收集所有比赛ID
+    match_ids = set()
+    for g in groups:
+        for b in g.get('bets', []):
+            for item in b.get('items', []):
+                if 'mid' in item:
+                    match_ids.add(item['mid'])
+    
+    if not match_ids:
+        return
+
+    # 2. 批量获取比赛信息
+    matches_cache = {}
+    for mid in match_ids:
+        m = mongo_storage.get_match_by_id(mid)
+        if m: matches_cache[mid] = m
+    
+    # 3. 注入数据
+    for g in groups:
+        for b in g.get('bets', []):
+            for item in b.get('items', []):
+                mid = item.get('mid')
+                match = matches_cache.get(mid)
+                
+                if match:
+                    # 注入比赛基本信息
+                    item['home_team'] = match.get('home_team', '')
+                    item['away_team'] = match.get('away_team', '')
+                    item['league'] = match.get('league', '')
+                    item['match_time'] = match.get('match_time', '')
+                    item['score'] = f"{match.get('home_score', '-')}:{match.get('away_score', '-')}"
+                    item['status'] = match.get('status')
+                    
+                    # 计算单场结果
+                    res = _check_leg_result(match, item.get('opt'), item.get('handicap'))
+                    item['result'] = res  # 'win', 'lose', 'pending'
+                else:
+                    item['result'] = 'pending'
+                    item['score'] = '-:-'
 
 def _check_leg_result(match, opt, item_handicap=None):
     """判断单注输赢"""

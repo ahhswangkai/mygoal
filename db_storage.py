@@ -734,8 +734,8 @@ class MongoDBStorage:
         """
         try:
             if 'created_at' not in bet_data:
-                bet_data['created_at'] = datetime.now()
-            bet_data['updated_at'] = datetime.now()
+                bet_data['created_at'] = datetime.utcnow()
+            bet_data['updated_at'] = datetime.utcnow()
             
             # 自动生成 bet_id (如果未提供)
             if 'bet_id' not in bet_data:
@@ -854,7 +854,7 @@ class MongoDBStorage:
     def update_bet(self, bet_id, updates):
         """更新投注状态"""
         try:
-            updates['updated_at'] = datetime.now()
+            updates['updated_at'] = datetime.utcnow()
             result = self.bets_collection.update_one(
                 {'bet_id': bet_id},
                 {'$set': updates}
