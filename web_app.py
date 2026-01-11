@@ -2130,9 +2130,25 @@ def _enrich_bet_groups(groups):
                     item['home_team'] = match.get('home_team', '')
                     item['away_team'] = match.get('away_team', '')
                     item['league'] = match.get('league', '')
+                    item['match_number'] = match.get('match_number', '')
                     item['match_time'] = match.get('match_time', '')
                     item['score'] = f"{match.get('home_score', '-')}:{match.get('away_score', '-')}"
                     item['status'] = match.get('status')
+                    
+                    # 注入赔率信息
+                    item['euro_odds'] = {
+                        'init': f"{match.get('euro_initial_win') or '-'}/{match.get('euro_initial_draw') or '-'}/{match.get('euro_initial_lose') or '-'}",
+                        'curr': f"{match.get('euro_current_win') or '-'}/{match.get('euro_current_draw') or '-'}/{match.get('euro_current_lose') or '-'}"
+                    }
+                    item['asian_odds'] = {
+                        'init': f"{match.get('asian_initial_home_odds') or '-'}/{match.get('asian_initial_handicap') or '-'}/{match.get('asian_initial_away_odds') or '-'}",
+                        'curr': f"{match.get('asian_current_home_odds') or '-'}/{match.get('asian_current_handicap') or '-'}/{match.get('asian_current_away_odds') or '-'}"
+                    }
+                    item['hi_odds'] = {
+                        'val': match.get('hi_handicap_value') or '-',
+                        'init': f"{match.get('hi_initial_home_odds') or '-'}/{match.get('hi_initial_draw_odds') or '-'}/{match.get('hi_initial_away_odds') or '-'}",
+                        'curr': f"{match.get('hi_current_home_odds') or '-'}/{match.get('hi_current_draw_odds') or '-'}/{match.get('hi_current_away_odds') or '-'}"
+                    }
                     
                     # 计算单场结果
                     res = _check_leg_result(match, item.get('opt'), item.get('handicap'))

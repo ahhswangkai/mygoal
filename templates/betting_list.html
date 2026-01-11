@@ -290,23 +290,43 @@
                     const mark = isCorrect ? '<span style="color:#38a169;font-weight:bold;margin-left:5px;">✓</span>' : (isWrong ? '<span style="color:#e53e3e;font-weight:bold;margin-left:5px;">✗</span>' : '');
                     
                     // Format score/status
-                    const statusText = item.status === '4' ? '完' : (item.status === '0' ? '未' : (item.status || '-'));
-                    const scoreText = item.score || '-:-';
+                    const statusText = item.status === '4' ? '完' : (item.status === '0' ? '未' : (item.status || ''));
+                    let scoreText = item.score || '';
+                    // Filter out placeholders like -:- or : or containing -
+                    if (scoreText === '-:-' || scoreText === ':' || scoreText.includes('-')) scoreText = '';
                     
                     return `
                         <div style="background:#f7fafc;padding:10px;margin-top:8px;border-radius:6px;font-size:13px;">
                             <div style="display:flex;justify-content:space-between;color:#718096;margin-bottom:4px;font-size:12px;">
-                                <span>${item.league || ''} ${item.match_time ? item.match_time.substring(5, 16) : ''}</span>
+                                <span>${item.match_number ? '['+item.match_number+'] ' : ''}${item.league || ''} ${item.match_time ? item.match_time.substring(5, 16) : ''}</span>
                                 <span>${statusText}</span>
                             </div>
                             <div style="display:flex;justify-content:space-between;font-weight:600;color:#2d3748;margin-bottom:4px;">
                                 <span>${item.home_team || '主队'} vs ${item.away_team || '客队'}</span>
                                 <span>${scoreText}</span>
                             </div>
-                            <div style="color:#4a5568;display:flex;align-items:center;background:white;padding:6px;border-radius:4px;border:1px solid #edf2f7;">
+                            <div style="color:#4a5568;display:flex;align-items:center;background:white;padding:6px;border-radius:4px;border:1px solid #edf2f7;margin-bottom:6px;">
                                 <span style="color:#718096;margin-right:6px;">投注:</span>
                                 <span>${item.name} @ ${item.odds}</span> ${mark}
                             </div>
+                            
+                            <!-- Odds Info -->
+                            ${item.euro_odds ? `
+                            <div style="background:white;border-radius:4px;padding:6px;border:1px solid #edf2f7;font-size:11px;">
+                                <div style="display:flex;justify-content:space-between;margin-bottom:2px;">
+                                    <span style="color:#718096;">欧赔(初/即)</span>
+                                    <span>${item.euro_odds.init} => ${item.euro_odds.curr}</span>
+                                </div>
+                                <div style="display:flex;justify-content:space-between;margin-bottom:2px;">
+                                    <span style="color:#718096;">亚盘(初/即)</span>
+                                    <span>${item.asian_odds.init} => ${item.asian_odds.curr}</span>
+                                </div>
+                                <div style="display:flex;justify-content:space-between;">
+                                    <span style="color:#718096;">让球([${item.hi_odds.val}])</span>
+                                    <span>${item.hi_odds.init} => ${item.hi_odds.curr}</span>
+                                </div>
+                            </div>
+                            ` : ''}
                         </div>
                     `;
                 }).join('');
