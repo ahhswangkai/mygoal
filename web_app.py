@@ -4,7 +4,7 @@
 from flask import Flask, render_template, jsonify, request, Response, stream_with_context
 
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from crawler import FootballCrawler
 
@@ -520,13 +520,27 @@ def _crawl_latest():
     try:
         print(f"⏰ 开始定时爬取任务: {datetime.now()}")
         
-        # 1. 爬取当天比赛列表 (逻辑与 /api/crawl_stream 保持一致)
-        date_str = datetime.now().strftime('%Y-%m-%d')
-        url = f"https://live.500.com/?e={date_str}"
+        # 1. 确定爬取日期范围：总是爬取今天，上午时段额外爬取昨天
+        now = datetime.now()
+        dates_to_crawl = [now.strftime('%Y-%m-%d')]
+        if now.hour < 12:
+            yesterday = now - timedelta(days=1)
+            dates_to_crawl.append(yesterday.strftime('%Y-%m-%d'))
+            print(f"ℹ️  上午时段，额外爬取昨天数据: {dates_to_crawl[-1]}")
         
-        # 使用全局 crawler (不带 mongo_storage，需手动保存)
-        # 批量获取比赛列表
-        matches = crawler.crawl_daily_matches(url, fetch_odds=False)
+        all_matches = []
+        for date_str in dates_to_crawl:
+            url = f"https://live.500.com/?e={date_str}"
+            # 使用全局 crawler (不带 mongo_storage，需手动保存)
+            # 批量获取比赛列表
+            try:
+                ms = crawler.crawl_daily_matches(url, fetch_odds=False)
+                if ms:
+                    all_matches.extend(ms)
+            except Exception as e:
+                print(f"⚠️  爬取 {date_str} 失败: {str(e)}")
+        
+        matches = all_matches
         
         if not matches:
             print("⚠️  定时任务: 未爬取到比赛数据")
