@@ -576,13 +576,60 @@ class FootballCrawler:
             
         return over_under_data
     
-    def parse_handicap_index(self, html_content):
+    def _parse_chinese_handicap(self, text):
+        """解析中文亚盘盘口为数字"""
+        if not text: return 0
+        try:
+            # 移除常见干扰词
+            text = text.strip()
+            
+            is_receive = '受' in text
+            clean_text = text.replace('受', '')
+            
+            val = 0.0
+            mapping = {
+                '平手': 0.0,
+                '平/半': 0.25,
+                '半球': 0.5,
+                '半/一': 0.75,
+                '一球': 1.0,
+                '一/球半': 1.25,
+                '球半': 1.5,
+                '球半/两': 1.75, '球半/两球': 1.75,
+                '两球': 2.0,
+                '两/两球半': 2.25,
+                '两球半': 2.5,
+                '两球半/三': 2.75, '两球半/三球': 2.75,
+                '三球': 3.0,
+                '三/三球半': 3.25,
+                '三球半': 3.5
+            }
+            
+            if clean_text in mapping:
+                val = mapping[clean_text]
+            else:
+                # 尝试直接解析数字 (e.g. "-1", "+1")
+                import re
+                nums = re.findall(r'[-+]?\d+\.?\d*', text)
+                if nums:
+                    return float(nums[0])
+                return 0.0
+                
+            if is_receive:
+                return val
+            else:
+                return -val
+        except Exception:
+            return 0.0
+
+    def parse_handicap_index(self, html_content, asian_hint=None):
         """
         解析让球指数数据 - 500彩票网让球指数专门页面
         优先爬取'竞*官*'（竞彩官方）的数据
         
         Args:
             html_content: HTML内容
+            asian_hint: 亚盘提示值（浮点数），用于处理多条记录时的消歧
             
         Returns:
             handicap_index_data: 让球指数数据，包含让球数和赔率
@@ -599,7 +646,8 @@ class FootballCrawler:
             
             # 查找'竞*官*'行数据
             rows = table.find_all('tr')
-            preferred_row = None
+            candidates = []
+            
             for r in rows:
                 try:
                     txt = r.get_text(strip=True)
@@ -607,8 +655,39 @@ class FootballCrawler:
                     txt = ''
                 # 查找包含'竞*官*'的行
                 if txt and '竞*官*' in txt and '竞*官*(中国)' in txt:
-                    preferred_row = r
-                    break
+                    candidates.append(r)
+            
+            preferred_row = None
+            if candidates:
+                if len(candidates) == 1:
+                    preferred_row = candidates[0]
+                else:
+                    # 多条记录，尝试消歧
+                    if asian_hint is not None:
+                        best_diff = float('inf')
+                        best_row = None
+                        for r in candidates:
+                            try:
+                                tds = r.find_all('td')
+                                if len(tds) >= 3:
+                                    val = float(tds[2].get_text(strip=True))
+                                    # 比较符号是否一致
+                                    if (val > 0 and asian_hint > 0) or (val < 0 and asian_hint < 0) or (val == 0 and abs(asian_hint) < 0.25):
+                                        diff = abs(val - asian_hint)
+                                        if diff < best_diff:
+                                            best_diff = diff
+                                            best_row = r
+                            except:
+                                pass
+                        
+                        if best_row:
+                            preferred_row = best_row
+                            self.logger.info(f"使用亚盘提示({asian_hint})从 {len(candidates)} 条记录中选择了最佳匹配")
+                    
+                    # 如果没有提示或匹配失败，默认取最后一条（通常是ID较大的或最新的）
+                    if not preferred_row:
+                        preferred_row = candidates[-1]
+                        self.logger.info(f"存在 {len(candidates)} 条竞彩记录，默认选择最后一条")
             
             if not preferred_row:
                 self.logger.warning("未找到竞*官*让球指数数据行")
@@ -1093,8 +1172,19 @@ class FootballCrawler:
                 odds_data['over_under'] = over_under_data
             
             # 4. 爬取让球指数（使用让球指数专门页面）
+            asian_hint = None
+            if odds_data.get('asian_handicap'):
+                ah_list = odds_data['asian_handicap']
+                if ah_list:
+                    h_str = ah_list[0].get('initial_handicap') or ah_list[0].get('current_handicap')
+                    if h_str:
+                        asian_hint = self._parse_chinese_handicap(h_str)
+
             handicap_index_url = f"https://odds.500.com/fenxi/rangqiu-{match_id}.shtml"
-            handicap_index_data = self._fetch_data(handicap_index_url, self.parse_handicap_index)
+            handicap_index_data = self._fetch_data(
+                handicap_index_url, 
+                lambda html: self.parse_handicap_index(html, asian_hint=asian_hint)
+            )
             if handicap_index_data:
                 odds_data['handicap_index'] = handicap_index_data
             
