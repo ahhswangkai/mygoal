@@ -699,26 +699,6 @@ def format_all_odds(m):
     parts.append(f"让球指数 盘:{hi_val} 初:{hi_init} 即:{hi_curr}")
     return "\n".join(parts)
 
-@app.route('/api/notify_test/<match_id>', methods=['POST'])
-def notify_test(match_id):
-    try:
-        if not mongo_storage:
-            return jsonify({'success': False, 'message': 'MongoDB不可用'}), 500
-        m = mongo_storage.get_match_by_id(match_id)
-        if not m:
-            return jsonify({'success': False, 'message': '比赛不存在'}), 404
-        home = m.get('home_team', '')
-        away = m.get('away_team', '')
-        num = m.get('match_number', '')
-        tm = m.get('match_time', '')
-        league = m.get('league', '')
-        odds_text = format_all_odds(m)
-        text = f"{num} {home} vs {away}\n联赛: {league}\n时间: {tm}\n{odds_text}"
-        ok = send_wechat_message(text)
-        return jsonify({'success': ok})
-    except Exception as e:
-        return jsonify({'success': False, 'message': str(e)}), 500
-
 
 @app.route('/api/predict/<match_id>')
 def predict_match(match_id):

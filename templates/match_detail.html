@@ -424,7 +424,7 @@
                                     <div class="odds-type">大小球</div>
                                     <div class="odds-row">
                                         <span class="odds-label">即时盘 - 大球:</span>
-                                        <span class="odds-value">${match.ou_current_over}</span>
+                                        <span class="odds-value">${match.ou_current_over_odds}</span>
                                     </div>
                                     <div class="odds-row">
                                         <span class="odds-label">即时盘 - 盘口:</span>
@@ -432,13 +432,13 @@
                                     </div>
                                     <div class="odds-row">
                                         <span class="odds-label">即时盘 - 小球:</span>
-                                        <span class="odds-value">${match.ou_current_under}</span>
+                                        <span class="odds-value">${match.ou_current_under_odds}</span>
                                     </div>
                                     ${match.ou_initial_total ? `
                                         <hr style="margin: 15px 0; border: none; border-top: 1px solid #e2e8f0;">
                                         <div class="odds-row">
                                             <span class="odds-label">初盘 - 大球:</span>
-                                            <span class="odds-value">${match.ou_initial_over}</span>
+                                            <span class="odds-value">${match.ou_initial_over_odds}</span>
                                         </div>
                                         <div class="odds-row">
                                             <span class="odds-label">初盘 - 盘口:</span>
@@ -446,7 +446,7 @@
                                         </div>
                                         <div class="odds-row">
                                             <span class="odds-label">初盘 - 小球:</span>
-                                            <span class="odds-value">${match.ou_initial_under}</span>
+                                            <span class="odds-value">${match.ou_initial_under_odds}</span>
                                         </div>
                                     ` : ''}
                                 </div>

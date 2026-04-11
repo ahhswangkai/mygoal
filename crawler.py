@@ -508,49 +508,87 @@ class FootballCrawler:
     def parse_over_under(self, html_content):
         """
         解析大小球赔率数据 - 500彩票网专门页面
-        
+        优先选择包含"竞*官*"的数据行；若没有则选择"t3*5"；最后取第一行
+
         Args:
             html_content: HTML内容
-            
+
         Returns:
             over_under_data: 大小球赔率数据，包含即时盘和初盘
         """
         soup = BeautifulSoup(html_content, 'lxml')
         over_under_data = []
-        
+
         try:
             # 查找大小球数据表格 (id="datatb")
             table = soup.find('table', id='datatb')
             if not table:
                 self.logger.warning("未找到大小球数据表格 (id=datatb)")
                 return over_under_data
-            
-            # 查找第一行数据（即时赔率）
-            first_row = table.find('tr', class_='tr1')
-            if not first_row:
+
+            # 优先选择包含"竞*官*"的数据行；若没有则选择"t3*5"；最后取第一行
+            rows = table.find_all('tr')
+            preferred_row = None
+
+            # 第一优先级：竞*官*(中国)
+            for r in rows:
+                try:
+                    txt = r.get_text(strip=True)
+                except Exception:
+                    txt = ''
+                if txt and '竞*官*' in txt and '竞*官*(中国)' in txt:
+                    preferred_row = r
+                    break
+
+            # 第二优先级：t3*5
+            if not preferred_row:
+                for r in rows:
+                    try:
+                        txt = r.get_text(strip=True)
+                    except Exception:
+                        txt = ''
+                    if txt and ('t3*5' in txt or '**t3*5' in txt):
+                        preferred_row = r
+                        break
+
+            # 第三优先级：第一行 tr1
+            if not preferred_row:
+                preferred_row = table.find('tr', class_='tr1')
+
+            if not preferred_row:
                 self.logger.warning("未找到大小球数据行")
                 return over_under_data
-            
-            tds = first_row.find_all('td')
+
+            tds = preferred_row.find_all('td')
             if len(tds) >= 12:
                 try:
                     # 列3-5：即时盘（大球赔率、盘口、小球赔率）
                     current_over = tds[3].get_text(strip=True)
                     current_total = tds[4].get_text(strip=True)
                     current_under = tds[5].get_text(strip=True)
-                    
+
                     # 列9-11：初盘（大球赔率、盘口、小球赔率）
                     initial_over = tds[9].get_text(strip=True)
                     initial_total = tds[10].get_text(strip=True)
                     initial_under = tds[11].get_text(strip=True)
-                    
+
                     # 清理箭头符号
                     current_over = current_over.replace('↑', '').replace('↓', '')
                     current_under = current_under.replace('↑', '').replace('↓', '')
                     initial_over = initial_over.replace('↑', '').replace('↓', '')
                     initial_under = initial_under.replace('↑', '').replace('↓', '')
-                    
+
                     if current_over and current_total and current_under:
+                        # 判断使用的数据源
+                        source_info = ''
+                        try:
+                            row_text = preferred_row.get_text(strip=True)
+                            if '竞*官*' in row_text:
+                                source_info = '(竞*官*)'
+                            elif 't3*5' in row_text.lower():
+                                source_info = '(t3*5)'
+                        except:
+                            pass
                         over_under_data.append({
                             # 即时盘
                             'current_over_odds': current_over,
@@ -565,15 +603,15 @@ class FootballCrawler:
                             'total': current_total,
                             'under_odds': current_under
                         })
-                        self.logger.info(f"解析到大小球: 即时盘 {current_over}/{current_total}/{current_under}, 初盘 {initial_over}/{initial_total}/{initial_under}")
+                        self.logger.info(f"解析到大小球{source_info}: 即时盘 {current_over}/{current_total}/{current_under}, 初盘 {initial_over}/{initial_total}/{initial_under}")
                 except (IndexError, ValueError) as e:
                     self.logger.warning(f"解析大小球数据失败: {str(e)}")
-            
+
         except Exception as e:
             self.logger.error(f"解析大小球页面失败: {str(e)}")
             import traceback
             self.logger.error(traceback.format_exc())
-            
+
         return over_under_data
     
     def _parse_chinese_handicap(self, text):
@@ -932,6 +970,46 @@ class FootballCrawler:
             self.logger.error(f"解析欧赔XML失败: {str(e)}")
         return odds_data
 
+    def crawl_over_under_xml(self):
+        """从XML接口获取大小球数据"""
+        # 500.com 大小球XML地址: https://trade.500.com/static/public/jczq/newxml/pl/pl_dxq_2.xml
+        odds_data = {}
+        try:
+            url = "https://trade.500.com/static/public/jczq/newxml/pl/pl_dxq_2.xml"
+            self.logger.info(f"获取大小球XML数据: {url}")
+            response = self._make_request(url)
+            content = self._decode_html(response)
+            import xml.etree.ElementTree as ET
+            root = ET.fromstring(content)
+            for m in root.findall('m'):
+                matchnum = m.get('matchnum')
+                if not matchnum:
+                    continue
+                rows = m.findall('row')
+                if not rows:
+                    continue
+                current_row = rows[0]
+                initial_row = rows[-1]
+                curr_over = current_row.get('over')
+                curr_total = current_row.get('total')
+                curr_under = current_row.get('under')
+                init_over = initial_row.get('over')
+                init_total = initial_row.get('total')
+                init_under = initial_row.get('under')
+                if current_row is not None:
+                    odds_data[matchnum] = {
+                        'updatetime': current_row.get('updatetime'),
+                        'current_over': curr_over,
+                        'current_total': curr_total,
+                        'current_under': curr_under,
+                        'initial_over': init_over,
+                        'initial_total': init_total,
+                        'initial_under': init_under
+                    }
+        except Exception as e:
+            self.logger.error(f"解析大小球XML失败: {str(e)}")
+        return odds_data
+
     def crawl_asian_odds_xml(self):
         """从XML接口获取亚盘数据 (注：500网可能没有直接的亚盘XML，这里暂用让球xml代替或忽略)"""
         # 实际情况中，可能需要寻找其他XML或忽略
@@ -1034,11 +1112,12 @@ class FootballCrawler:
                 try:
                     odds_data = self.crawl_match_odds_xml()
                     euro_odds_data = self.crawl_euro_odds_xml()
-                    
+                    over_under_data = self.crawl_over_under_xml()
+
                     for match in matches:
                         order = match.get('match_number', '')
                         if not order: continue
-                        
+
                         # 转换场次号
                         day_map = {'周一': '1', '周二': '2', '周三': '3', '周四': '4', '周五': '5', '周六': '6', '周日': '7'}
                         matchnum = ''
@@ -1047,7 +1126,7 @@ class FootballCrawler:
                                 num_part = order[len(day_cn):]
                                 matchnum = day_num + num_part
                                 break
-                                
+
                         if matchnum:
                             if matchnum in odds_data:
                                 odd_info = odds_data[matchnum]
@@ -1061,7 +1140,7 @@ class FootballCrawler:
                                     match['hi_current_home_odds'] = odd_info['current_win']
                                     match['hi_current_draw_odds'] = odd_info['current_draw']
                                     match['hi_current_away_odds'] = odd_info['current_lost']
-                                    
+
                             if matchnum in euro_odds_data:
                                 euro_info = euro_odds_data[matchnum]
                                 if 'currodds' in euro_info: match['euro_odds'] = euro_info['currodds']
@@ -1074,11 +1153,26 @@ class FootballCrawler:
                                     match['euro_current_win'] = euro_info['current_win']
                                     match['euro_current_draw'] = euro_info['current_draw']
                                     match['euro_current_lose'] = euro_info['current_lost']
-                                    
+
+                            if matchnum in over_under_data:
+                                ou_info = over_under_data[matchnum]
+                                if 'updatetime' in ou_info:
+                                    match['ou_odds_update_time'] = ou_info['updatetime']
+                                if 'initial_over' in ou_info:
+                                    match['ou_initial_over_odds'] = ou_info['initial_over']
+                                    match['ou_initial_total'] = ou_info['initial_total']
+                                    match['ou_initial_under_odds'] = ou_info['initial_under']
+                                if 'current_over' in ou_info:
+                                    match['ou_current_over_odds'] = ou_info['current_over']
+                                    match['ou_current_total'] = ou_info['current_total']
+                                    match['ou_current_under_odds'] = ou_info['current_under']
+                                if 'current_over' in ou_info and 'current_total' in ou_info and 'current_under' in ou_info:
+                                    match['ou_odds'] = f"{match['ou_current_over_odds']}/{match['ou_current_total']}/{match['ou_current_under_odds']}"
+
                         # 保存更新后的比赛数据
                         if self.mongo_storage:
                             self.mongo_storage.save_match(match)
-                                    
+
                 except Exception as e:
                     self.logger.error(f"获取XML赔率数据失败: {str(e)}")
             
