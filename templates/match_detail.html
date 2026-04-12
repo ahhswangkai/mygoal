@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>比赛详情</title>
+    <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
     <style>
         * {
             margin: 0;
@@ -549,12 +550,6 @@
                                 <span class="odds-label">置信度:</span>
                                 <span class="odds-value">${pred.win_confidence.toFixed(1)}%</span>
                             </div>
-                            ${pred.is_reviewed ? `
-                                <div class="odds-row" style="margin-top:10px;padding-top:10px;border-top:1px solid #e2e8f0;">
-                                    <span class="odds-label">实际结果:</span>
-                                    <span class="odds-value" style="color:${pred.win_correct ? '#48bb78' : '#fc8181'};">${pred.win_correct ? '✅ 正确' : '❌ 错误'}</span>
-                                </div>
-                            ` : ''}
                         </div>
                         
                         <div class="odds-card" style="border-left:4px solid #48bb78;">
@@ -571,12 +566,6 @@
                                 <span class="odds-label">置信度:</span>
                                 <span class="odds-value">${pred.asian_confidence.toFixed(1)}%</span>
                             </div>
-                            ${pred.is_reviewed ? `
-                                <div class="odds-row" style="margin-top:10px;padding-top:10px;border-top:1px solid #e2e8f0;">
-                                    <span class="odds-label">实际结果:</span>
-                                    <span class="odds-value" style="color:${pred.asian_correct ? '#48bb78' : '#fc8181'};">${pred.asian_correct ? '✅ 正确' : '❌ 错误'}</span>
-                                </div>
-                            ` : ''}
                         </div>
                         
                         <div class="odds-card" style="border-left:4px solid #f6ad55;">
@@ -593,12 +582,6 @@
                                 <span class="odds-label">置信度:</span>
                                 <span class="odds-value">${pred.ou_confidence.toFixed(1)}%</span>
                             </div>
-                            ${pred.is_reviewed ? `
-                                <div class="odds-row" style="margin-top:10px;padding-top:10px;border-top:1px solid #e2e8f0;">
-                                    <span class="odds-label">实际结果:</span>
-                                    <span class="odds-value" style="color:${pred.ou_correct ? '#48bb78' : '#fc8181'};">${pred.ou_correct ? '✅ 正确' : '❌ 错误'}</span>
-                                </div>
-                            ` : ''}
                         </div>
                         
                         <div class="odds-card" style="border-left:4px solid #9f7aea;">
@@ -607,44 +590,9 @@
                                 <span class="odds-label">预测比分:</span>
                                 <span class="odds-value" style="color:#9f7aea;font-size:18px;">${pred.predicted_home_score}-${pred.predicted_away_score}</span>
                             </div>
-                            ${pred.is_reviewed ? `
-                                <div class="odds-row">
-                                    <span class="odds-label">实际比分:</span>
-                                    <span class="odds-value">${pred.actual_home_score}-${pred.actual_away_score}</span>
-                                </div>
-                                <div class="odds-row" style="margin-top:10px;padding-top:10px;border-top:1px solid #e2e8f0;">
-                                    <span class="odds-label">比分匹配:</span>
-                                    <span class="odds-value" style="color:${pred.score_correct ? '#48bb78' : '#fc8181'};">${pred.score_correct ? '✅ 完全正确' : '❌ 不匹配'}</span>
-                                </div>
-                            ` : ''}
                         </div>
                     </div>
                 `;
-                
-                // 如果已复盘，显示总体统计
-                if (pred.is_reviewed) {
-                    const accuracy = pred.accuracy || 0;
-                    const bgColor = accuracy >= 75 ? '#d4f4dd' : accuracy >= 50 ? '#fef3c7' : '#fed7d7';
-                    const textColor = accuracy >= 75 ? '#22543d' : accuracy >= 50 ? '#744210' : '#742a2a';
-                    
-                    html += `
-                        <div style="margin-top:20px;padding:20px;background:${bgColor};border-radius:10px;border-left:4px solid ${textColor};">
-                            <div style="font-size:18px;font-weight:bold;color:${textColor};margin-bottom:10px;">
-                                📈 复盘统计
-                            </div>
-                            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:15px;">
-                                <div>
-                                    <div style="color:#718096;font-size:13px;">总体准确度</div>
-                                    <div style="font-size:24px;font-weight:bold;color:${textColor};">${accuracy.toFixed(1)}%</div>
-                                </div>
-                                <div>
-                                    <div style="color:#718096;font-size:13px;">命中项目</div>
-                                    <div style="font-size:24px;font-weight:bold;color:${textColor};">${pred.correct_count}/${pred.total_predictions}</div>
-                                </div>
-                            </div>
-                        </div>
-                    `;
-                }
                 
                 el.innerHTML = html;
                 

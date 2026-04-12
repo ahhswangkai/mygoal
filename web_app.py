@@ -10,7 +10,6 @@ from crawler import FootballCrawler
 
 from db_storage import MongoDBStorage
 from prediction_engine import PredictionEngine
-from prediction_review import PredictionReviewer
 try:
     from apscheduler.schedulers.background import BackgroundScheduler
     from apscheduler.triggers.cron import CronTrigger
@@ -59,22 +58,466 @@ def index():
     return render_template('index.html')
 
 
-@app.route('/daily_recommendations')
-def daily_recommendations():
-    """每日推荐页面"""
-    return render_template('daily_recommendations.html')
+@app.route('/stats')
+def stats():
+    """历史数据统计分析页面"""
+    return render_template('stats.html')
 
 
-@app.route('/lower_plate')
-def lower_plate():
-    """下盘筛选页面"""
-    return render_template('lower_plate.html')
+@app.route('/api/stats/leagues')
+def get_stats_leagues():
+    """API - 获取所有联赛列表"""
+    try:
+        if not mongo_storage:
+            return jsonify({'success': False, 'message': 'MongoDB不可用'}), 500
+
+        # 获取所有有完场比赛的联赛
+        pipeline = [
+            {'$match': {'status': 2}},
+            {'$group': {'_id': '$league'}},
+            {'$sort': {'_id': 1}}
+        ]
+        result = list(mongo_storage.matches_collection.aggregate(pipeline))
+        leagues = [r['_id'] for r in result if r['_id']]
+
+        return jsonify({'success': True, 'leagues': leagues})
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
 
 
-@app.route('/odds_filter')
-def odds_filter():
-    """赔率筛选页面"""
-    return render_template('odds_filter.html')
+@app.route('/api/stats/analyze')
+def analyze_stats():
+    """API - 分析历史数据统计"""
+    try:
+        if not mongo_storage:
+            return jsonify({'success': False, 'message': 'MongoDB不可用'}), 500
+
+        # 获取查询参数
+        group_by = request.args.get('group_by', 'league')
+        filter_type = request.args.get('filter_type', 'hi_home_up')
+        min_change = float(request.args.get('min_change', 0.05))
+        league_filter = request.args.get('league', '')
+        min_count = int(request.args.get('min_count', 5))
+        time_range = request.args.get('time_range', '')
+
+        # 解析筛选类型
+        # 格式: 赔率类型_方向_变化
+        # hi_home_up = 让球盘 主胜 升水
+        parts = filter_type.split('_')
+        odds_type = parts[0]  # hi, euro, asian
+        target = parts[1]  # home, away, win
+        direction = parts[2]  # up=升水, down=降水
+
+        # 构建查询条件 - 只统计完场比赛
+        match_query = {'status': 2}
+
+        if league_filter:
+            match_query['league'] = league_filter
+
+        # 时间范围筛选
+        if time_range:
+            # 计算 cutoff 日期
+            from datetime import datetime, timedelta
+            days = int(time_range)
+            cutoff = datetime.now() - timedelta(days=days)
+            # owner_date 格式是 YYYY-MM-DD，转换为日期比较
+            match_query['owner_date'] = {'$gte': cutoff.strftime('%Y-%m-%d')}
+
+        # 获取所有符合条件的比赛并计算
+        matches = list(mongo_storage.matches_collection.find(match_query))
+
+        # 根据条件筛选，并提取需要分组键和计算结果
+        filtered_matches = []
+        for m in matches:
+            # 获取初始和当前的水位
+            initial = None
+            current = None
+
+            if odds_type == 'hi':
+                # 让球盘
+                if target == 'home':
+                    initial = m.get('hi_initial_home_odds')
+                    current = m.get('hi_current_home_odds')
+                elif target == 'away':
+                    initial = m.get('hi_initial_away_odds')
+                    current = m.get('hi_current_away_odds')
+            elif odds_type == 'euro':
+                # 欧赔
+                if target == 'win':
+                    initial = m.get('euro_initial_win')
+                    current = m.get('euro_current_win')
+            elif odds_type == 'asian':
+                # 亚盘
+                if target == 'home':
+                    initial = m.get('asian_initial_home_odds')
+                    current = m.get('asian_current_home_odds')
+
+            if initial is None or current is None:
+                continue
+
+            # 转换为浮点数
+            try:
+                initial = float(initial)
+                current = float(current)
+            except (ValueError, TypeError):
+                continue
+
+            change = current - initial
+
+            # 根据方向筛选
+            if direction == 'up':
+                # 升水，需要变化大于最小变化
+                if change < min_change:
+                    continue
+            else:
+                # 降水，需要变化小于负的最小变化
+                if change > -min_change:
+                    continue
+
+            # 获取比赛结果
+            home_score = m.get('home_score')
+            away_score = m.get('away_score')
+
+            if home_score is None or away_score is None:
+                continue
+
+            try:
+                home_score = int(home_score) if str(home_score).isdigit() else None
+                away_score = int(away_score) if str(away_score).isdigit() else None
+            except:
+                continue
+
+            if home_score is None or away_score is None:
+                continue
+
+            # 确定分组键
+            group_key = None
+            if group_by == 'league':
+                group_key = m.get('league', '未知联赛')
+            elif group_by == 'handicap':
+                # 按盘口大小分组
+                handicap = m.get('hi_handicap_value')
+                if handicap is None:
+                    handicap = m.get('asian_current_handicap')
+                if handicap is None:
+                    continue
+                try:
+                    h = float(handicap)
+                    if h <= -1.5:
+                        group_key = '让一球/球半以上'
+                    elif h <= -0.5:
+                        group_key = '平手/半球 ~ 让一球'
+                    elif h < 0:
+                        group_key = '平手以下'
+                    elif h <= 0.5:
+                        group_key = '受让平手/半球'
+                    else:
+                        group_key = '受让一球以上'
+                except:
+                    continue
+            elif group_by == 'change_range':
+                # 按变化幅度分组
+                abs_change = abs(change)
+                if abs_change < 0.1:
+                    group_key = '0.00-0.10'
+                elif abs_change < 0.2:
+                    group_key = '0.10-0.20'
+                elif abs_change < 0.3:
+                    group_key = '0.20-0.30'
+                elif abs_change < 0.5:
+                    group_key = '0.30-0.50'
+                else:
+                    group_key = '0.50以上'
+
+            if not group_key:
+                continue
+
+            # 判断盘口方向是否命中
+            # 对于让球盘主胜，命中 = 主队赢了就是盘口方向命中
+            home_win = home_score > away_score
+            handi_win = False
+
+            if odds_type in ['hi', 'asian']:
+                if target == 'home':
+                    handi_win = home_win
+                elif target == 'away':
+                    handi_win = away_score > home_score
+            elif odds_type == 'euro':
+                if target == 'win':
+                    handi_win = home_win
+
+            filtered_matches.append({
+                'group_key': group_key,
+                'home_win': home_win,
+                'draw': home_score == away_score,
+                'away_win': away_score > home_score,
+                'handi_win': handi_win,
+                'change': change
+            })
+
+        # 分组统计
+        from collections import defaultdict
+        groups = defaultdict(lambda: {
+            'total': 0,
+            'home_win': 0,
+            'draw': 0,
+            'away_win': 0,
+            'handi_win': 0,
+            'sum_change': 0
+        })
+
+        overall_total = len(filtered_matches)
+        overall_home_win = sum(1 for m in filtered_matches if m['home_win'])
+        overall_draw = sum(1 for m in filtered_matches if m['draw'])
+        overall_away_win = sum(1 for m in filtered_matches if m['away_win'])
+        overall_sum_change = sum(m['change'] for m in filtered_matches)
+
+        for m in filtered_matches:
+            g = groups[m['group_key']]
+            g['total'] += 1
+            if m['home_win']:
+                g['home_win'] += 1
+            if m['draw']:
+                g['draw'] += 1
+            if m['away_win']:
+                g['away_win'] += 1
+            if m['handi_win']:
+                g['handi_win'] += 1
+            g['sum_change'] += m['change']
+
+        # 转换为输出格式，过滤最小样本量
+        result_groups = []
+        for group_name, stats in groups.items():
+            if stats['total'] >= min_count:
+                result_groups.append({
+                    'group': group_name,
+                    'stats': {
+                        'total': stats['total'],
+                        'home_win': stats['home_win'],
+                        'draw': stats['draw'],
+                        'away_win': stats['away_win'],
+                        'home_win_rate': (stats['home_win'] / stats['total']) * 100,
+                        'handi_win_rate': (stats['handi_win'] / stats['total']) * 100,
+                        'avg_change': stats['sum_change'] / stats['total']
+                    }
+                })
+
+        # 总体统计
+        overall = {
+            'total_matches': overall_total,
+            'home_win': overall_home_win,
+            'draw': overall_draw,
+            'away_win': overall_away_win,
+            'home_win_rate': (overall_home_win / overall_total) * 100 if overall_total > 0 else 0,
+            'avg_change': overall_sum_change / overall_total if overall_total > 0 else 0
+        }
+
+        return jsonify({
+            'success': True,
+            'overall': overall,
+            'groups': result_groups
+        })
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/stats/detail')
+def get_stats_detail():
+    """API - 获取符合筛选条件的具体比赛详情列表"""
+    try:
+        if not mongo_storage:
+            return jsonify({'success': False, 'message': 'MongoDB不可用'}), 500
+
+        # 获取查询参数
+        filter_type = request.args.get('filter_type', 'hi_home_up')
+        min_change = float(request.args.get('min_change', 0.05))
+        league_filter = request.args.get('league', '')
+        time_range = request.args.get('time_range', '')
+        group_by = request.args.get('group_by', 'league')
+        group_value = request.args.get('group_value', '')
+
+        # 解析筛选类型
+        parts = filter_type.split('_')
+        odds_type = parts[0]  # hi, euro, asian
+        target = parts[1]  # home, away, win
+        direction = parts[2]  # up=升水, down=降水
+
+        # 构建查询条件 - 只统计完场比赛
+        match_query = {'status': 2}
+
+        if league_filter:
+            match_query['league'] = league_filter
+
+        # 时间范围筛选
+        if time_range:
+            from datetime import datetime, timedelta
+            days = int(time_range)
+            cutoff = datetime.now() - timedelta(days=days)
+            match_query['owner_date'] = {'$gte': cutoff.strftime('%Y-%m-%d')}
+
+        # 获取所有比赛
+        matches = list(mongo_storage.matches_collection.find(match_query))
+
+        # 根据条件筛选，保存详细信息
+        result = []
+        for m in matches:
+            # 获取初始和当前的水位
+            initial = None
+            current = None
+
+            if odds_type == 'hi':
+                if target == 'home':
+                    initial = m.get('hi_initial_home_odds')
+                    current = m.get('hi_current_home_odds')
+                elif target == 'away':
+                    initial = m.get('hi_initial_away_odds')
+                    current = m.get('hi_current_away_odds')
+            elif odds_type == 'euro':
+                if target == 'win':
+                    initial = m.get('euro_initial_win')
+                    current = m.get('euro_current_win')
+            elif odds_type == 'asian':
+                if target == 'home':
+                    initial = m.get('asian_initial_home_odds')
+                    current = m.get('asian_current_home_odds')
+
+            if initial is None or current is None:
+                continue
+
+            try:
+                initial = float(initial)
+                current = float(current)
+            except (ValueError, TypeError):
+                continue
+
+            change = current - initial
+
+            # 根据方向筛选
+            if direction == 'up':
+                if change < min_change:
+                    continue
+            else:
+                if change > -min_change:
+                    continue
+
+            # 获取比赛结果
+            home_score = m.get('home_score')
+            away_score = m.get('away_score')
+
+            if home_score is None or away_score is None:
+                continue
+
+            try:
+                home_score = int(home_score) if str(home_score).isdigit() else None
+                away_score = int(away_score) if str(away_score).isdigit() else None
+            except:
+                continue
+
+            if home_score is None or away_score is None:
+                continue
+
+            # 获取盘口
+            handicap = m.get('hi_handicap_value')
+            if handicap is None:
+                handicap = m.get('asian_current_handicap')
+
+            # 按分组筛选
+            matched_group = True
+            if group_by == 'league':
+                if m.get('league') != group_value:
+                    matched_group = False
+            elif group_by == 'handicap':
+                # 按盘口分组筛选
+                h = None
+                if handicap is not None:
+                    try:
+                        h = float(handicap)
+                    except:
+                        pass
+                if h is None:
+                    matched_group = False
+                else:
+                    # 和统计时相同的分组逻辑
+                    if h <= -1.5 and group_value != '让一球/球半以上':
+                        matched_group = False
+                    elif h <= -0.5 and group_value not in ['平手/半球 ~ 让一球', '让一球/球半以上']:
+                        matched_group = False
+                    elif h < 0 and group_value not in ['平手以下', '平手/半球 ~ 让一球']:
+                        matched_group = False
+                    elif h <= 0.5 and group_value not in ['受让平手/半球', '平手以下']:
+                        matched_group = False
+                    elif group_value != '受让一球以上':
+                        matched_group = False
+            elif group_by == 'change_range':
+                # 按变化幅度分组筛选
+                abs_change = abs(change)
+                group_key = None
+                if abs_change < 0.1:
+                    group_key = '0.00-0.10'
+                elif abs_change < 0.2:
+                    group_key = '0.10-0.20'
+                elif abs_change < 0.3:
+                    group_key = '0.20-0.30'
+                elif abs_change < 0.5:
+                    group_key = '0.30-0.50'
+                else:
+                    group_key = '0.50以上'
+                if group_key != group_value:
+                    matched_group = False
+
+            if not matched_group:
+                continue
+
+            # 添加到结果，返回所有赔率信息
+            result.append({
+                'match_id': m.get('match_id', ''),
+                'league': m.get('league', ''),
+                'match_time': m.get('match_time', ''),
+                'home_team': m.get('home_team', ''),
+                'away_team': m.get('away_team', ''),
+                'home_score': home_score,
+                'away_score': away_score,
+                'initial': initial,
+                'current': current,
+                'change': change,
+                'handicap': handicap,
+                # 完整的所有赔率
+                'hi_initial_home': m.get('hi_initial_home_odds') if m.get('hi_initial_home_odds') is not None else None,
+                'hi_initial_draw': m.get('hi_initial_draw_odds') if m.get('hi_initial_draw_odds') is not None else None,
+                'hi_initial_away': m.get('hi_initial_away_odds') if m.get('hi_initial_away_odds') is not None else None,
+                'hi_current_home': m.get('hi_current_home_odds') if m.get('hi_current_home_odds') is not None else None,
+                'hi_current_draw': m.get('hi_current_draw_odds') if m.get('hi_current_draw_odds') is not None else None,
+                'hi_current_away': m.get('hi_current_away_odds') if m.get('hi_current_away_odds') is not None else None,
+                'euro_initial_win': m.get('euro_initial_win') if m.get('euro_initial_win') is not None else None,
+                'euro_initial_draw': m.get('euro_initial_draw') if m.get('euro_initial_draw') is not None else None,
+                'euro_initial_lose': m.get('euro_initial_lose') if m.get('euro_initial_lose') is not None else None,
+                'euro_current_win': m.get('euro_current_win') if m.get('euro_current_win') is not None else None,
+                'euro_current_draw': m.get('euro_current_draw') if m.get('euro_current_draw') is not None else None,
+                'euro_current_lose': m.get('euro_current_lose') if m.get('euro_current_lose') is not None else None,
+                'asian_initial_home': m.get('asian_initial_home_odds') if m.get('asian_initial_home_odds') is not None else None,
+                'asian_initial_away': m.get('asian_initial_away_odds') if m.get('asian_initial_away_odds') is not None else None,
+                'asian_current_home': m.get('asian_current_home_odds') if m.get('asian_current_home_odds') is not None else None,
+                'asian_current_away': m.get('asian_current_away_odds') if m.get('asian_current_away_odds') is not None else None,
+                'asian_handicap': m.get('asian_current_handicap') if m.get('asian_current_handicap') is not None else None
+            })
+
+        # 按时间倒序
+        result.sort(key=lambda x: x['match_time'], reverse=True)
+
+        return jsonify({
+            'success': True,
+            'matches': result
+        })
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
 
 
 @app.route('/api/matches')
@@ -468,12 +911,6 @@ def match_detail(match_id):
     return render_template('match_detail.html', match_id=match_id)
 
 
-@app.route('/stats')
-def stats():
-    """统计页面"""
-    return render_template('stats.html')
-
-
 @app.route('/my_picks')
 def my_picks_page():
     """我的选择页面"""
@@ -488,10 +925,7 @@ def get_predictions():
             return jsonify({'success': False, 'message': 'MongoDB不可用'}), 500
         
         # 获取筛选参数
-        is_reviewed = request.args.get('is_reviewed')
         filters = {}
-        if is_reviewed is not None:
-            filters['is_reviewed'] = (is_reviewed.lower() == 'true')
         
         # 获取数量限制
         limit = request.args.get('limit', '50')
@@ -737,20 +1171,7 @@ def predict_match(match_id):
         }), 500
 
 
-@app.route('/api/review/<match_id>')
-def review_match(match_id):
-    """API - 复盘指定比赛"""
-    try:
-        if not mongo_storage:
-            return jsonify({'success': False, 'message': 'MongoDB不可用'}), 500
-        reviewer = PredictionReviewer()
-        result = reviewer.review_match(match_id)
-        if result:
-            return jsonify({'success': True, 'data': result})
-        else:
-            return jsonify({'success': False, 'message': '复盘失败或比赛未完场'}), 400
-    except Exception as e:
-        return jsonify({'success': False, 'message': f'复盘失败: {str(e)}'}), 500
+
 
 
 @app.route('/api/predict/manual/<match_id>', methods=['POST'])
@@ -1333,445 +1754,6 @@ def get_daily_predictions():
         }), 500
 
 
-@app.route('/api/lower_plate')
-def get_lower_plate():
-    """API - 获取下盘筛选结果"""
-    try:
-        if not mongo_storage:
-            return jsonify({'success': False, 'message': 'MongoDB不可用'}), 500
-        
-        def safe_float(value):
-            try:
-                return float(value) if value else None
-            except:
-                return None
-        
-        def safe_int(value):
-            try:
-                return int(value) if value else 0
-            except:
-                return 0
-        
-        def calc_handicap_result(home_score, away_score, hi_handicap):
-            """计算让球盘结果"""
-            if hi_handicap < 0:
-                adjusted_diff = home_score + hi_handicap - away_score
-                upper_pos = 'home'
-                lower_pos = 'away'
-            else:
-                adjusted_diff = away_score + (-hi_handicap) - home_score
-                upper_pos = 'away'
-                lower_pos = 'home'
-            
-            if adjusted_diff > 0:
-                return ('上盘赢', False, upper_pos, lower_pos)
-            elif adjusted_diff < 0:
-                return ('下盘赢', True, upper_pos, lower_pos)
-            else:
-                return ('走盘', False, upper_pos, lower_pos)
-        
-        # 获取参数
-        mode = request.args.get('mode', 'history')  # history=历史, upcoming=未来机会
-        league = request.args.get('league', '')
-        min_odds = request.args.get('min_odds', '')
-        
-        try:
-            min_odds = float(min_odds) if min_odds else None
-        except:
-            min_odds = None
-        
-        if mode == 'upcoming':
-            # 未来下盘机会
-            upcoming = mongo_storage.get_matches(filters={'status': 0})
-            opportunities = []
-            
-            for m in upcoming:
-                hi_handicap = safe_float(m.get('hi_handicap_value'))
-                hi_away_odds = safe_float(m.get('hi_current_away_odds'))
-                
-                if hi_handicap is None or hi_handicap == 0:
-                    continue
-                
-                if league and league not in m.get('league', ''):
-                    continue
-                
-                threshold = min_odds if min_odds else 3.0
-                if hi_away_odds and hi_away_odds >= threshold:
-                    if hi_handicap < 0:
-                        upper_team = m.get('home_team', '')
-                        lower_team = m.get('away_team', '')
-                        handicap_desc = f"主让{abs(int(hi_handicap))}球"
-                    else:
-                        upper_team = m.get('away_team', '')
-                        lower_team = m.get('home_team', '')
-                        handicap_desc = f"客让{int(hi_handicap)}球"
-                    
-                    opportunities.append({
-                        'match_id': m.get('match_id', ''),
-                        'match_time': m.get('match_time', ''),
-                        'league': m.get('league', ''),
-                        'home_team': m.get('home_team', ''),
-                        'away_team': m.get('away_team', ''),
-                        'hi_handicap': hi_handicap,
-                        'handicap_desc': handicap_desc,
-                        'upper_team': upper_team,
-                        'lower_team': lower_team,
-                        'hi_home_odds': safe_float(m.get('hi_current_home_odds')),
-                        'hi_draw_odds': safe_float(m.get('hi_current_draw_odds')),
-                        'hi_away_odds': hi_away_odds,
-                        'euro_home': safe_float(m.get('euro_current_win')),
-                        'euro_away': safe_float(m.get('euro_current_lose')),
-                        'is_cold': hi_away_odds >= 4.0
-                    })
-            
-            opportunities.sort(key=lambda x: -(x['hi_away_odds'] or 0))
-            
-            return jsonify({
-                'success': True,
-                'mode': 'upcoming',
-                'count': len(opportunities),
-                'data': opportunities[:30]
-            })
-        
-        else:
-            # 历史下盘获胜
-            finished = mongo_storage.get_matches(filters={'status': 2})
-            results = []
-            total_with_handicap = 0
-            
-            for m in finished:
-                hi_handicap = safe_float(m.get('hi_handicap_value'))
-                
-                if hi_handicap is None or hi_handicap == 0:
-                    continue
-                
-                if league and league not in m.get('league', ''):
-                    continue
-                
-                total_with_handicap += 1
-                
-                home_score = safe_int(m.get('home_score'))
-                away_score = safe_int(m.get('away_score'))
-                
-                result, is_lower_win, upper_pos, lower_pos = calc_handicap_result(
-                    home_score, away_score, hi_handicap
-                )
-                
-                if not is_lower_win:
-                    continue
-                
-                hi_away_odds = safe_float(m.get('hi_current_away_odds'))
-                
-                if min_odds and hi_away_odds and hi_away_odds < min_odds:
-                    continue
-                
-                upper_team = m.get('home_team' if upper_pos == 'home' else 'away_team', '')
-                lower_team = m.get('home_team' if lower_pos == 'home' else 'away_team', '')
-                
-                if hi_handicap < 0:
-                    handicap_desc = f"主让{abs(int(hi_handicap))}球"
-                else:
-                    handicap_desc = f"客让{int(hi_handicap)}球"
-                
-                results.append({
-                    'match_id': m.get('match_id', ''),
-                    'match_time': m.get('match_time', ''),
-                    'league': m.get('league', ''),
-                    'home_team': m.get('home_team', ''),
-                    'away_team': m.get('away_team', ''),
-                    'score': f"{home_score}-{away_score}",
-                    'hi_handicap': hi_handicap,
-                    'handicap_desc': handicap_desc,
-                    'upper_team': upper_team,
-                    'lower_team': lower_team,
-                    'hi_home_odds': safe_float(m.get('hi_current_home_odds')),
-                    'hi_draw_odds': safe_float(m.get('hi_current_draw_odds')),
-                    'hi_away_odds': hi_away_odds,
-                    'euro_home': safe_float(m.get('euro_current_win')),
-                    'euro_away': safe_float(m.get('euro_current_lose')),
-                    'is_cold': hi_away_odds and hi_away_odds >= 3.0
-                })
-            
-            results.sort(key=lambda x: -(x['hi_away_odds'] or 0))
-            
-            # 计算联赛统计
-            from collections import defaultdict
-            league_stats = defaultdict(lambda: {'total': 0, 'lower_win': 0})
-            
-            for m in finished:
-                hi_handicap = safe_float(m.get('hi_handicap_value'))
-                if hi_handicap is None or hi_handicap == 0:
-                    continue
-                
-                lg = m.get('league', '')
-                home_score = safe_int(m.get('home_score'))
-                away_score = safe_int(m.get('away_score'))
-                
-                _, is_lower_win, _, _ = calc_handicap_result(home_score, away_score, hi_handicap)
-                
-                league_stats[lg]['total'] += 1
-                if is_lower_win:
-                    league_stats[lg]['lower_win'] += 1
-            
-            # 转换为列表并排序
-            league_list = []
-            for lg, stats in league_stats.items():
-                if stats['total'] >= 5:
-                    rate = stats['lower_win'] / stats['total'] * 100
-                    league_list.append({
-                        'league': lg,
-                        'total': stats['total'],
-                        'lower_win': stats['lower_win'],
-                        'rate': round(rate, 1)
-                    })
-            
-            league_list.sort(key=lambda x: -x['rate'])
-            
-            return jsonify({
-                'success': True,
-                'mode': 'history',
-                'total_matches': total_with_handicap,
-                'lower_win_count': len(results) if not min_odds else sum(1 for r in results),
-                'lower_win_rate': round(len(results) / total_with_handicap * 100, 1) if total_with_handicap else 0,
-                'count': len(results),
-                'data': results[:50],
-                'league_stats': league_list[:15]
-            })
-        
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return jsonify({
-            'success': False,
-            'message': f'筛选失败: {str(e)}'
-        }), 500
-
-
-@app.route('/api/odds_filter')
-def get_odds_filter():
-    """API - 赔率筛选（让球盘升水/欧赔降水等）"""
-    try:
-        if not mongo_storage:
-            return jsonify({'success': False, 'message': 'MongoDB不可用'}), 500
-        
-        def safe_float(value):
-            try:
-                return float(value) if value else None
-            except:
-                return None
-        
-        def safe_int(value):
-            try:
-                return int(value) if value else 0
-            except:
-                return 0
-        
-        # 获取参数
-        filter_type = request.args.get('type', 'hi_home_up')  # 筛选类型
-        mode = request.args.get('mode', 'all')  # all=全部, upcoming=未开始, finished=完场
-        league = request.args.get('league', '')
-        
-        # 获取比赛数据
-        if mode == 'upcoming':
-            matches = mongo_storage.get_matches(filters={'status': 0})
-        elif mode == 'finished':
-            # 获取有比分的比赛
-            all_matches = mongo_storage.get_matches()
-            matches = [m for m in all_matches if m.get('home_score') is not None and m.get('away_score') is not None]
-        else:
-            matches = mongo_storage.get_matches()
-        
-        results = []
-        stats = {'total': 0, 'home_win': 0, 'draw': 0, 'away_win': 0, 'hi_win': 0, 'hi_draw': 0, 'hi_lose': 0}
-        
-        for m in matches:
-            # 联赛筛选
-            if league and league not in m.get('league', ''):
-                continue
-            
-            # 获取让球盘数据
-            hi_init_home = safe_float(m.get('hi_initial_home_odds'))
-            hi_curr_home = safe_float(m.get('hi_current_home_odds'))
-            hi_init_away = safe_float(m.get('hi_initial_away_odds'))
-            hi_curr_away = safe_float(m.get('hi_current_away_odds'))
-            hi_handicap = safe_float(m.get('hi_handicap_value'))
-            
-            # 获取欧赔数据
-            euro_init_win = safe_float(m.get('euro_initial_win'))
-            euro_curr_win = safe_float(m.get('euro_current_win'))
-            euro_init_lose = safe_float(m.get('euro_initial_lose'))
-            euro_curr_lose = safe_float(m.get('euro_current_lose'))
-            
-            # 获取亚盘数据
-            asian_init_home = safe_float(m.get('asian_initial_home_odds'))
-            asian_curr_home = safe_float(m.get('asian_current_home_odds'))
-            
-            # 根据筛选类型判断
-            match_filter = False
-            filter_desc = ''
-            
-            if filter_type == 'hi_home_up':
-                # 让球盘主胜升水
-                if hi_init_home and hi_curr_home and hi_curr_home > hi_init_home + 0.02:
-                    match_filter = True
-                    filter_desc = f"让胜升水 {hi_init_home:.2f}→{hi_curr_home:.2f} (+{hi_curr_home - hi_init_home:.2f})"
-            
-            elif filter_type == 'hi_home_up_euro_down':
-                # 让球盘主胜升水 + 欧赔主胜降水
-                if (hi_init_home and hi_curr_home and hi_curr_home > hi_init_home + 0.02 and
-                    euro_init_win and euro_curr_win and euro_curr_win < euro_init_win - 0.02):
-                    match_filter = True
-                    filter_desc = f"让胜升 +{hi_curr_home - hi_init_home:.2f} | 欧主降 {euro_curr_win - euro_init_win:.2f}"
-            
-            elif filter_type == 'asian_up_euro_down':
-                # 亚盘主水升 + 欧赔主胜降
-                if (asian_init_home and asian_curr_home and asian_curr_home > asian_init_home + 0.02 and
-                    euro_init_win and euro_curr_win and euro_curr_win < euro_init_win - 0.02):
-                    match_filter = True
-                    filter_desc = f"亚盘升 +{asian_curr_home - asian_init_home:.2f} | 欧主降 {euro_curr_win - euro_init_win:.2f}"
-            
-            elif filter_type == 'hi_away_down':
-                # 让球盘让负降水（利好下盘）
-                if hi_init_away and hi_curr_away and hi_curr_away < hi_init_away - 0.02:
-                    match_filter = True
-                    filter_desc = f"让负降水 {hi_init_away:.2f}→{hi_curr_away:.2f} ({hi_curr_away - hi_init_away:.2f})"
-            
-            elif filter_type == 'hi_home_up_low':
-                # 让球盘主胜升水 + 让胜赔率<5
-                if (hi_init_home and hi_curr_home and 
-                    hi_curr_home > hi_init_home + 0.02 and 
-                    hi_curr_home < 5.0):
-                    match_filter = True
-                    filter_desc = f"让胜升水 {hi_init_home:.2f}→{hi_curr_home:.2f} (+{hi_curr_home - hi_init_home:.2f})"
-            
-            if not match_filter:
-                continue
-            
-            # 计算比赛结果（已完场）
-            home_score = m.get('home_score')
-            away_score = m.get('away_score')
-            result = ''
-            hi_result = ''
-            
-            if home_score is not None and away_score is not None:
-                try:
-                    hs = int(home_score)
-                    aws = int(away_score)
-                    
-                    # 胜平负结果
-                    if hs > aws:
-                        result = '主胜'
-                        stats['home_win'] += 1
-                    elif hs == aws:
-                        result = '平局'
-                        stats['draw'] += 1
-                    else:
-                        result = '客胜'
-                        stats['away_win'] += 1
-                    
-                    # 让球盘结果
-                    if hi_handicap is not None:
-                        adjusted_diff = (hs - aws) + hi_handicap
-                        if adjusted_diff > 0:
-                            hi_result = '让胜'
-                            stats['hi_win'] += 1
-                        elif adjusted_diff == 0:
-                            hi_result = '走水'
-                            stats['hi_draw'] += 1
-                        else:
-                            hi_result = '让负'
-                            stats['hi_lose'] += 1
-                except:
-                    pass
-            
-            stats['total'] += 1
-            
-            results.append({
-                'match_id': m.get('match_id', ''),
-                'match_time': m.get('match_time', ''),
-                'league': m.get('league', ''),
-                'home_team': m.get('home_team', ''),
-                'away_team': m.get('away_team', ''),
-                'score': f"{home_score or '-'}:{away_score or '-'}",
-                'status': m.get('status', 0),
-                'hi_handicap': hi_handicap,
-                'hi_init_home': hi_init_home,
-                'hi_curr_home': hi_curr_home,
-                'hi_init_away': hi_init_away,
-                'hi_curr_away': hi_curr_away,
-                'euro_init_win': euro_init_win,
-                'euro_curr_win': euro_curr_win,
-                'euro_init_lose': euro_init_lose,
-                'euro_curr_lose': euro_curr_lose,
-                'filter_desc': filter_desc,
-                'result': result,
-                'hi_result': hi_result
-            })
-        
-        # 按时间倒序
-        results.sort(key=lambda x: x['match_time'], reverse=True)
-        
-        # 计算统计
-        if stats['total'] > 0:
-            stats['home_win_rate'] = round(stats['home_win'] / stats['total'] * 100, 1)
-            stats['draw_rate'] = round(stats['draw'] / stats['total'] * 100, 1)
-            stats['away_win_rate'] = round(stats['away_win'] / stats['total'] * 100, 1)
-            
-            hi_total = stats['hi_win'] + stats['hi_draw'] + stats['hi_lose']
-            if hi_total > 0:
-                stats['hi_win_rate'] = round(stats['hi_win'] / hi_total * 100, 1)
-                stats['hi_draw_rate'] = round(stats['hi_draw'] / hi_total * 100, 1)
-                stats['hi_lose_rate'] = round(stats['hi_lose'] / hi_total * 100, 1)
-        
-        # 按联赛统计
-        league_stats = {}
-        for r in results:
-            lg = r['league']
-            if lg not in league_stats:
-                league_stats[lg] = {'total': 0, 'hi_win': 0, 'hi_draw': 0, 'hi_lose': 0}
-            league_stats[lg]['total'] += 1
-            if r['hi_result'] == '让胜':
-                league_stats[lg]['hi_win'] += 1
-            elif r['hi_result'] == '走水':
-                league_stats[lg]['hi_draw'] += 1
-            elif r['hi_result'] == '让负':
-                league_stats[lg]['hi_lose'] += 1
-        
-        # 转换并排序
-        league_list = []
-        for lg, st in league_stats.items():
-            if st['total'] >= 3:
-                hi_total = st['hi_win'] + st['hi_draw'] + st['hi_lose']
-                if hi_total > 0:
-                    league_list.append({
-                        'league': lg,
-                        'total': st['total'],
-                        'hi_win': st['hi_win'],
-                        'hi_draw': st['hi_draw'],
-                        'hi_lose': st['hi_lose'],
-                        'hi_lose_rate': round(st['hi_lose'] / hi_total * 100, 1)
-                    })
-        
-        league_list.sort(key=lambda x: -x['hi_lose_rate'])
-        
-        return jsonify({
-            'success': True,
-            'filter_type': filter_type,
-            'mode': mode,
-            'count': len(results),
-            'stats': stats,
-            'league_stats': league_list[:15],
-            'data': results[:100]  # 最多返回100条
-        })
-        
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return jsonify({
-            'success': False,
-            'message': f'筛选失败: {str(e)}'
-        }), 500
-
 
 @app.route('/api/my_picks')
 def get_my_picks():
@@ -1896,38 +1878,7 @@ def get_my_picks():
         }), 500
 
 
-@app.route('/api/review/summary')
-def get_review_summary():
-    """API - 获取复盘汇总报告"""
-    try:
-        if not mongo_storage:
-            return jsonify({'success': False, 'message': 'MongoDB不可用'}), 500
-        
-        days = request.args.get('days', '7')
-        try:
-            days = max(1, min(30, int(days)))
-        except ValueError:
-            days = 7
-        
-        reviewer = PredictionReviewer()
-        summary = reviewer.generate_summary_report(days=days)
-        
-        if summary:
-            return jsonify({
-                'success': True,
-                'data': summary
-            })
-        else:
-            return jsonify({
-                'success': False,
-                'message': '暂无复盘数据'
-            }), 404
-            
-    except Exception as e:
-        return jsonify({
-            'success': False,
-            'message': f'获取汇总失败: {str(e)}'
-        }), 500
+
 
 
 # --- Betting System Routes ---
@@ -2200,9 +2151,7 @@ if __name__ == '__main__':
     print("访问地址: http://127.0.0.1:5002")
     print("=" * 50)
     
-    # 在主进程(reloader=False)或Reloader子进程中启动调度器
-    # 注意：app.run(debug=True)会启动reloader，WERKZEUG_RUN_MAIN在子进程为true
-    if os.environ.get('WERKZEUG_RUN_MAIN') == 'true':
-        _start_scheduler()
+    # 直接启动调度器，_start_scheduler内部已经防止重复初始化
+    _start_scheduler()
         
     app.run(debug=True, host='0.0.0.0', port=5002)

@@ -1,0 +1,1103 @@
+2026-04-12 00:35:53 - football_crawler - INFO - 成功连接到MongoDB: mongodb://localhost:27017/
+2026-04-12 00:35:53 - football_crawler - INFO - 数据库索引创建成功
+✅ 使用MongoDB数据库
+==================================================
+足球数据展示系统已启动
+访问地址: http://127.0.0.1:5002
+==================================================
+✅ 定时任务调度器已启动 (每15分钟刷新)
+ * Serving Flask app 'web_app' (lazy loading)
+ * Environment: production
+   WARNING: This is a development server. Do not use it in a production deployment.
+   Use a production WSGI server instead.
+ * Debug mode: on
+[31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5002
+ * Running on http://192.168.124.26:5002
+[33mPress CTRL+C to quit[0m
+ * Restarting with stat
+2026-04-12 00:35:54 - football_crawler - INFO - 成功连接到MongoDB: mongodb://localhost:27017/
+2026-04-12 00:35:54 - football_crawler - INFO - 数据库索引创建成功
+ * Debugger is active!
+ * Debugger PIN: 852-802-166
+127.0.0.1 - - [12/Apr/2026 00:37:29] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [12/Apr/2026 00:37:29] "GET /api/leagues HTTP/1.1" 200 -
+127.0.0.1 - - [12/Apr/2026 00:37:29] "GET /api/matches?page=1&page_size=50&start_date=2026-04-12&end_date=2026-04-12 HTTP/1.1" 200 -
+127.0.0.1 - - [12/Apr/2026 00:37:30] "GET /api/predictions?limit=200 HTTP/1.1" 200 -
+127.0.0.1 - - [12/Apr/2026 00:37:36] "GET /api/matches?page=1&page_size=50&status=2&start_date=2026-04-12&end_date=2026-04-12 HTTP/1.1" 200 -
+127.0.0.1 - - [12/Apr/2026 00:37:38] "GET /api/matches?page=1&page_size=50&start_date=2026-04-12&end_date=2026-04-12 HTTP/1.1" 200 -
+127.0.0.1 - - [12/Apr/2026 00:37:38] "GET /api/predictions?limit=200 HTTP/1.1" 200 -
+127.0.0.1 - - [12/Apr/2026 00:39:09] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [12/Apr/2026 00:39:09] "GET /api/leagues HTTP/1.1" 200 -
+127.0.0.1 - - [12/Apr/2026 00:39:09] "GET /api/matches?page=1&page_size=50&start_date=2026-04-12&end_date=2026-04-12 HTTP/1.1" 200 -
+127.0.0.1 - - [12/Apr/2026 00:39:09] "GET /api/predictions?limit=200 HTTP/1.1" 200 -
+127.0.0.1 - - [12/Apr/2026 00:39:15] "GET /api/matches?page=1&page_size=50&status=2&start_date=2026-04-12&end_date=2026-04-12 HTTP/1.1" 200 -
+127.0.0.1 - - [12/Apr/2026 00:39:17] "GET /api/matches?page=1&page_size=50&start_date=2026-04-12&end_date=2026-04-12 HTTP/1.1" 200 -
+127.0.0.1 - - [12/Apr/2026 00:39:17] "GET /api/predictions?limit=200 HTTP/1.1" 200 -
+127.0.0.1 - - [12/Apr/2026 00:39:19] "GET /api/matches?page=1&page_size=50&start_date=2026-04-11&end_date=2026-04-12 HTTP/1.1" 200 -
+127.0.0.1 - - [12/Apr/2026 00:39:19] "GET /api/predictions?limit=200 HTTP/1.1" 200 -
+127.0.0.1 - - [12/Apr/2026 00:39:36] "GET /api/matches?page=1&page_size=50&status=2&start_date=2026-04-11&end_date=2026-04-12 HTTP/1.1" 200 -
+127.0.0.1 - - [12/Apr/2026 00:39:36] "GET /api/predictions?limit=200 HTTP/1.1" 200 -
+127.0.0.1 - - [12/Apr/2026 00:39:37] "GET /api/matches?page=1&page_size=50&status=0&start_date=2026-04-11&end_date=2026-04-12 HTTP/1.1" 200 -
+127.0.0.1 - - [12/Apr/2026 00:39:38] "GET /api/predictions?limit=200 HTTP/1.1" 200 -
+127.0.0.1 - - [12/Apr/2026 00:41:46] "GET /api/matches?page=1&page_size=50&status=0&start_date=2026-04-11&end_date=2026-04-12 HTTP/1.1" 200 -
+127.0.0.1 - - [12/Apr/2026 00:41:46] "GET /api/predictions?limit=200 HTTP/1.1" 200 -
+127.0.0.1 - - [12/Apr/2026 00:41:47] "GET /api/matches?page=1&page_size=50&start_date=2026-04-11&end_date=2026-04-12 HTTP/1.1" 200 -
+127.0.0.1 - - [12/Apr/2026 00:41:48] "GET /api/predictions?limit=200 HTTP/1.1" 200 -
+127.0.0.1 - - [12/Apr/2026 00:41:48] "GET /api/matches?page=1&page_size=50&status=1&start_date=2026-04-11&end_date=2026-04-12 HTTP/1.1" 200 -
+127.0.0.1 - - [12/Apr/2026 00:41:49] "GET /api/predictions?limit=200 HTTP/1.1" 200 -
+127.0.0.1 - - [12/Apr/2026 00:41:49] "GET /api/matches?page=1&page_size=50&status=2&start_date=2026-04-11&end_date=2026-04-12 HTTP/1.1" 200 -
+127.0.0.1 - - [12/Apr/2026 00:41:49] "GET /api/predictions?limit=200 HTTP/1.1" 200 -
+127.0.0.1 - - [12/Apr/2026 00:41:50] "GET /api/matches?page=1&page_size=50&start_date=2026-04-11&end_date=2026-04-12 HTTP/1.1" 200 -
+127.0.0.1 - - [12/Apr/2026 00:41:50] "GET /api/predictions?limit=200 HTTP/1.1" 200 -
+127.0.0.1 - - [12/Apr/2026 00:44:27] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [12/Apr/2026 00:44:28] "[36mGET /static/favicon.svg HTTP/1.1[0m" 304 -
+127.0.0.1 - - [12/Apr/2026 00:44:28] "GET /api/leagues HTTP/1.1" 200 -
+127.0.0.1 - - [12/Apr/2026 00:44:28] "GET /api/matches?page=1&page_size=50&start_date=2026-04-12&end_date=2026-04-12 HTTP/1.1" 200 -
+127.0.0.1 - - [12/Apr/2026 00:44:28] "GET /api/predictions?limit=200 HTTP/1.1" 200 -
+127.0.0.1 - - [12/Apr/2026 00:44:44] "GET /api/matches?page=1&page_size=50&start_date=2026-04-11&end_date=2026-04-12 HTTP/1.1" 200 -
+127.0.0.1 - - [12/Apr/2026 00:44:44] "GET /api/predictions?limit=200 HTTP/1.1" 200 -
+127.0.0.1 - - [12/Apr/2026 00:44:59] "GET /api/matches?page=1&page_size=50&status=0&start_date=2026-04-11&end_date=2026-04-12 HTTP/1.1" 200 -
+127.0.0.1 - - [12/Apr/2026 00:44:59] "GET /api/predictions?limit=200 HTTP/1.1" 200 -
+2026-04-12 00:45:00 - football_crawler - INFO - 使用JSON接口抓取比赛列表: https://ews.500.com/static/ews/jczq/202604/20260412.json?random=1775925900073
+2026-04-12 00:45:00 - football_crawler - INFO - 请求URL: https://ews.500.com/static/ews/jczq/202604/20260412.json?random=1775925900073
+2026-04-12 00:45:00 - football_crawler - INFO - 使用JSON接口抓取比赛列表: https://ews.500.com/static/ews/jczq/202604/20260412.json?random=1775925900084
+2026-04-12 00:45:00 - football_crawler - INFO - 请求URL: https://ews.500.com/static/ews/jczq/202604/20260412.json?random=1775925900084
+127.0.0.1 - - [12/Apr/2026 00:45:00] "GET /api/matches?page=1&page_size=50&status=1&start_date=2026-04-11&end_date=2026-04-12 HTTP/1.1" 200 -
+127.0.0.1 - - [12/Apr/2026 00:45:00] "GET /api/predictions?limit=200 HTTP/1.1" 200 -
+2026-04-12 00:45:02 - football_crawler - INFO - 解析到 30 场比赛 (JSON)
+2026-04-12 00:45:02 - football_crawler - INFO - 获取让球赔率XML数据: https://trade.500.com/static/public/jczq/newxml/pl/pl_spf_2.xml
+2026-04-12 00:45:02 - football_crawler - INFO - 请求URL: https://trade.500.com/static/public/jczq/newxml/pl/pl_spf_2.xml
+2026-04-12 00:45:02 - football_crawler - INFO - 解析到 30 场比赛 (JSON)
+2026-04-12 00:45:02 - football_crawler - INFO - 获取让球赔率XML数据: https://trade.500.com/static/public/jczq/newxml/pl/pl_spf_2.xml
+2026-04-12 00:45:02 - football_crawler - INFO - 请求URL: https://trade.500.com/static/public/jczq/newxml/pl/pl_spf_2.xml
+2026-04-12 00:45:04 - football_crawler - INFO - 获取欧赔XML数据: https://trade.500.com/static/public/jczq/newxml/pl/pl_nspf_2.xml
+2026-04-12 00:45:04 - football_crawler - INFO - 获取欧赔XML数据: https://trade.500.com/static/public/jczq/newxml/pl/pl_nspf_2.xml
+2026-04-12 00:45:04 - football_crawler - INFO - 请求URL: https://trade.500.com/static/public/jczq/newxml/pl/pl_nspf_2.xml
+2026-04-12 00:45:04 - football_crawler - INFO - 请求URL: https://trade.500.com/static/public/jczq/newxml/pl/pl_nspf_2.xml
+127.0.0.1 - - [12/Apr/2026 00:45:06] "GET /api/matches?page=1&page_size=50&status=2&start_date=2026-04-11&end_date=2026-04-12 HTTP/1.1" 200 -
+127.0.0.1 - - [12/Apr/2026 00:45:06] "GET /api/predictions?limit=200 HTTP/1.1" 200 -
+2026-04-12 00:45:09 - football_crawler - INFO - 获取大小球XML数据: https://trade.500.com/static/public/jczq/newxml/pl/pl_dxq_2.xml
+2026-04-12 00:45:09 - football_crawler - INFO - 请求URL: https://trade.500.com/static/public/jczq/newxml/pl/pl_dxq_2.xml
+2026-04-12 00:45:10 - football_crawler - INFO - 获取大小球XML数据: https://trade.500.com/static/public/jczq/newxml/pl/pl_dxq_2.xml
+2026-04-12 00:45:10 - football_crawler - INFO - 请求URL: https://trade.500.com/static/public/jczq/newxml/pl/pl_dxq_2.xml
+2026-04-12 00:45:15 - football_crawler - INFO - 使用JSON接口抓取比赛列表: https://ews.500.com/static/ews/jczq/202604/20260411.json?random=1775925915516
+2026-04-12 00:45:15 - football_crawler - INFO - 使用JSON接口抓取比赛列表: https://ews.500.com/static/ews/jczq/202604/20260411.json?random=1775925915516
+2026-04-12 00:45:15 - football_crawler - INFO - 请求URL: https://ews.500.com/static/ews/jczq/202604/20260411.json?random=1775925915516
+2026-04-12 00:45:15 - football_crawler - INFO - 请求URL: https://ews.500.com/static/ews/jczq/202604/20260411.json?random=1775925915516
+2026-04-12 00:45:17 - football_crawler - INFO - 解析到 30 场比赛 (JSON)
+2026-04-12 00:45:17 - football_crawler - INFO - 历史数据模式: fetch_odds=False, 跳过详细赔率抓取
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1337828
+2026-04-12 00:45:17 - football_crawler - INFO - 解析到 30 场比赛 (JSON)
+2026-04-12 00:45:17 - football_crawler - INFO - 历史数据模式: fetch_odds=False, 跳过详细赔率抓取
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1366327
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1373110
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1337828
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1337829
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1202890
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1366327
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1199665
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1373110
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1337829
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1210485
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1223048
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1202890
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1199665
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1216143
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1362615
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1210485
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1202894
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1223048
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1202447
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1216143
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1362615
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1202439
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1202894
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1202731
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1199666
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1202447
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1202439
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1206155
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1216149
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1202731
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1199666
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1362618
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1202887
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1206155
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1363836
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1216149
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1362618
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1205784
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1202887
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1202453
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1206153
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1363836
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1205784
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1199661
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1216051
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1202453
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1206129
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1206153
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1199663
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1199661
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1216100
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1216051
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1216450
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1206129
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1199663
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1358265
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1373127
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1216100
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1216450
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1366277
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1337826
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1358265
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1373127
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1373103
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1366277
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1337827
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1337826
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1363294
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1202512
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1373103
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1210487
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1337827
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1216142
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1363294
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1363882
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1202512
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1199662
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1210487
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1199667
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1362616
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1216142
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1206161
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1206157
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1363882
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1206132
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1199662
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1199667
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1206141
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1362616
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1202675
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1216025
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1206161
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1202920
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1206157
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1234908
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1206132
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1206141
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1199658
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1202675
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1202459
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1216025
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1206164
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1216099
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1202920
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1234908
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1199660
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1199658
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1216044
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1202459
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1205768
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1216301
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1206164
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1216099
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1358255
+2026-04-12 00:45:17 - football_crawler - INFO - 批量保存比赛数据完成: 60/60
+2026-04-12 00:45:17 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/ouzhi-1337828.shtml
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1199660
+2026-04-12 00:45:17 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/ouzhi-1366327.shtml
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1216044
+2026-04-12 00:45:17 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/ouzhi-1373110.shtml
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1205768
+2026-04-12 00:45:17 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/ouzhi-1337829.shtml
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1216301
+2026-04-12 00:45:17 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/ouzhi-1202890.shtml
+2026-04-12 00:45:17 - football_crawler - INFO - 更新比赛数据: 1358255
+2026-04-12 00:45:17 - football_crawler - INFO - 批量保存比赛数据完成: 60/60
+2026-04-12 00:45:17 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/ouzhi-1337828.shtml
+2026-04-12 00:45:17 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/ouzhi-1366327.shtml
+2026-04-12 00:45:17 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/ouzhi-1199665.shtml
+2026-04-12 00:45:17 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/ouzhi-1373110.shtml
+2026-04-12 00:45:17 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/ouzhi-1210485.shtml
+2026-04-12 00:45:17 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/ouzhi-1337829.shtml
+2026-04-12 00:45:17 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/ouzhi-1202890.shtml
+2026-04-12 00:45:17 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/ouzhi-1223048.shtml
+2026-04-12 00:45:17 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/ouzhi-1199665.shtml
+2026-04-12 00:45:17 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/ouzhi-1210485.shtml
+2026-04-12 00:45:17 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/ouzhi-1223048.shtml
+127.0.0.1 - - [12/Apr/2026 00:45:17] "GET /api/matches?page=1&page_size=50&start_date=2026-04-11&end_date=2026-04-12 HTTP/1.1" 200 -
+127.0.0.1 - - [12/Apr/2026 00:45:17] "GET /api/predictions?limit=200 HTTP/1.1" 200 -
+2026-04-12 00:45:25 - football_crawler - INFO - 解析到欧赔(竞*官*): 即时盘 1.93/3.30/3.25, 初盘 1.93/3.30/3.25
+2026-04-12 00:45:25 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/yazhi-1223048.shtml
+2026-04-12 00:45:25 - football_crawler - INFO - 解析到欧赔(竞*官*): 即时盘 1.99/3.25/3.13, 初盘 1.99/3.25/3.13
+2026-04-12 00:45:25 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/yazhi-1210485.shtml
+2026-04-12 00:45:26 - football_crawler - INFO - 解析到欧赔(竞*官*): 即时盘 1.93/3.30/3.25, 初盘 1.93/3.30/3.25
+2026-04-12 00:45:26 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/yazhi-1223048.shtml
+2026-04-12 00:45:27 - football_crawler - INFO - 解析到欧赔(竞*官*): 即时盘 2.59/3.30/2.27, 初盘 2.59/3.30/2.27
+2026-04-12 00:45:27 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/yazhi-1202890.shtml
+2026-04-12 00:45:28 - football_crawler - INFO - 解析到欧赔(竞*官*): 即时盘 2.85/3.65/1.98, 初盘 2.85/3.65/1.98
+2026-04-12 00:45:28 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/yazhi-1337829.shtml
+2026-04-12 00:45:29 - football_crawler - INFO - 解析到欧赔(竞*官*): 即时盘 2.75/3.50/2.09, 初盘 2.75/3.50/2.09
+2026-04-12 00:45:29 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/yazhi-1366327.shtml
+2026-04-12 00:45:30 - football_crawler - INFO - 解析到欧赔(竞*官*): 即时盘 2.02/3.05/3.26, 初盘 2.02/3.05/3.26
+2026-04-12 00:45:30 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/yazhi-1373110.shtml
+2026-04-12 00:45:30 - football_crawler - INFO - 解析到欧赔(竞*官*): 即时盘 2.06/3.02/3.20, 初盘 2.06/3.02/3.20
+2026-04-12 00:45:30 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/yazhi-1199665.shtml
+2026-04-12 00:45:31 - football_crawler - INFO - 解析到欧赔(竞*官*): 即时盘 2.06/3.02/3.20, 初盘 2.06/3.02/3.20
+2026-04-12 00:45:31 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/yazhi-1199665.shtml
+2026-04-12 00:45:31 - football_crawler - INFO - 解析到欧赔(竞*官*): 即时盘 2.85/3.65/1.98, 初盘 2.85/3.65/1.98
+2026-04-12 00:45:31 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/yazhi-1337829.shtml
+2026-04-12 00:45:31 - football_crawler - INFO - 解析到欧赔(竞*官*): 即时盘 1.46/4.05/5.05, 初盘 1.46/4.05/5.05
+2026-04-12 00:45:31 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/yazhi-1337828.shtml
+2026-04-12 00:45:31 - football_crawler - INFO - 解析到欧赔(竞*官*): 即时盘 2.75/3.50/2.09, 初盘 2.75/3.50/2.09
+2026-04-12 00:45:31 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/yazhi-1366327.shtml
+2026-04-12 00:45:31 - football_crawler - INFO - 解析到欧赔(竞*官*): 即时盘 2.02/3.05/3.26, 初盘 2.02/3.05/3.26
+2026-04-12 00:45:31 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/yazhi-1373110.shtml
+2026-04-12 00:45:31 - football_crawler - INFO - 解析到欧赔(竞*官*): 即时盘 2.59/3.30/2.27, 初盘 2.59/3.30/2.27
+2026-04-12 00:45:31 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/yazhi-1202890.shtml
+2026-04-12 00:45:32 - football_crawler - INFO - 解析到亚盘(优先t3*5): 即时盘 0.800/平手/半球降/1.050, 初盘 0.980/半球/0.880
+2026-04-12 00:45:32 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/daxiao-1210485.shtml
+2026-04-12 00:45:33 - football_crawler - INFO - 解析到欧赔(竞*官*): 即时盘 1.99/3.25/3.13, 初盘 1.99/3.25/3.13
+2026-04-12 00:45:33 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/yazhi-1210485.shtml
+2026-04-12 00:45:33 - football_crawler - INFO - 解析到欧赔(竞*官*): 即时盘 1.46/4.05/5.05, 初盘 1.46/4.05/5.05
+2026-04-12 00:45:33 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/yazhi-1337828.shtml
+2026-04-12 00:45:35 - football_crawler - INFO - 解析到亚盘(优先t3*5): 即时盘 1.000/半球/0.800, 初盘 1.000/半球/0.800
+2026-04-12 00:45:35 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/daxiao-1223048.shtml
+2026-04-12 00:45:36 - football_crawler - INFO - 解析到亚盘(优先t3*5): 即时盘 1.000/受平手/半球降/0.800, 初盘 0.980/平手/0.880
+2026-04-12 00:45:36 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/daxiao-1337829.shtml
+2026-04-12 00:45:37 - football_crawler - INFO - 解析到亚盘(优先t3*5): 即时盘 0.830/平手/半球/1.030, 初盘 0.850/平手/半球/1.000
+2026-04-12 00:45:37 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/daxiao-1199665.shtml
+2026-04-12 00:45:37 - football_crawler - INFO - 解析到亚盘(优先t3*5): 即时盘 0.930/平手/半球/0.880, 初盘 0.880/平手/半球/0.930
+2026-04-12 00:45:37 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/daxiao-1373110.shtml
+2026-04-12 00:45:37 - football_crawler - INFO - 解析到亚盘(优先t3*5): 即时盘 1.000/半球/0.800, 初盘 1.000/半球/0.800
+2026-04-12 00:45:37 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/daxiao-1223048.shtml
+2026-04-12 00:45:37 - football_crawler - INFO - 解析到亚盘(优先t3*5): 即时盘 0.850/受平手/半球/0.950, 初盘 0.780/受平手/半球/1.030
+2026-04-12 00:45:37 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/daxiao-1366327.shtml
+2026-04-12 00:45:37 - football_crawler - INFO - 解析到亚盘(优先t3*5): 即时盘 0.950/平手降/0.850, 初盘 0.880/平手/半球/0.930
+2026-04-12 00:45:37 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/daxiao-1202890.shtml
+2026-04-12 00:45:37 - football_crawler - INFO - 解析到亚盘(优先t3*5): 即时盘 0.930/平手/半球/0.880, 初盘 0.880/平手/半球/0.930
+2026-04-12 00:45:37 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/daxiao-1373110.shtml
+2026-04-12 00:45:37 - football_crawler - INFO - 解析到亚盘(优先t3*5): 即时盘 0.800/平手/半球降/1.050, 初盘 0.980/半球/0.880
+2026-04-12 00:45:37 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/daxiao-1210485.shtml
+2026-04-12 00:45:38 - football_crawler - INFO - 解析到亚盘(优先t3*5): 即时盘 0.830/半球/一球降/0.980, 初盘 0.980/一球/0.880
+2026-04-12 00:45:38 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/daxiao-1337828.shtml
+2026-04-12 00:45:38 - football_crawler - INFO - 解析到亚盘(优先t3*5): 即时盘 0.830/平手/半球/1.030, 初盘 0.850/平手/半球/1.000
+2026-04-12 00:45:38 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/daxiao-1199665.shtml
+2026-04-12 00:45:41 - football_crawler - INFO - 解析到大小球(t3*5): 即时盘 0.88/2.5/0.98, 初盘 0.85/2.5/1.00
+2026-04-12 00:45:41 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/rangqiu-1210485.shtml
+2026-04-12 00:45:42 - football_crawler - INFO - 解析到亚盘(优先t3*5): 即时盘 0.950/平手降/0.850, 初盘 0.880/平手/半球/0.930
+2026-04-12 00:45:42 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/daxiao-1202890.shtml
+2026-04-12 00:45:44 - football_crawler - INFO - 解析到亚盘(优先t3*5): 即时盘 1.000/受平手/半球降/0.800, 初盘 0.980/平手/0.880
+2026-04-12 00:45:44 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/daxiao-1337829.shtml
+2026-04-12 00:45:44 - football_crawler - INFO - 解析到亚盘(优先t3*5): 即时盘 0.850/受平手/半球/0.950, 初盘 0.780/受平手/半球/1.030
+2026-04-12 00:45:44 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/daxiao-1366327.shtml
+2026-04-12 00:45:44 - football_crawler - INFO - 解析到亚盘(优先t3*5): 即时盘 0.830/半球/一球降/0.980, 初盘 0.980/一球/0.880
+2026-04-12 00:45:44 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/daxiao-1337828.shtml
+2026-04-12 00:45:44 - football_crawler - INFO - 解析到大小球(t3*5): 即时盘 1.00/2.5/0.80, 初盘 1.00/2.5/0.80
+2026-04-12 00:45:44 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/rangqiu-1373110.shtml
+2026-04-12 00:45:45 - football_crawler - INFO - 解析到大小球(t3*5): 即时盘 0.98/2.5/3/0.83, 初盘 1.00/2.5/3/0.80
+2026-04-12 00:45:45 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/rangqiu-1223048.shtml
+2026-04-12 00:45:45 - football_crawler - INFO - 解析到大小球(t3*5): 即时盘 0.88/2/2.5/0.98, 初盘 0.95/2/2.5/0.90
+2026-04-12 00:45:45 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/rangqiu-1199665.shtml
+2026-04-12 00:45:45 - football_crawler - INFO - 解析到大小球(t3*5): 即时盘 0.98/2.5/3/0.83, 初盘 1.00/2.5/3/0.80
+2026-04-12 00:45:45 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/rangqiu-1223048.shtml
+2026-04-12 00:45:45 - football_crawler - INFO - 解析到大小球(t3*5): 即时盘 0.83/2.5/3/0.98, 初盘 0.90/2.5/3/0.95
+2026-04-12 00:45:45 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/rangqiu-1337828.shtml
+2026-04-12 00:45:45 - football_crawler - INFO - 解析到大小球(t3*5): 即时盘 0.98/3/0.83, 初盘 0.98/3/0.88
+2026-04-12 00:45:45 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/rangqiu-1337829.shtml
+2026-04-12 00:45:46 - football_crawler - INFO - 解析到大小球(t3*5): 即时盘 0.88/2/2.5/0.98, 初盘 0.95/2/2.5/0.90
+2026-04-12 00:45:46 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/rangqiu-1199665.shtml
+2026-04-12 00:45:46 - football_crawler - INFO - 解析到大小球(t3*5): 即时盘 1.00/2.5/0.80, 初盘 1.00/2.5/0.80
+2026-04-12 00:45:46 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/rangqiu-1373110.shtml
+2026-04-12 00:45:47 - football_crawler - INFO - 解析到大小球(t3*5): 即时盘 0.85/2.5/3/0.95, 初盘 0.90/2.5/3/0.90
+2026-04-12 00:45:47 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/rangqiu-1202890.shtml
+2026-04-12 00:45:47 - football_crawler - INFO - 解析到大小球(t3*5): 即时盘 0.85/2.5/3/0.95, 初盘 0.85/2.5/3/0.95
+2026-04-12 00:45:47 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/rangqiu-1366327.shtml
+2026-04-12 00:45:47 - football_crawler - INFO - 解析到大小球(t3*5): 即时盘 0.88/2.5/0.98, 初盘 0.85/2.5/1.00
+2026-04-12 00:45:47 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/rangqiu-1210485.shtml
+2026-04-12 00:45:52 - football_crawler - INFO - 解析到大小球(t3*5): 即时盘 0.98/3/0.83, 初盘 0.98/3/0.88
+2026-04-12 00:45:52 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/rangqiu-1337829.shtml
+2026-04-12 00:45:52 - football_crawler - INFO - 解析到大小球(t3*5): 即时盘 0.85/2.5/3/0.95, 初盘 0.90/2.5/3/0.90
+2026-04-12 00:45:52 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/rangqiu-1202890.shtml
+2026-04-12 00:45:52 - football_crawler - INFO - 解析到大小球(t3*5): 即时盘 0.85/2.5/3/0.95, 初盘 0.85/2.5/3/0.95
+2026-04-12 00:45:52 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/rangqiu-1366327.shtml
+2026-04-12 00:45:52 - football_crawler - INFO - 解析到让球指数(竞*官*): 让球数=-1, 即时盘=4.15/3.70/1.62, 初盘=4.15/3.70/1.62
+2026-04-12 00:45:52 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/ouzhi-1216143.shtml
+2026-04-12 00:45:52 - football_crawler - INFO - 更新赔率数据: 1210485
+2026-04-12 00:45:52 - football_crawler - INFO - 解析到大小球(t3*5): 即时盘 0.83/2.5/3/0.98, 初盘 0.90/2.5/3/0.95
+2026-04-12 00:45:52 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/rangqiu-1337828.shtml
+2026-04-12 00:45:52 - football_crawler - INFO - 解析到让球指数(竞*官*): 让球数=-1, 即时盘=4.50/3.55/1.60, 初盘=4.50/3.55/1.60
+2026-04-12 00:45:52 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/ouzhi-1362615.shtml
+2026-04-12 00:45:52 - football_crawler - INFO - 更新赔率数据: 1373110
+2026-04-12 00:45:53 - football_crawler - INFO - 解析到让球指数(竞*官*): 让球数=-1, 即时盘=4.50/3.60/1.59, 初盘=4.50/3.60/1.59
+2026-04-12 00:45:53 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/ouzhi-1202894.shtml
+2026-04-12 00:45:53 - football_crawler - INFO - 更新赔率数据: 1199665
+2026-04-12 00:45:53 - football_crawler - INFO - 解析到让球指数(竞*官*): 让球数=-1, 即时盘=3.75/3.80/1.67, 初盘=3.75/3.80/1.67
+2026-04-12 00:45:53 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/ouzhi-1202447.shtml
+2026-04-12 00:45:53 - football_crawler - INFO - 更新赔率数据: 1223048
+2026-04-12 00:45:54 - football_crawler - INFO - 解析到让球指数(竞*官*): 让球数=-1, 即时盘=2.45/3.50/2.30, 初盘=2.45/3.50/2.30
+2026-04-12 00:45:54 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/ouzhi-1216143.shtml
+2026-04-12 00:45:54 - football_crawler - WARNING - 未找到让球指数数据表格 (id=datatb)
+2026-04-12 00:45:54 - football_crawler - WARNING - 解析数据为空, 准备重试 (1/3): https://odds.500.com/fenxi/rangqiu-1337829.shtml
+2026-04-12 00:45:54 - football_crawler - INFO - 更新赔率数据: 1337828
+2026-04-12 00:45:55 - football_crawler - INFO - 解析到让球指数(竞*官*): 让球数=-1, 即时盘=3.75/3.80/1.67, 初盘=3.75/3.80/1.67
+2026-04-12 00:45:55 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/ouzhi-1362615.shtml
+2026-04-12 00:45:55 - football_crawler - INFO - 更新赔率数据: 1223048
+2026-04-12 00:45:55 - football_crawler - INFO - 解析到让球指数(竞*官*): 让球数=-1, 即时盘=4.50/3.55/1.60, 初盘=4.50/3.55/1.60
+2026-04-12 00:45:55 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/ouzhi-1202894.shtml
+2026-04-12 00:45:55 - football_crawler - INFO - 更新赔率数据: 1373110
+2026-04-12 00:45:55 - football_crawler - INFO - 解析到让球指数(竞*官*): 让球数=-1, 即时盘=4.15/3.70/1.62, 初盘=4.15/3.70/1.62
+2026-04-12 00:45:55 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/ouzhi-1202447.shtml
+2026-04-12 00:45:55 - football_crawler - INFO - 更新赔率数据: 1210485
+127.0.0.1 - - [12/Apr/2026 00:45:55] "GET /daily_recommendations HTTP/1.1" 200 -
+2026-04-12 00:45:55 - football_crawler - INFO - 解析到让球指数(竞*官*): 让球数=-1, 即时盘=4.50/3.60/1.59, 初盘=4.50/3.60/1.59
+2026-04-12 00:45:55 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/ouzhi-1202439.shtml
+2026-04-12 00:45:55 - football_crawler - INFO - 更新赔率数据: 1199665
+2026-04-12 00:45:56 - football_crawler - WARNING - 未找到让球指数数据表格 (id=datatb)
+2026-04-12 00:45:56 - football_crawler - WARNING - 解析数据为空, 准备重试 (1/3): https://odds.500.com/fenxi/rangqiu-1202890.shtml
+2026-04-12 00:45:56 - football_crawler - WARNING - 未找到让球指数数据表格 (id=datatb)
+2026-04-12 00:45:56 - football_crawler - WARNING - 解析数据为空, 准备重试 (1/3): https://odds.500.com/fenxi/rangqiu-1366327.shtml
+2026-04-12 00:45:56 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/rangqiu-1337829.shtml
+127.0.0.1 - - [12/Apr/2026 00:45:56] "[36mGET /static/favicon.svg HTTP/1.1[0m" 304 -
+127.0.0.1 - - [12/Apr/2026 00:45:56] "GET /api/daily_predictions?date=2026-04-11 HTTP/1.1" 200 -
+2026-04-12 00:45:57 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/rangqiu-1202890.shtml
+2026-04-12 00:45:58 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/rangqiu-1366327.shtml
+127.0.0.1 - - [12/Apr/2026 00:45:59] "GET /api/matches?page=1&page_size=50&start_date=2026-04-11&end_date=2026-04-12 HTTP/1.1" 200 -
+127.0.0.1 - - [12/Apr/2026 00:46:00] "GET /api/predictions?limit=200 HTTP/1.1" 200 -
+2026-04-12 00:46:01 - football_crawler - WARNING - 未找到让球指数数据表格 (id=datatb)
+2026-04-12 00:46:01 - football_crawler - WARNING - 解析数据为空, 准备重试 (1/3): https://odds.500.com/fenxi/rangqiu-1337829.shtml
+2026-04-12 00:46:01 - football_crawler - WARNING - 未找到让球指数数据表格 (id=datatb)
+2026-04-12 00:46:01 - football_crawler - WARNING - 解析数据为空, 准备重试 (1/3): https://odds.500.com/fenxi/rangqiu-1366327.shtml
+2026-04-12 00:46:01 - football_crawler - INFO - 解析到让球指数(竞*官*): 让球数=-1, 即时盘=2.45/3.50/2.30, 初盘=2.45/3.50/2.30
+2026-04-12 00:46:01 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/ouzhi-1202439.shtml
+2026-04-12 00:46:01 - football_crawler - INFO - 更新赔率数据: 1337828
+127.0.0.1 - - [12/Apr/2026 00:46:02] "GET /odds_filter HTTP/1.1" 200 -
+127.0.0.1 - - [12/Apr/2026 00:46:02] "[36mGET /static/favicon.svg HTTP/1.1[0m" 304 -
+127.0.0.1 - - [12/Apr/2026 00:46:02] "GET /api/odds_filter?type=hi_home_up&mode=all HTTP/1.1" 200 -
+2026-04-12 00:46:03 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/rangqiu-1366327.shtml
+2026-04-12 00:46:03 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/rangqiu-1337829.shtml
+2026-04-12 00:46:04 - football_crawler - WARNING - 未找到让球指数数据表格 (id=datatb)
+2026-04-12 00:46:04 - football_crawler - WARNING - 解析数据为空, 准备重试 (2/3): https://odds.500.com/fenxi/rangqiu-1337829.shtml
+2026-04-12 00:46:04 - football_crawler - WARNING - 未找到让球指数数据表格 (id=datatb)
+2026-04-12 00:46:04 - football_crawler - WARNING - 解析数据为空, 准备重试 (1/3): https://odds.500.com/fenxi/rangqiu-1202890.shtml
+2026-04-12 00:46:05 - football_crawler - INFO - 解析到欧赔(竞*官*): 即时盘 1.99/3.70/2.81, 初盘 1.99/3.70/2.81
+2026-04-12 00:46:05 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/yazhi-1202894.shtml
+127.0.0.1 - - [12/Apr/2026 00:46:05] "GET /api/matches?page=1&page_size=50&start_date=2026-04-11&end_date=2026-04-12 HTTP/1.1" 200 -
+2026-04-12 00:46:05 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/rangqiu-1337829.shtml
+2026-04-12 00:46:05 - football_crawler - INFO - 解析到欧赔(竞*官*): 即时盘 2.03/3.25/3.05, 初盘 2.03/3.25/3.05
+2026-04-12 00:46:05 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/yazhi-1216143.shtml
+2026-04-12 00:46:05 - football_crawler - INFO - 解析到欧赔(竞*官*): 即时盘 1.49/3.80/5.15, 初盘 1.49/3.80/5.15
+2026-04-12 00:46:05 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/yazhi-1362615.shtml
+2026-04-12 00:46:05 - football_crawler - INFO - 解析到欧赔(竞*官*): 即时盘 2.37/3.10/2.60, 初盘 2.37/3.10/2.60
+2026-04-12 00:46:05 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/yazhi-1202447.shtml
+127.0.0.1 - - [12/Apr/2026 00:46:05] "GET /api/predictions?limit=200 HTTP/1.1" 200 -
+2026-04-12 00:46:06 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/rangqiu-1202890.shtml
+2026-04-12 00:46:06 - football_crawler - INFO - 解析到欧赔(竞*官*): 即时盘 1.99/3.70/2.81, 初盘 1.99/3.70/2.81
+2026-04-12 00:46:06 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/yazhi-1202894.shtml
+2026-04-12 00:46:06 - football_crawler - WARNING - 未找到让球指数数据表格 (id=datatb)
+2026-04-12 00:46:06 - football_crawler - WARNING - 解析数据为空, 准备重试 (2/3): https://odds.500.com/fenxi/rangqiu-1202890.shtml
+2026-04-12 00:46:06 - football_crawler - WARNING - 未找到让球指数数据表格 (id=datatb)
+2026-04-12 00:46:06 - football_crawler - WARNING - 解析数据为空, 准备重试 (2/3): https://odds.500.com/fenxi/rangqiu-1366327.shtml
+2026-04-12 00:46:06 - football_crawler - INFO - 解析到欧赔(竞*官*): 即时盘 2.85/3.33/2.09, 初盘 2.85/3.33/2.09
+2026-04-12 00:46:06 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/yazhi-1202439.shtml
+2026-04-12 00:46:07 - football_crawler - INFO - 解析到欧赔(竞*官*): 即时盘 2.03/3.25/3.05, 初盘 2.03/3.25/3.05
+2026-04-12 00:46:07 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/yazhi-1216143.shtml
+2026-04-12 00:46:07 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/rangqiu-1366327.shtml
+2026-04-12 00:46:07 - football_crawler - INFO - 解析到欧赔(竞*官*): 即时盘 2.37/3.10/2.60, 初盘 2.37/3.10/2.60
+2026-04-12 00:46:07 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/yazhi-1202447.shtml
+2026-04-12 00:46:07 - football_crawler - INFO - 解析到欧赔(竞*官*): 即时盘 1.49/3.80/5.15, 初盘 1.49/3.80/5.15
+2026-04-12 00:46:07 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/yazhi-1362615.shtml
+2026-04-12 00:46:07 - football_crawler - INFO - 解析到欧赔(竞*官*): 即时盘 2.85/3.33/2.09, 初盘 2.85/3.33/2.09
+2026-04-12 00:46:07 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/yazhi-1202439.shtml
+2026-04-12 00:46:08 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/rangqiu-1202890.shtml
+2026-04-12 00:46:13 - football_crawler - WARNING - 未找到让球指数数据表格 (id=datatb)
+2026-04-12 00:46:13 - football_crawler - WARNING - 解析数据为空, 准备重试 (2/3): https://odds.500.com/fenxi/rangqiu-1337829.shtml
+2026-04-12 00:46:13 - football_crawler - WARNING - 未找到让球指数数据表格 (id=datatb)
+2026-04-12 00:46:13 - football_crawler - WARNING - 解析数据为空, 准备重试 (2/3): https://odds.500.com/fenxi/rangqiu-1366327.shtml
+2026-04-12 00:46:13 - football_crawler - INFO - 解析到亚盘(优先t3*5): 即时盘 0.930/平手/半球升/0.880, 初盘 0.980/平手/0.830
+2026-04-12 00:46:13 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/daxiao-1202894.shtml
+2026-04-12 00:46:13 - football_crawler - INFO - 解析到亚盘(优先t3*5): 即时盘 0.930/平手/半球/0.930, 初盘 1.030/平手/半球/0.830
+2026-04-12 00:46:13 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/daxiao-1216143.shtml
+2026-04-12 00:46:14 - football_crawler - INFO - 解析到亚盘(优先t3*5): 即时盘 0.930/一球/0.880, 初盘 1.000/一球/0.800
+2026-04-12 00:46:14 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/daxiao-1362615.shtml
+2026-04-12 00:46:14 - football_crawler - WARNING - 未找到让球指数数据表格 (id=datatb)
+2026-04-12 00:46:14 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/ouzhi-1202731.shtml
+2026-04-12 00:46:14 - football_crawler - INFO - 更新赔率数据: 1337829
+2026-04-12 00:46:14 - football_crawler - INFO - 解析到亚盘(优先t3*5): 即时盘 0.880/受平手/半球降/0.980, 初盘 1.050/平手/0.800
+2026-04-12 00:46:14 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/daxiao-1202439.shtml
+2026-04-12 00:46:14 - football_crawler - WARNING - 未找到让球指数数据表格 (id=datatb)
+2026-04-12 00:46:14 - football_crawler - WARNING - 解析数据为空, 准备重试 (2/3): https://odds.500.com/fenxi/rangqiu-1202890.shtml
+2026-04-12 00:46:14 - football_crawler - INFO - 解析到亚盘(优先t3*5): 即时盘 0.930/平手/0.930, 初盘 0.900/平手/0.950
+2026-04-12 00:46:14 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/daxiao-1202447.shtml
+2026-04-12 00:46:14 - football_crawler - INFO - 解析到亚盘(优先t3*5): 即时盘 0.930/一球/0.880, 初盘 1.000/一球/0.800
+2026-04-12 00:46:14 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/daxiao-1362615.shtml
+2026-04-12 00:46:14 - football_crawler - INFO - 解析到亚盘(优先t3*5): 即时盘 0.930/平手/半球/0.930, 初盘 1.030/平手/半球/0.830
+2026-04-12 00:46:14 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/daxiao-1216143.shtml
+2026-04-12 00:46:15 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/rangqiu-1337829.shtml
+2026-04-12 00:46:15 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/rangqiu-1366327.shtml
+2026-04-12 00:46:15 - football_crawler - INFO - 解析到亚盘(优先t3*5): 即时盘 0.880/受平手/半球降/0.980, 初盘 1.050/平手/0.800
+2026-04-12 00:46:15 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/daxiao-1202439.shtml
+2026-04-12 00:46:15 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/rangqiu-1202890.shtml
+2026-04-12 00:46:16 - football_crawler - WARNING - 未找到让球指数数据表格 (id=datatb)
+2026-04-12 00:46:16 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/ouzhi-1199666.shtml
+2026-04-12 00:46:16 - football_crawler - INFO - 更新赔率数据: 1202890
+2026-04-12 00:46:16 - football_crawler - WARNING - 未找到让球指数数据表格 (id=datatb)
+2026-04-12 00:46:16 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/ouzhi-1206155.shtml
+2026-04-12 00:46:16 - football_crawler - INFO - 解析到亚盘(优先t3*5): 即时盘 0.930/平手/0.930, 初盘 0.900/平手/0.950
+2026-04-12 00:46:16 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/daxiao-1202447.shtml
+2026-04-12 00:46:16 - football_crawler - INFO - 更新赔率数据: 1366327
+2026-04-12 00:46:16 - football_crawler - INFO - 解析到亚盘(优先t3*5): 即时盘 0.930/平手/半球升/0.880, 初盘 0.980/平手/0.830
+2026-04-12 00:46:16 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/daxiao-1202894.shtml
+2026-04-12 00:46:21 - football_crawler - WARNING - 未找到让球指数数据表格 (id=datatb)
+2026-04-12 00:46:21 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/ouzhi-1202731.shtml
+2026-04-12 00:46:21 - football_crawler - INFO - 更新赔率数据: 1366327
+2026-04-12 00:46:21 - football_crawler - INFO - 解析到大小球(t3*5): 即时盘 1.00/3.5↑/0.80, 初盘 0.88/3/3.5/0.93
+2026-04-12 00:46:21 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/rangqiu-1202894.shtml
+2026-04-12 00:46:22 - football_crawler - INFO - 解析到大小球(t3*5): 即时盘 0.93/2.5/3/0.93, 初盘 0.95/2.5/3/0.90
+2026-04-12 00:46:22 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/rangqiu-1202439.shtml
+2026-04-12 00:46:22 - football_crawler - INFO - 解析到大小球(t3*5): 即时盘 1.00/2.5/0.85, 初盘 0.93/2.5/0.93
+2026-04-12 00:46:22 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/rangqiu-1202447.shtml
+2026-04-12 00:46:22 - football_crawler - WARNING - 未找到让球指数数据表格 (id=datatb)
+2026-04-12 00:46:22 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/ouzhi-1199666.shtml
+2026-04-12 00:46:22 - football_crawler - INFO - 更新赔率数据: 1337829
+2026-04-12 00:46:23 - football_crawler - INFO - 解析到大小球(t3*5): 即时盘 0.93/2.5/0.93, 初盘 0.93/2.5/0.93
+2026-04-12 00:46:23 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/rangqiu-1216143.shtml
+2026-04-12 00:46:23 - football_crawler - INFO - 解析到大小球(t3*5): 即时盘 0.98/2.5/3↓/0.83, 初盘 1.03/3/0.78
+2026-04-12 00:46:23 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/rangqiu-1362615.shtml
+2026-04-12 00:46:23 - football_crawler - INFO - 解析到大小球(t3*5): 即时盘 0.93/2.5/3/0.93, 初盘 0.95/2.5/3/0.90
+2026-04-12 00:46:23 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/rangqiu-1202439.shtml
+2026-04-12 00:46:23 - football_crawler - INFO - 解析到欧赔(竞*官*): 即时盘 2.47/3.08/2.50, 初盘 2.47/3.08/2.50
+2026-04-12 00:46:23 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/yazhi-1202731.shtml
+2026-04-12 00:46:23 - football_crawler - INFO - 解析到大小球(t3*5): 即时盘 1.00/3.5↑/0.80, 初盘 0.88/3/3.5/0.93
+2026-04-12 00:46:23 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/rangqiu-1202894.shtml
+2026-04-12 00:46:24 - football_crawler - INFO - 解析到大小球(t3*5): 即时盘 0.98/2.5/3↓/0.83, 初盘 1.03/3/0.78
+2026-04-12 00:46:24 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/rangqiu-1362615.shtml
+2026-04-12 00:46:24 - football_crawler - INFO - 解析到欧赔(竞*官*): 即时盘 2.05/3.40/2.88, 初盘 2.05/3.40/2.88
+2026-04-12 00:46:24 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/yazhi-1206155.shtml
+2026-04-12 00:46:24 - football_crawler - INFO - 解析到大小球(t3*5): 即时盘 1.00/2.5/0.85, 初盘 0.93/2.5/0.93
+2026-04-12 00:46:24 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/rangqiu-1202447.shtml
+2026-04-12 00:46:24 - football_crawler - INFO - 解析到欧赔(竞*官*): 即时盘 5.85/3.60/1.47, 初盘 5.50/3.45/1.52
+2026-04-12 00:46:24 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/yazhi-1199666.shtml
+2026-04-12 00:46:25 - football_crawler - WARNING - 未找到让球指数数据表格 (id=datatb)
+2026-04-12 00:46:25 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/ouzhi-1206155.shtml
+2026-04-12 00:46:25 - football_crawler - INFO - 更新赔率数据: 1202890
+2026-04-12 00:46:25 - football_crawler - INFO - 解析到大小球(t3*5): 即时盘 0.93/2.5/0.93, 初盘 0.93/2.5/0.93
+2026-04-12 00:46:25 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/rangqiu-1216143.shtml
+2026-04-12 00:46:31 - football_crawler - INFO - 解析到让球指数(竞*官*): 让球数=-1, 即时盘=3.70/4.15/1.62, 初盘=3.70/4.15/1.62
+2026-04-12 00:46:31 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/ouzhi-1216149.shtml
+2026-04-12 00:46:31 - football_crawler - INFO - 更新赔率数据: 1202894
+2026-04-12 00:46:31 - football_crawler - INFO - 解析到让球指数(竞*官*): 让球数=-1, 即时盘=5.40/4.00/1.44, 初盘=5.40/4.00/1.44
+2026-04-12 00:46:31 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/ouzhi-1362618.shtml
+2026-04-12 00:46:31 - football_crawler - INFO - 更新赔率数据: 1202447
+2026-04-12 00:46:31 - football_crawler - INFO - 解析到让球指数(竞*官*): 让球数=1, 即时盘=1.56/3.85/4.40, 初盘=1.56/3.85/4.40
+2026-04-12 00:46:31 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/ouzhi-1202887.shtml
+2026-04-12 00:46:31 - football_crawler - INFO - 更新赔率数据: 1202439
+2026-04-12 00:46:31 - football_crawler - INFO - 解析到欧赔(竞*官*): 即时盘 2.47/3.08/2.50, 初盘 2.47/3.08/2.50
+2026-04-12 00:46:31 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/yazhi-1202731.shtml
+2026-04-12 00:46:32 - football_crawler - INFO - 解析到让球指数(竞*官*): 让球数=-1, 即时盘=2.65/3.25/2.25, 初盘=2.65/3.25/2.25
+2026-04-12 00:46:32 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/ouzhi-1216149.shtml
+2026-04-12 00:46:32 - football_crawler - INFO - 更新赔率数据: 1362615
+2026-04-12 00:46:32 - football_crawler - INFO - 解析到让球指数(竞*官*): 让球数=-1, 即时盘=4.30/3.70/1.60, 初盘=4.30/3.70/1.60
+2026-04-12 00:46:32 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/ouzhi-1362618.shtml
+2026-04-12 00:46:32 - football_crawler - INFO - 更新赔率数据: 1216143
+2026-04-12 00:46:32 - football_crawler - INFO - 解析到让球指数(竞*官*): 让球数=-1, 即时盘=2.65/3.25/2.25, 初盘=2.65/3.25/2.25
+2026-04-12 00:46:32 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/ouzhi-1363836.shtml
+2026-04-12 00:46:32 - football_crawler - INFO - 更新赔率数据: 1362615
+2026-04-12 00:46:32 - football_crawler - INFO - 解析到让球指数(竞*官*): 让球数=1, 即时盘=1.56/3.85/4.40, 初盘=1.56/3.85/4.40
+2026-04-12 00:46:32 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/ouzhi-1202887.shtml
+2026-04-12 00:46:32 - football_crawler - INFO - 更新赔率数据: 1202439
+2026-04-12 00:46:32 - football_crawler - INFO - 解析到亚盘(优先t3*5): 即时盘 1.100/受半球/一球/0.780, 初盘 0.930/受半球/一球/0.930
+2026-04-12 00:46:32 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/daxiao-1199666.shtml
+2026-04-12 00:46:33 - football_crawler - INFO - 解析到欧赔(竞*官*): 即时盘 5.85/3.60/1.47, 初盘 5.50/3.45/1.52
+2026-04-12 00:46:33 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/yazhi-1199666.shtml
+2026-04-12 00:46:33 - football_crawler - INFO - 解析到让球指数(竞*官*): 让球数=-1, 即时盘=4.30/3.70/1.60, 初盘=4.30/3.70/1.60
+2026-04-12 00:46:33 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/ouzhi-1205784.shtml
+2026-04-12 00:46:33 - football_crawler - INFO - 更新赔率数据: 1216143
+2026-04-12 00:46:33 - football_crawler - INFO - 解析到欧赔(竞*官*): 即时盘 2.05/3.40/2.88, 初盘 2.05/3.40/2.88
+2026-04-12 00:46:33 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/yazhi-1206155.shtml
+2026-04-12 00:46:33 - football_crawler - INFO - 解析到亚盘(优先t3*5): 即时盘 0.930/平手/半球/0.930, 初盘 0.930/平手/半球/0.930
+2026-04-12 00:46:33 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/daxiao-1206155.shtml
+2026-04-12 00:46:34 - football_crawler - INFO - 解析到让球指数(竞*官*): 让球数=-1, 即时盘=3.70/4.15/1.62, 初盘=3.70/4.15/1.62
+2026-04-12 00:46:34 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/ouzhi-1363836.shtml
+2026-04-12 00:46:34 - football_crawler - INFO - 更新赔率数据: 1202894
+2026-04-12 00:46:34 - football_crawler - INFO - 解析到让球指数(竞*官*): 让球数=-1, 即时盘=5.40/4.00/1.44, 初盘=5.40/4.00/1.44
+2026-04-12 00:46:34 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/ouzhi-1205784.shtml
+2026-04-12 00:46:34 - football_crawler - INFO - 更新赔率数据: 1202447
+2026-04-12 00:46:34 - football_crawler - INFO - 解析到亚盘(优先t3*5): 即时盘 0.930/平手/0.930, 初盘 0.880/平手/0.980
+2026-04-12 00:46:34 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/daxiao-1202731.shtml
+2026-04-12 00:46:41 - football_crawler - INFO - 解析到欧赔(竞*官*): 即时盘 1.80/3.40/3.58, 初盘 1.80/3.40/3.58
+2026-04-12 00:46:41 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/yazhi-1362618.shtml
+2026-04-12 00:46:41 - football_crawler - INFO - 解析到亚盘(优先t3*5): 即时盘 0.930/平手/半球/0.930, 初盘 0.930/平手/半球/0.930
+2026-04-12 00:46:41 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/daxiao-1206155.shtml
+2026-04-12 00:46:41 - football_crawler - INFO - 解析到亚盘(优先t3*5): 即时盘 1.100/受半球/一球/0.780, 初盘 0.930/受半球/一球/0.930
+2026-04-12 00:46:41 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/daxiao-1199666.shtml
+2026-04-12 00:46:42 - football_crawler - INFO - 解析到欧赔(竞*官*): 即时盘 2.32/3.05/2.70, 初盘 2.32/3.05/2.70
+2026-04-12 00:46:42 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/yazhi-1216149.shtml
+2026-04-12 00:46:42 - football_crawler - INFO - 解析到大小球(t3*5): 即时盘 1.00/2.5/0.85, 初盘 0.95/2.5/0.90
+2026-04-12 00:46:42 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/rangqiu-1202731.shtml
+2026-04-12 00:46:42 - football_crawler - INFO - 解析到欧赔(竞*官*): 即时盘 2.32/3.05/2.70, 初盘 2.32/3.05/2.70
+2026-04-12 00:46:42 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/yazhi-1216149.shtml
+2026-04-12 00:46:42 - football_crawler - INFO - 解析到亚盘(优先t3*5): 即时盘 0.930/平手/0.930, 初盘 0.880/平手/0.980
+2026-04-12 00:46:42 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/daxiao-1202731.shtml
+2026-04-12 00:46:43 - football_crawler - INFO - 解析到大小球(t3*5): 即时盘 0.95/2.5/3/0.90, 初盘 0.98/2.5/3/0.88
+2026-04-12 00:46:43 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/rangqiu-1206155.shtml
+2026-04-12 00:46:43 - football_crawler - INFO - 解析到欧赔(竞*官*): 即时盘 1.80/3.40/3.58, 初盘 1.80/3.40/3.58
+2026-04-12 00:46:43 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/yazhi-1362618.shtml
+2026-04-12 00:46:44 - football_crawler - INFO - 解析到欧赔(竞*官*): 即时盘 1.64/3.95/3.75, 初盘 1.64/3.95/3.75
+2026-04-12 00:46:44 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/yazhi-1202887.shtml
+2026-04-12 00:46:44 - football_crawler - INFO - 解析到欧赔(竞*官*): 即时盘 2.80/3.05/2.25, 初盘 2.80/3.05/2.25
+2026-04-12 00:46:44 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/yazhi-1205784.shtml
+2026-04-12 00:46:44 - football_crawler - INFO - 解析到欧赔(竞*官*): 即时盘 1.37/4.40/5.80, 初盘 1.37/4.40/5.80
+2026-04-12 00:46:44 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/yazhi-1363836.shtml
+2026-04-12 00:46:47 - football_crawler - INFO - 解析到大小球(t3*5): 即时盘 0.98/2/2.5/0.88, 初盘 0.95/2/2.5/0.90
+2026-04-12 00:46:47 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/rangqiu-1199666.shtml
+2026-04-12 00:46:47 - football_crawler - INFO - 解析到欧赔(竞*官*): 即时盘 1.64/3.95/3.75, 初盘 1.64/3.95/3.75
+2026-04-12 00:46:47 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/yazhi-1202887.shtml
+2026-04-12 00:46:48 - football_crawler - INFO - 解析到欧赔(竞*官*): 即时盘 1.37/4.40/5.80, 初盘 1.37/4.40/5.80
+2026-04-12 00:46:48 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/yazhi-1363836.shtml
+2026-04-12 00:46:48 - football_crawler - INFO - 解析到欧赔(竞*官*): 即时盘 2.80/3.05/2.25, 初盘 2.80/3.05/2.25
+2026-04-12 00:46:48 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/yazhi-1205784.shtml
+127.0.0.1 - - [12/Apr/2026 00:46:49] "GET /api/matches?page=1&page_size=50&league=FIFA预赛&start_date=2026-04-11&end_date=2026-04-12 HTTP/1.1" 200 -
+2026-04-12 00:46:49 - football_crawler - INFO - 解析到亚盘(优先t3*5): 即时盘 0.980/平手/半球升/0.880, 初盘 0.880/平手/0.980
+2026-04-12 00:46:49 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/daxiao-1216149.shtml
+2026-04-12 00:46:49 - football_crawler - INFO - 解析到让球指数(竞*官*): 让球数=-1, 即时盘=5.85/4.10/1.40, 初盘=5.85/4.10/1.40
+2026-04-12 00:46:49 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/ouzhi-1202453.shtml
+2026-04-12 00:46:49 - football_crawler - INFO - 更新赔率数据: 1202731
+2026-04-12 00:46:50 - football_crawler - INFO - 解析到让球指数(竞*官*): 让球数=-1, 即时盘=4.25/3.90/1.57, 初盘=4.25/3.90/1.57
+2026-04-12 00:46:50 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/ouzhi-1206153.shtml
+2026-04-12 00:46:50 - football_crawler - INFO - 更新赔率数据: 1206155
+2026-04-12 00:46:50 - football_crawler - INFO - 解析到亚盘(优先t3*5): 即时盘 1.000/半球/0.800, 初盘 1.000/半球/0.800
+2026-04-12 00:46:50 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/daxiao-1362618.shtml
+2026-04-12 00:46:50 - football_crawler - INFO - 解析到亚盘(优先t3*5): 即时盘 1.000/半球/0.800, 初盘 1.000/半球/0.800
+2026-04-12 00:46:50 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/daxiao-1362618.shtml
+2026-04-12 00:46:50 - football_crawler - INFO - 解析到大小球(t3*5): 即时盘 0.98/2/2.5/0.88, 初盘 0.95/2/2.5/0.90
+2026-04-12 00:46:50 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/rangqiu-1199666.shtml
+2026-04-12 00:46:50 - football_crawler - INFO - 解析到大小球(t3*5): 即时盘 0.95/2.5/3/0.90, 初盘 0.98/2.5/3/0.88
+2026-04-12 00:46:50 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/rangqiu-1206155.shtml
+2026-04-12 00:46:50 - football_crawler - INFO - 解析到亚盘(优先t3*5): 即时盘 0.880/半球/一球升/0.930, 初盘 0.850/半球/0.950
+2026-04-12 00:46:50 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/daxiao-1202887.shtml
+2026-04-12 00:46:50 - football_crawler - INFO - 解析到让球指数(竞*官*): 让球数=1, 即时盘=2.32/3.05/2.70, 初盘=2.20/3.15/2.80
+2026-04-12 00:46:50 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/ouzhi-1199661.shtml
+2026-04-12 00:46:50 - football_crawler - INFO - 更新赔率数据: 1199666
+2026-04-12 00:46:51 - football_crawler - INFO - 解析到亚盘(优先t3*5): 即时盘 0.980/平手/半球升/0.880, 初盘 0.880/平手/0.980
+2026-04-12 00:46:51 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/daxiao-1216149.shtml
+2026-04-12 00:46:51 - football_crawler - INFO - 解析到亚盘(优先t3*5): 即时盘 0.830/受平手/半球/1.030, 初盘 0.800/受平手/半球/1.050
+2026-04-12 00:46:51 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/daxiao-1205784.shtml
+2026-04-12 00:46:52 - football_crawler - INFO - 解析到大小球(t3*5): 即时盘 1.00/2.5/0.85, 初盘 0.95/2.5/0.90
+2026-04-12 00:46:52 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/rangqiu-1202731.shtml
+127.0.0.1 - - [12/Apr/2026 00:46:52] "GET /api/matches?page=1&page_size=50&start_date=2026-04-11&end_date=2026-04-12 HTTP/1.1" 200 -
+127.0.0.1 - - [12/Apr/2026 00:46:52] "GET /api/predictions?limit=200 HTTP/1.1" 200 -
+2026-04-12 00:46:55 - football_crawler - INFO - 解析到亚盘(优先t3*5): 即时盘 0.880/半球/一球升/0.930, 初盘 0.850/半球/0.950
+2026-04-12 00:46:55 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/daxiao-1202887.shtml
+2026-04-12 00:46:55 - football_crawler - INFO - 解析到亚盘(优先t3*5): 即时盘 0.930/一球/0.880, 初盘 0.950/一球/0.850
+2026-04-12 00:46:55 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/daxiao-1363836.shtml
+2026-04-12 00:46:56 - football_crawler - INFO - 解析到让球指数(竞*官*): 让球数=-1, 即时盘=4.25/3.90/1.57, 初盘=4.25/3.90/1.57
+2026-04-12 00:46:56 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/ouzhi-1202453.shtml
+2026-04-12 00:46:56 - football_crawler - INFO - 更新赔率数据: 1206155
+2026-04-12 00:46:56 - football_crawler - INFO - 解析到大小球(t3*5): 即时盘 0.85/2.5/0.95, 初盘 0.85/2.5/0.95
+2026-04-12 00:46:56 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/rangqiu-1362618.shtml
+2026-04-12 00:46:56 - football_crawler - INFO - 解析到让球指数(竞*官*): 让球数=1, 即时盘=2.32/3.05/2.70, 初盘=2.20/3.15/2.80
+2026-04-12 00:46:56 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/ouzhi-1206153.shtml
+2026-04-12 00:46:56 - football_crawler - INFO - 更新赔率数据: 1199666
+2026-04-12 00:46:57 - football_crawler - INFO - 解析到让球指数(竞*官*): 让球数=-1, 即时盘=5.85/4.10/1.40, 初盘=5.85/4.10/1.40
+2026-04-12 00:46:57 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/ouzhi-1199661.shtml
+2026-04-12 00:46:57 - football_crawler - INFO - 更新赔率数据: 1202731
+2026-04-12 00:46:57 - football_crawler - INFO - 解析到大小球(t3*5): 即时盘 0.98/2/2.5/0.88, 初盘 0.90/2/2.5/0.95
+2026-04-12 00:46:57 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/rangqiu-1216149.shtml
+2026-04-12 00:46:57 - football_crawler - INFO - 解析到亚盘(优先t3*5): 即时盘 0.830/受平手/半球/1.030, 初盘 0.800/受平手/半球/1.050
+2026-04-12 00:46:57 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/daxiao-1205784.shtml
+2026-04-12 00:46:57 - football_crawler - INFO - 解析到亚盘(优先t3*5): 即时盘 0.930/一球/0.880, 初盘 0.950/一球/0.850
+2026-04-12 00:46:57 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/daxiao-1363836.shtml
+2026-04-12 00:46:58 - football_crawler - INFO - 解析到大小球(t3*5): 即时盘 0.85/2.5/0.95, 初盘 0.85/2.5/0.95
+2026-04-12 00:46:58 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/rangqiu-1362618.shtml
+2026-04-12 00:46:58 - football_crawler - INFO - 解析到欧赔(竞*官*): 即时盘 2.95/3.65/1.94, 初盘 2.90/3.60/1.98
+2026-04-12 00:46:58 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/yazhi-1202453.shtml
+2026-04-12 00:46:58 - football_crawler - INFO - 解析到欧赔(竞*官*): 即时盘 1.32/4.70/6.30, 初盘 1.34/4.58/6.05
+2026-04-12 00:46:58 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/yazhi-1206153.shtml
+2026-04-12 00:46:59 - football_crawler - INFO - 解析到大小球(t3*5): 即时盘 1.00/3.5↑/0.80, 初盘 1.00/3/3.5/0.80
+2026-04-12 00:46:59 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/rangqiu-1202887.shtml
+2026-04-12 00:46:59 - football_crawler - INFO - 解析到大小球(t3*5): 即时盘 0.98/2/2.5/0.88, 初盘 0.90/2/2.5/0.95
+2026-04-12 00:46:59 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/rangqiu-1216149.shtml
+2026-04-12 00:46:59 - football_crawler - INFO - 解析到大小球(t3*5): 即时盘 0.95/2/2.5/0.90, 初盘 0.88/2/2.5/0.98
+2026-04-12 00:46:59 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/rangqiu-1205784.shtml
+2026-04-12 00:46:59 - football_crawler - INFO - 解析到欧赔(竞*官*): 即时盘 1.57/3.42/5.00, 初盘 1.57/3.42/5.00
+2026-04-12 00:46:59 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/yazhi-1199661.shtml
+127.0.0.1 - - [12/Apr/2026 00:47:03] "GET /api/matches?page=2&page_size=50&start_date=2026-04-11&end_date=2026-04-12 HTTP/1.1" 200 -
+127.0.0.1 - - [12/Apr/2026 00:47:03] "GET /api/predictions?limit=200 HTTP/1.1" 200 -
+127.0.0.1 - - [12/Apr/2026 00:47:04] "GET /api/matches?page=1&page_size=50&start_date=2026-04-11&end_date=2026-04-12 HTTP/1.1" 200 -
+127.0.0.1 - - [12/Apr/2026 00:47:04] "GET /api/predictions?limit=200 HTTP/1.1" 200 -
+2026-04-12 00:47:05 - football_crawler - INFO - 解析到大小球(t3*5): 即时盘 1.03/3↑/0.78, 初盘 0.78/2.5/3/1.03
+2026-04-12 00:47:05 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/rangqiu-1363836.shtml
+2026-04-12 00:47:05 - football_crawler - INFO - 解析到大小球(t3*5): 即时盘 1.00/3.5↑/0.80, 初盘 1.00/3/3.5/0.80
+2026-04-12 00:47:05 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/rangqiu-1202887.shtml
+2026-04-12 00:47:05 - football_crawler - INFO - 解析到欧赔(竞*官*): 即时盘 2.95/3.65/1.94, 初盘 2.90/3.60/1.98
+2026-04-12 00:47:05 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/yazhi-1202453.shtml
+2026-04-12 00:47:06 - football_crawler - INFO - 解析到大小球(t3*5): 即时盘 1.03/3↑/0.78, 初盘 0.78/2.5/3/1.03
+2026-04-12 00:47:06 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/rangqiu-1363836.shtml
+2026-04-12 00:47:06 - football_crawler - INFO - 解析到大小球(t3*5): 即时盘 0.95/2/2.5/0.90, 初盘 0.88/2/2.5/0.98
+2026-04-12 00:47:06 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/rangqiu-1205784.shtml
+2026-04-12 00:47:06 - football_crawler - INFO - 解析到让球指数(竞*官*): 让球数=-1, 即时盘=3.60/3.50/1.77, 初盘=3.60/3.50/1.77
+2026-04-12 00:47:06 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/ouzhi-1216051.shtml
+2026-04-12 00:47:06 - football_crawler - INFO - 更新赔率数据: 1362618
+2026-04-12 00:47:06 - football_crawler - INFO - 解析到欧赔(竞*官*): 即时盘 1.57/3.42/5.00, 初盘 1.57/3.42/5.00
+2026-04-12 00:47:06 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/yazhi-1199661.shtml
+2026-04-12 00:47:07 - football_crawler - INFO - 解析到让球指数(竞*官*): 让球数=-1, 即时盘=5.60/3.85/1.45, 初盘=5.60/3.85/1.45
+2026-04-12 00:47:07 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/ouzhi-1216051.shtml
+2026-04-12 00:47:07 - football_crawler - INFO - 解析到亚盘(优先t3*5): 即时盘 0.830/受半球降/1.030, 初盘 0.880/受平手/半球/0.980
+2026-04-12 00:47:07 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/daxiao-1202453.shtml
+2026-04-12 00:47:07 - football_crawler - INFO - 更新赔率数据: 1216149
+2026-04-12 00:47:07 - football_crawler - INFO - 解析到让球指数(竞*官*): 让球数=-1, 即时盘=3.60/3.50/1.77, 初盘=3.60/3.50/1.77
+2026-04-12 00:47:07 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/ouzhi-1206129.shtml
+2026-04-12 00:47:07 - football_crawler - INFO - 更新赔率数据: 1362618
+2026-04-12 00:47:07 - football_crawler - INFO - 解析到欧赔(竞*官*): 即时盘 1.32/4.70/6.30, 初盘 1.34/4.58/6.05
+2026-04-12 00:47:07 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/yazhi-1206153.shtml
+2026-04-12 00:47:07 - football_crawler - INFO - 解析到让球指数(竞*官*): 让球数=1, 即时盘=1.49/3.85/5.05, 初盘=1.49/3.85/5.05
+2026-04-12 00:47:07 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/ouzhi-1206129.shtml
+2026-04-12 00:47:07 - football_crawler - INFO - 更新赔率数据: 1205784
+2026-04-12 00:47:07 - football_crawler - INFO - 解析到让球指数(竞*官*): 让球数=-1, 即时盘=5.60/3.85/1.45, 初盘=5.60/3.85/1.45
+2026-04-12 00:47:07 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/ouzhi-1199663.shtml
+2026-04-12 00:47:07 - football_crawler - INFO - 更新赔率数据: 1216149
+2026-04-12 00:47:07 - football_crawler - INFO - 解析到亚盘(优先t3*5): 即时盘 1.030/球半升/0.830, 初盘 0.980/一球/球半/0.880
+2026-04-12 00:47:07 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/daxiao-1206153.shtml
+2026-04-12 00:47:07 - football_crawler - INFO - 解析到亚盘(优先t3*5): 即时盘 0.800/半球降/1.050, 初盘 0.850/半球/一球/1.000
+2026-04-12 00:47:07 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/daxiao-1199661.shtml
+2026-04-12 00:47:07 - football_crawler - INFO - 解析到让球指数(竞*官*): 让球数=-1, 即时盘=2.78/3.90/1.95, 初盘=2.78/3.90/1.95
+2026-04-12 00:47:07 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/ouzhi-1199663.shtml
+2026-04-12 00:47:07 - football_crawler - INFO - 更新赔率数据: 1202887
+2026-04-12 00:47:13 - football_crawler - INFO - 解析到让球指数(竞*官*): 让球数=-1, 即时盘=2.18/3.60/2.55, 初盘=2.18/3.60/2.55
+2026-04-12 00:47:13 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/ouzhi-1216100.shtml
+2026-04-12 00:47:13 - football_crawler - INFO - 更新赔率数据: 1363836
+2026-04-12 00:47:14 - football_crawler - INFO - 解析到让球指数(竞*官*): 让球数=-1, 即时盘=2.78/3.90/1.95, 初盘=2.78/3.90/1.95
+2026-04-12 00:47:14 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/ouzhi-1216450.shtml
+2026-04-12 00:47:14 - football_crawler - INFO - 更新赔率数据: 1202887
+2026-04-12 00:47:14 - football_crawler - INFO - 解析到亚盘(优先t3*5): 即时盘 0.800/半球降/1.050, 初盘 0.850/半球/一球/1.000
+2026-04-12 00:47:14 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/daxiao-1199661.shtml
+2026-04-12 00:47:15 - football_crawler - INFO - 解析到让球指数(竞*官*): 让球数=-1, 即时盘=2.18/3.60/2.55, 初盘=2.18/3.60/2.55
+2026-04-12 00:47:15 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/ouzhi-1216100.shtml
+2026-04-12 00:47:15 - football_crawler - INFO - 更新赔率数据: 1363836
+2026-04-12 00:47:15 - football_crawler - INFO - 解析到让球指数(竞*官*): 让球数=1, 即时盘=1.49/3.85/5.05, 初盘=1.49/3.85/5.05
+2026-04-12 00:47:15 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/ouzhi-1216450.shtml
+2026-04-12 00:47:15 - football_crawler - INFO - 更新赔率数据: 1205784
+2026-04-12 00:47:15 - football_crawler - INFO - 解析到亚盘(优先t3*5): 即时盘 0.830/受半球降/1.030, 初盘 0.880/受平手/半球/0.980
+2026-04-12 00:47:15 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/daxiao-1202453.shtml
+2026-04-12 00:47:15 - football_crawler - INFO - 解析到欧赔(竞*官*): 即时盘 2.01/3.13/3.20, 初盘 2.01/3.13/3.20
+2026-04-12 00:47:15 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/yazhi-1206129.shtml
+2026-04-12 00:47:16 - football_crawler - INFO - 解析到欧赔(竞*官*): 即时盘 2.01/3.13/3.20, 初盘 2.01/3.13/3.20
+2026-04-12 00:47:16 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/yazhi-1206129.shtml
+2026-04-12 00:47:16 - football_crawler - INFO - 解析到大小球(t3*5): 即时盘 0.93/2/2.5/0.93, 初盘 0.88/2/2.5/0.98
+2026-04-12 00:47:16 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/rangqiu-1199661.shtml
+2026-04-12 00:47:16 - football_crawler - INFO - 解析到亚盘(优先t3*5): 即时盘 1.030/球半升/0.830, 初盘 0.980/一球/球半/0.880
+2026-04-12 00:47:16 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/daxiao-1206153.shtml
+2026-04-12 00:47:16 - football_crawler - INFO - 解析到欧赔(竞*官*): 即时盘 2.76/3.25/2.18, 初盘 2.92/3.30/2.07
+2026-04-12 00:47:16 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/yazhi-1199663.shtml
+2026-04-12 00:47:16 - football_crawler - INFO - 解析到大小球(t3*5): 即时盘 0.90/3/3.5/0.95, 初盘 1.05/3/3.5/0.80
+2026-04-12 00:47:16 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/rangqiu-1206153.shtml
+2026-04-12 00:47:16 - football_crawler - INFO - 解析到大小球(t3*5): 即时盘 0.90/3/0.95, 初盘 0.85/3/1.00
+2026-04-12 00:47:16 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/rangqiu-1202453.shtml
+2026-04-12 00:47:16 - football_crawler - INFO - 解析到欧赔(竞*官*): 即时盘 1.57/3.50/4.85, 初盘 1.57/3.50/4.85
+2026-04-12 00:47:16 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/yazhi-1216051.shtml
+2026-04-12 00:47:17 - football_crawler - INFO - 解析到欧赔(竞*官*): 即时盘 2.76/3.25/2.18, 初盘 2.92/3.30/2.07
+2026-04-12 00:47:17 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/yazhi-1199663.shtml
+2026-04-12 00:47:17 - football_crawler - INFO - 解析到欧赔(竞*官*): 即时盘 1.57/3.50/4.85, 初盘 1.57/3.50/4.85
+2026-04-12 00:47:17 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/yazhi-1216051.shtml
+ * Detected change in '/Users/wang/workspace/mygoal/web_app.py', reloading
+✅ 使用MongoDB数据库
+==================================================
+足球数据展示系统已启动
+访问地址: http://127.0.0.1:5002
+==================================================
+✅ 定时任务调度器已启动 (每15分钟刷新)
+⏰ 开始定时爬取任务: 2026-04-12 00:45:00.072416
+ℹ️  上午时段，额外爬取昨天数据: 2026-04-11
+✅ 定时任务: 已更新 60 场比赛基本信息
+2026-04-12 00:47:22 - football_crawler - INFO - 解析到大小球(t3*5): 即时盘 0.93/2/2.5/0.93, 初盘 0.88/2/2.5/0.98
+2026-04-12 00:47:22 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/rangqiu-1199661.shtml
+2026-04-12 00:47:22 - football_crawler - INFO - 解析到欧赔(竞*官*): 即时盘 2.10/3.20/2.95, 初盘 2.10/3.20/2.95
+2026-04-12 00:47:22 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/yazhi-1216100.shtml
+2026-04-12 00:47:23 - football_crawler - INFO - 解析到亚盘(优先t3*5): 即时盘 0.980/半球/一球/0.880, 初盘 0.930/半球/一球/0.930
+2026-04-12 00:47:23 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/daxiao-1216051.shtml
+2026-04-12 00:47:24 - football_crawler - INFO - 解析到欧赔(竞*官*): 即时盘 6.05/4.28/1.37, 初盘 6.05/4.28/1.37
+2026-04-12 00:47:24 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/yazhi-1216450.shtml
+2026-04-12 00:47:24 - football_crawler - INFO - 解析到欧赔(竞*官*): 即时盘 2.10/3.20/2.95, 初盘 2.10/3.20/2.95
+2026-04-12 00:47:24 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/yazhi-1216100.shtml
+2026-04-12 00:47:25 - football_crawler - INFO - 解析到亚盘(优先t3*5): 即时盘 0.830/受平手/半球/1.030, 初盘 0.900/受平手/半球/0.950
+2026-04-12 00:47:25 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/daxiao-1199663.shtml
+2026-04-12 00:47:25 - football_crawler - INFO - 解析到让球指数(竞*官*): 让球数=-1, 即时盘=2.01/3.68/2.78, 初盘=2.05/3.68/2.70
+2026-04-12 00:47:25 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/ouzhi-1358265.shtml
+2026-04-12 00:47:25 - football_crawler - INFO - 更新赔率数据: 1206153
+2026-04-12 00:47:25 - football_crawler - INFO - 解析到亚盘(优先t3*5): 即时盘 0.980/平手/半球/0.880, 初盘 0.800/平手/半球/1.050
+2026-04-12 00:47:25 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/daxiao-1206129.shtml
+2026-04-12 00:47:25 - football_crawler - INFO - 解析到让球指数(竞*官*): 让球数=-1, 即时盘=2.95/3.30/2.05, 初盘=2.95/3.30/2.05
+2026-04-12 00:47:25 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/ouzhi-1234908.shtml
+2026-04-12 00:47:25 - football_crawler - INFO - 更新赔率数据: 1199661
+2026-04-12 00:47:25 - football_crawler - INFO - 解析到让球指数(竞*官*): 让球数=1, 即时盘=1.66/3.90/3.70, 初盘=1.63/3.90/3.85
+2026-04-12 00:47:25 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/ouzhi-1199658.shtml
+2026-04-12 00:47:25 - football_crawler - INFO - 更新赔率数据: 1202453
+2026-04-12 00:47:25 - football_crawler - INFO - 解析到欧赔(竞*官*): 即时盘 6.05/4.28/1.37, 初盘 6.05/4.28/1.37
+2026-04-12 00:47:25 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/yazhi-1216450.shtml
+2026-04-12 00:47:26 - football_crawler - INFO - 解析到大小球(t3*5): 即时盘 0.90/3/3.5/0.95, 初盘 1.05/3/3.5/0.80
+2026-04-12 00:47:26 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/rangqiu-1206153.shtml
+2026-04-12 00:47:27 - football_crawler - INFO - 解析到亚盘(优先t3*5): 即时盘 0.980/半球/一球/0.880, 初盘 0.930/半球/一球/0.930
+2026-04-12 00:47:27 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/daxiao-1216051.shtml
+2026-04-12 00:47:27 - football_crawler - INFO - 解析到亚盘(优先t3*5): 即时盘 0.830/受平手/半球/1.030, 初盘 0.900/受平手/半球/0.950
+2026-04-12 00:47:27 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/daxiao-1199663.shtml
+2026-04-12 00:47:28 - football_crawler - INFO - 解析到亚盘(优先t3*5): 即时盘 0.980/平手/半球/0.880, 初盘 0.800/平手/半球/1.050
+2026-04-12 00:47:28 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/daxiao-1206129.shtml
+2026-04-12 00:47:28 - football_crawler - INFO - 解析到大小球(t3*5): 即时盘 0.90/3/0.95, 初盘 0.85/3/1.00
+2026-04-12 00:47:28 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/rangqiu-1202453.shtml
+2026-04-12 00:47:28 - football_crawler - INFO - 解析到亚盘(优先t3*5): 即时盘 0.980/平手/半球/0.880, 初盘 1.050/平手/半球/0.800
+2026-04-12 00:47:28 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/daxiao-1216100.shtml
+2026-04-12 00:47:29 - football_crawler - INFO - 解析到让球指数(竞*官*): 让球数=-1, 即时盘=2.95/3.30/2.05, 初盘=2.95/3.30/2.05
+2026-04-12 00:47:29 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/ouzhi-1358265.shtml
+2026-04-12 00:47:29 - football_crawler - INFO - 更新赔率数据: 1199661
+2026-04-12 00:47:29 - football_crawler - INFO - 解析到让球指数(竞*官*): 让球数=-1, 即时盘=2.01/3.68/2.78, 初盘=2.05/3.68/2.70
+2026-04-12 00:47:29 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/ouzhi-1234908.shtml
+2026-04-12 00:47:29 - football_crawler - INFO - 更新赔率数据: 1206153
+2026-04-12 00:47:32 - football_crawler - INFO - 解析到亚盘(优先t3*5): 即时盘 0.800/受一球/球半/1.050, 初盘 0.930/受一球/球半/0.930
+2026-04-12 00:47:32 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/daxiao-1216450.shtml
+2026-04-12 00:47:32 - football_crawler - INFO - 解析到大小球(t3*5): 即时盘 1.00/2.5/0.85, 初盘 0.98/2.5/0.88
+2026-04-12 00:47:32 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/rangqiu-1216051.shtml
+2026-04-12 00:47:32 - football_crawler - INFO - 解析到亚盘(优先t3*5): 即时盘 0.980/平手/半球/0.880, 初盘 1.050/平手/半球/0.800
+2026-04-12 00:47:32 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/daxiao-1216100.shtml
+2026-04-12 00:47:33 - football_crawler - INFO - 解析到大小球(t3*5): 即时盘 0.88/2.5/0.98, 初盘 0.93/2.5/0.93
+2026-04-12 00:47:33 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/rangqiu-1206129.shtml
+2026-04-12 00:47:33 - football_crawler - INFO - 解析到欧赔(竞*官*): 即时盘 4.90/4.16/1.46, 初盘 4.40/3.90/1.55
+2026-04-12 00:47:33 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/yazhi-1234908.shtml
+2026-04-12 00:47:33 - football_crawler - INFO - 解析到大小球(t3*5): 即时盘 0.93/2.5/0.93, 初盘 0.90/2.5/0.95
+2026-04-12 00:47:33 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/rangqiu-1199663.shtml
+2026-04-12 00:47:34 - football_crawler - INFO - 解析到欧赔(竞*官*): 即时盘 1.34/4.70/5.90, 初盘 1.34/4.70/5.90
+2026-04-12 00:47:34 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/yazhi-1358265.shtml
+2026-04-12 00:47:34 - football_crawler - INFO - 解析到欧赔(竞*官*): 即时盘 1.26/4.60/8.50, 初盘 1.27/4.60/8.00
+2026-04-12 00:47:34 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/yazhi-1199658.shtml
+2026-04-12 00:47:34 - football_crawler - INFO - 解析到亚盘(优先t3*5): 即时盘 0.800/受一球/球半/1.050, 初盘 0.930/受一球/球半/0.930
+2026-04-12 00:47:34 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/daxiao-1216450.shtml
+2026-04-12 00:47:36 - football_crawler - INFO - 解析到大小球(t3*5): 即时盘 0.88/2.5/0.98, 初盘 0.93/2.5/0.93
+2026-04-12 00:47:36 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/rangqiu-1206129.shtml
+2026-04-12 00:47:36 - football_crawler - INFO - 解析到大小球(t3*5): 即时盘 1.00/2.5/0.85, 初盘 0.98/2.5/0.88
+2026-04-12 00:47:36 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/rangqiu-1216051.shtml
+2026-04-12 00:47:37 - football_crawler - INFO - 解析到大小球(t3*5): 即时盘 0.98/2.5/0.88, 初盘 0.85/2.5/1.00
+2026-04-12 00:47:37 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/rangqiu-1216100.shtml
+2026-04-12 00:47:38 - football_crawler - INFO - 解析到大小球(t3*5): 即时盘 0.93/2.5/0.93, 初盘 0.90/2.5/0.95
+2026-04-12 00:47:38 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/rangqiu-1199663.shtml
+2026-04-12 00:47:38 - football_crawler - INFO - 解析到欧赔(竞*官*): 即时盘 4.90/4.16/1.46, 初盘 4.40/3.90/1.55
+2026-04-12 00:47:38 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/yazhi-1234908.shtml
+2026-04-12 00:47:38 - football_crawler - INFO - 解析到让球指数(竞*官*): 让球数=1, 即时盘=1.66/3.90/3.70, 初盘=1.63/3.90/3.85
+2026-04-12 00:47:38 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/ouzhi-1199658.shtml
+2026-04-12 00:47:38 - football_crawler - INFO - 更新赔率数据: 1202453
+2026-04-12 00:47:38 - football_crawler - INFO - 解析到欧赔(竞*官*): 即时盘 1.34/4.70/5.90, 初盘 1.34/4.70/5.90
+2026-04-12 00:47:38 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/yazhi-1358265.shtml
+2026-04-12 00:47:39 - football_crawler - INFO - 解析到让球指数(竞*官*): 让球数=-1, 即时盘=2.98/3.20/2.08, 初盘=2.98/3.20/2.08
+2026-04-12 00:47:39 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/ouzhi-1202459.shtml
+2026-04-12 00:47:39 - football_crawler - INFO - 更新赔率数据: 1216051
+2026-04-12 00:47:39 - football_crawler - INFO - 解析到亚盘(优先t3*5): 即时盘 0.900/受一球/0.900, 初盘 0.830/受一球/0.980
+2026-04-12 00:47:39 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/daxiao-1234908.shtml
+2026-04-12 00:47:39 - football_crawler - INFO - 解析到让球指数(竞*官*): 让球数=1, 即时盘=1.51/3.85/4.85, 初盘=1.56/3.75/4.50
+2026-04-12 00:47:39 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/ouzhi-1206164.shtml
+2026-04-12 00:47:39 - football_crawler - INFO - 更新赔率数据: 1199663
+2026-04-12 00:47:40 - football_crawler - INFO - 解析到大小球(t3*5): 即时盘 0.98/2.5/0.88, 初盘 0.85/2.5/1.00
+2026-04-12 00:47:40 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/rangqiu-1216100.shtml
+2026-04-12 00:47:40 - football_crawler - INFO - 解析到让球指数(竞*官*): 让球数=-1, 即时盘=4.25/3.71/1.60, 初盘=4.25/3.71/1.60
+2026-04-12 00:47:40 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/ouzhi-1216099.shtml
+2026-04-12 00:47:40 - football_crawler - INFO - 更新赔率数据: 1206129
+2026-04-12 00:47:41 - football_crawler - INFO - 解析到亚盘(优先t3*5): 即时盘 0.700/一球降/1.100, 初盘 0.880/一球/球半/0.980
+2026-04-12 00:47:41 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/daxiao-1199658.shtml
+2026-04-12 00:47:41 - football_crawler - INFO - 解析到大小球(t3*5): 即时盘 0.88/2.5/3/0.98, 初盘 0.80/2.5/3/1.05
+2026-04-12 00:47:41 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/rangqiu-1216450.shtml
+2026-04-12 00:47:41 - football_crawler - INFO - 解析到亚盘(优先t3*5): 即时盘 0.950/一球/球半升/0.850, 初盘 0.800/一球/1.000
+2026-04-12 00:47:41 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/daxiao-1358265.shtml
+2026-04-12 00:47:43 - football_crawler - INFO - 解析到亚盘(优先t3*5): 即时盘 0.900/受一球/0.900, 初盘 0.830/受一球/0.980
+2026-04-12 00:47:43 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/daxiao-1234908.shtml
+2026-04-12 00:47:43 - football_crawler - INFO - 解析到让球指数(竞*官*): 让球数=-1, 即时盘=2.98/3.20/2.08, 初盘=2.98/3.20/2.08
+2026-04-12 00:47:43 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/ouzhi-1202459.shtml
+2026-04-12 00:47:43 - football_crawler - INFO - 更新赔率数据: 1216051
+2026-04-12 00:47:43 - football_crawler - INFO - 解析到让球指数(竞*官*): 让球数=-1, 即时盘=4.25/3.71/1.60, 初盘=4.25/3.71/1.60
+2026-04-12 00:47:43 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/ouzhi-1206164.shtml
+2026-04-12 00:47:43 - football_crawler - INFO - 更新赔率数据: 1206129
+2026-04-12 00:47:43 - football_crawler - INFO - 解析到大小球(t3*5): 即时盘 0.88/2.5/3/0.98, 初盘 0.80/2.5/3/1.05
+2026-04-12 00:47:43 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/rangqiu-1216450.shtml
+2026-04-12 00:47:44 - football_crawler - INFO - 解析到让球指数(竞*官*): 让球数=1, 即时盘=1.51/3.85/4.85, 初盘=1.56/3.75/4.50
+2026-04-12 00:47:44 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/ouzhi-1216099.shtml
+2026-04-12 00:47:44 - football_crawler - INFO - 更新赔率数据: 1199663
+2026-04-12 00:47:45 - football_crawler - INFO - 解析到让球指数(竞*官*): 让球数=-1, 即时盘=4.55/3.75/1.56, 初盘=4.55/3.75/1.56
+2026-04-12 00:47:45 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/ouzhi-1199660.shtml
+2026-04-12 00:47:45 - football_crawler - INFO - 更新赔率数据: 1216100
+2026-04-12 00:47:45 - football_crawler - INFO - 解析到欧赔(竞*官*): 即时盘 1.26/4.60/8.50, 初盘 1.27/4.60/8.00
+2026-04-12 00:47:45 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/yazhi-1199658.shtml
+2026-04-12 00:47:45 - football_crawler - INFO - 解析到亚盘(优先t3*5): 即时盘 0.950/一球/球半升/0.850, 初盘 0.800/一球/1.000
+2026-04-12 00:47:45 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/daxiao-1358265.shtml
+2026-04-12 00:47:47 - football_crawler - INFO - 解析到大小球(t3*5): 即时盘 0.85/2.5/3↓/0.95, 初盘 0.90/3/0.90
+2026-04-12 00:47:47 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/rangqiu-1234908.shtml
+2026-04-12 00:47:48 - football_crawler - INFO - 解析到让球指数(竞*官*): 让球数=-1, 即时盘=4.55/3.75/1.56, 初盘=4.55/3.75/1.56
+2026-04-12 00:47:48 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/ouzhi-1199660.shtml
+2026-04-12 00:47:48 - football_crawler - INFO - 更新赔率数据: 1216100
+2026-04-12 00:47:48 - football_crawler - INFO - 解析到欧赔(竞*官*): 即时盘 1.55/4.00/4.26, 初盘 1.49/4.12/4.65
+2026-04-12 00:47:48 - football_crawler - INFO - 解析到欧赔(竞*官*): 即时盘 7.00/4.90/1.28, 初盘 7.45/4.95/1.26
+2026-04-12 00:47:48 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/yazhi-1202459.shtml
+2026-04-12 00:47:48 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/yazhi-1206164.shtml
+2026-04-12 00:47:50 - football_crawler - INFO - 解析到让球指数(竞*官*): 让球数=1, 即时盘=2.56/3.50/2.21, 初盘=2.56/3.50/2.21
+2026-04-12 00:47:50 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/ouzhi-1216044.shtml
+2026-04-12 00:47:50 - football_crawler - INFO - 更新赔率数据: 1216450
+2026-04-12 00:47:52 - football_crawler - INFO - 解析到大小球(t3*5): 即时盘 0.85/2.5/3↓/0.95, 初盘 0.90/3/0.90
+2026-04-12 00:47:52 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/rangqiu-1234908.shtml
+2026-04-12 00:47:53 - football_crawler - INFO - 解析到大小球(t3*5): 即时盘 0.82/2.5↓/1.02, 初盘 1.03/2.5/3/0.83
+2026-04-12 00:47:53 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/rangqiu-1199658.shtml
+2026-04-12 00:47:53 - football_crawler - INFO - 解析到大小球(t3*5): 即时盘 0.93/3/3.5/0.88, 初盘 0.98/3/3.5/0.83
+2026-04-12 00:47:53 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/rangqiu-1358265.shtml
+2026-04-12 00:47:53 - football_crawler - INFO - 解析到欧赔(竞*官*): 即时盘 1.55/4.00/4.26, 初盘 1.49/4.12/4.65
+2026-04-12 00:47:53 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/yazhi-1202459.shtml
+2026-04-12 00:47:53 - football_crawler - INFO - 解析到欧赔(竞*官*): 即时盘 1.23/5.45/7.50, 初盘 1.20/5.75/8.25
+2026-04-12 00:47:53 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/yazhi-1216099.shtml
+2026-04-12 00:47:54 - football_crawler - INFO - 解析到亚盘(优先t3*5): 即时盘 0.970/半球/一球降/0.870, 初盘 0.900/一球/0.950
+2026-04-12 00:47:54 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/daxiao-1202459.shtml
+2026-04-12 00:47:54 - football_crawler - INFO - 解析到亚盘(优先t3*5): 即时盘 0.720/受球半/两球降/1.070, 初盘 0.930/受球半/0.930
+2026-04-12 00:47:54 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/daxiao-1206164.shtml
+2026-04-12 00:47:54 - football_crawler - INFO - 解析到让球指数(竞*官*): 让球数=1, 即时盘=2.28/3.37/2.54, 初盘=2.15/3.45/2.67
+2026-04-12 00:47:54 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/ouzhi-1205768.shtml
+2026-04-12 00:47:54 - football_crawler - INFO - 更新赔率数据: 1234908
+2026-04-12 00:47:54 - football_crawler - INFO - 解析到亚盘(优先t3*5): 即时盘 0.700/一球降/1.100, 初盘 0.880/一球/球半/0.980
+2026-04-12 00:47:54 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/daxiao-1199658.shtml
+2026-04-12 00:47:54 - football_crawler - INFO - 解析到欧赔(竞*官*): 即时盘 3.00/3.00/2.16, 初盘 2.77/3.20/2.20
+2026-04-12 00:47:54 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/yazhi-1199660.shtml
+2026-04-12 00:47:55 - football_crawler - INFO - 解析到让球指数(竞*官*): 让球数=1, 即时盘=2.56/3.50/2.21, 初盘=2.56/3.50/2.21
+2026-04-12 00:47:55 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/ouzhi-1216044.shtml
+2026-04-12 00:47:55 - football_crawler - INFO - 更新赔率数据: 1216450
+2026-04-12 00:47:55 - football_crawler - INFO - 解析到让球指数(竞*官*): 让球数=1, 即时盘=2.28/3.37/2.54, 初盘=2.15/3.45/2.67
+2026-04-12 00:47:55 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/ouzhi-1205768.shtml
+2026-04-12 00:47:55 - football_crawler - INFO - 更新赔率数据: 1234908
+2026-04-12 00:47:55 - football_crawler - INFO - 解析到大小球(t3*5): 即时盘 0.93/3/3.5/0.88, 初盘 0.98/3/3.5/0.83
+2026-04-12 00:47:55 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/rangqiu-1358265.shtml
+2026-04-12 00:47:55 - football_crawler - INFO - 解析到欧赔(竞*官*): 即时盘 2.14/3.20/2.86, 初盘 2.73/3.05/2.30
+2026-04-12 00:47:55 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/yazhi-1216044.shtml
+2026-04-12 00:47:56 - football_crawler - INFO - 解析到欧赔(竞*官*): 即时盘 7.00/4.90/1.28, 初盘 7.45/4.95/1.26
+2026-04-12 00:47:56 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/yazhi-1206164.shtml
+2026-04-12 00:47:56 - football_crawler - INFO - 解析到欧赔(竞*官*): 即时盘 3.00/3.00/2.16, 初盘 2.77/3.20/2.20
+2026-04-12 00:47:56 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/yazhi-1199660.shtml
+2026-04-12 00:47:56 - football_crawler - INFO - 解析到欧赔(竞*官*): 即时盘 1.23/5.45/7.50, 初盘 1.20/5.75/8.25
+2026-04-12 00:47:56 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/yazhi-1216099.shtml
+2026-04-12 00:48:01 - football_crawler - INFO - 解析到让球指数(竞*官*): 让球数=-1, 即时盘=2.05/3.75/2.68, 初盘=2.05/3.75/2.68
+2026-04-12 00:48:01 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/ouzhi-1216301.shtml
+2026-04-12 00:48:01 - football_crawler - INFO - 更新赔率数据: 1358265
+2026-04-12 00:48:01 - football_crawler - INFO - 解析到亚盘(优先t3*5): 即时盘 0.870/球半降/0.970, 初盘 0.880/两球/0.980
+2026-04-12 00:48:01 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/daxiao-1216099.shtml
+2026-04-12 00:48:01 - football_crawler - INFO - 解析到让球指数(竞*官*): 让球数=-1, 即时盘=1.99/3.35/3.05, 初盘=1.99/3.45/2.97
+2026-04-12 00:48:01 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/ouzhi-1358255.shtml
+2026-04-12 00:48:01 - football_crawler - INFO - 更新赔率数据: 1199658
+2026-04-12 00:48:01 - football_crawler - INFO - 解析到大小球(t3*5): 即时盘 1.05/3/3.5/0.80, 初盘 1.05/3/3.5/0.80
+2026-04-12 00:48:01 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/rangqiu-1202459.shtml
+2026-04-12 00:48:02 - football_crawler - INFO - 解析到大小球(t3*5): 即时盘 0.82/3/3.5/1.02, 初盘 1.03/3/3.5/0.83
+2026-04-12 00:48:02 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/rangqiu-1206164.shtml
+2026-04-12 00:48:02 - football_crawler - INFO - 解析到亚盘(优先t3*5): 即时盘 0.970/半球/一球降/0.870, 初盘 0.900/一球/0.950
+2026-04-12 00:48:02 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/daxiao-1202459.shtml
+2026-04-12 00:48:02 - football_crawler - INFO - 解析到亚盘(优先t3*5): 即时盘 0.880/受平手/半球/0.980, 初盘 0.880/受平手/半球/0.980
+2026-04-12 00:48:02 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/daxiao-1199660.shtml
+2026-04-12 00:48:03 - football_crawler - INFO - 解析到亚盘(优先t3*5): 即时盘 0.930/平手/半球升/0.930, 初盘 1.050/受平手/半球/0.800
+2026-04-12 00:48:03 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/daxiao-1216044.shtml
+2026-04-12 00:48:03 - football_crawler - INFO - 解析到欧赔(竞*官*): 即时盘 1.21/5.15/9.15, 初盘 1.24/4.90/8.40
+2026-04-12 00:48:03 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/yazhi-1205768.shtml
+2026-04-12 00:48:05 - football_crawler - INFO - 解析到让球指数(竞*官*): 让球数=-1, 即时盘=2.05/3.75/2.68, 初盘=2.05/3.75/2.68
+2026-04-12 00:48:05 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/ouzhi-1216301.shtml
+2026-04-12 00:48:05 - football_crawler - INFO - 更新赔率数据: 1358265
+2026-04-12 00:48:05 - football_crawler - INFO - 解析到亚盘(优先t3*5): 即时盘 0.880/受平手/半球/0.980, 初盘 0.880/受平手/半球/0.980
+2026-04-12 00:48:05 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/daxiao-1199660.shtml
+2026-04-12 00:48:05 - football_crawler - INFO - 解析到亚盘(优先t3*5): 即时盘 0.720/受球半/两球降/1.070, 初盘 0.930/受球半/0.930
+2026-04-12 00:48:05 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/daxiao-1206164.shtml
+2026-04-12 00:48:05 - football_crawler - INFO - 解析到大小球(t3*5): 即时盘 0.82/2.5↓/1.02, 初盘 1.03/2.5/3/0.83
+2026-04-12 00:48:05 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/rangqiu-1199658.shtml
+2026-04-12 00:48:06 - football_crawler - INFO - 解析到欧赔(竞*官*): 即时盘 2.14/3.20/2.86, 初盘 2.73/3.05/2.30
+2026-04-12 00:48:06 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/yazhi-1216044.shtml
+2026-04-12 00:48:06 - football_crawler - INFO - 解析到亚盘(优先t3*5): 即时盘 0.870/球半降/0.970, 初盘 0.880/两球/0.980
+2026-04-12 00:48:06 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/daxiao-1216099.shtml
+2026-04-12 00:48:06 - football_crawler - INFO - 解析到欧赔(竞*官*): 即时盘 1.21/5.15/9.15, 初盘 1.24/4.90/8.40
+2026-04-12 00:48:06 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/yazhi-1205768.shtml
+2026-04-12 00:48:06 - football_crawler - INFO - 解析到大小球(t3*5): 即时盘 1.05/3/3.5/0.80, 初盘 1.05/3/3.5/0.80
+2026-04-12 00:48:06 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/rangqiu-1202459.shtml
+2026-04-12 00:48:09 - football_crawler - INFO - 解析到欧赔(竞*官*): 即时盘 12.00/5.95/1.14, 初盘 12.00/5.95/1.14
+2026-04-12 00:48:09 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/yazhi-1216301.shtml
+2026-04-12 00:48:10 - football_crawler - INFO - 解析到让球指数(竞*官*): 让球数=1, 即时盘=3.04/3.65/1.90, 初盘=3.15/3.72/1.84
+2026-04-12 00:48:10 - football_crawler - INFO - 更新赔率数据: 1206164
+2026-04-12 00:48:10 - football_crawler - INFO - 解析到亚盘(优先t3*5): 即时盘 0.950/球半升/0.900, 初盘 0.930/一球/球半/0.930
+2026-04-12 00:48:10 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/daxiao-1205768.shtml
+2026-04-12 00:48:10 - football_crawler - INFO - 解析到大小球(t3*5): 即时盘 0.87/3/3.5↓/0.97, 初盘 0.98/3.5/4/0.88
+2026-04-12 00:48:10 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/rangqiu-1216099.shtml
+2026-04-12 00:48:11 - football_crawler - INFO - 解析到大小球(t3*5): 即时盘 0.95/2.5/0.90, 初盘 0.98/2.5/0.88
+2026-04-12 00:48:11 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/rangqiu-1216044.shtml
+2026-04-12 00:48:12 - football_crawler - INFO - 解析到让球指数(竞*官*): 让球数=-1, 即时盘=2.75/3.45/2.10, 初盘=2.48/3.55/2.25
+2026-04-12 00:48:12 - football_crawler - INFO - 更新赔率数据: 1202459
+2026-04-12 00:48:12 - football_crawler - INFO - 解析到大小球(t3*5): 即时盘 0.85/2.5/1.00, 初盘 0.88/2.5/0.98
+2026-04-12 00:48:12 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/rangqiu-1199660.shtml
+2026-04-12 00:48:12 - football_crawler - INFO - 解析到欧赔(竞*官*): 即时盘 2.32/3.25/2.56, 初盘 2.36/3.25/2.51
+2026-04-12 00:48:12 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/yazhi-1358255.shtml
+2026-04-12 00:48:12 - football_crawler - INFO - 解析到亚盘(优先t3*5): 即时盘 0.980/受球半/两球升/0.880, 初盘 0.830/受两球/1.030
+2026-04-12 00:48:12 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/daxiao-1216301.shtml
+2026-04-12 00:48:13 - football_crawler - INFO - 解析到大小球(t3*5): 即时盘 0.87/3/3.5↓/0.97, 初盘 0.98/3.5/4/0.88
+2026-04-12 00:48:13 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/rangqiu-1216099.shtml
+2026-04-12 00:48:13 - football_crawler - INFO - 解析到大小球(t3*5): 即时盘 0.85/2.5/1.00, 初盘 0.88/2.5/0.98
+2026-04-12 00:48:13 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/rangqiu-1199660.shtml
+2026-04-12 00:48:15 - football_crawler - INFO - 解析到亚盘(优先t3*5): 即时盘 0.950/球半升/0.900, 初盘 0.930/一球/球半/0.930
+2026-04-12 00:48:15 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/daxiao-1205768.shtml
+2026-04-12 00:48:16 - football_crawler - INFO - 解析到大小球(t3*5): 即时盘 0.82/3/3.5/1.02, 初盘 1.03/3/3.5/0.83
+2026-04-12 00:48:16 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/rangqiu-1206164.shtml
+2026-04-12 00:48:17 - football_crawler - INFO - 解析到亚盘(优先t3*5): 即时盘 0.930/平手/半球升/0.930, 初盘 1.050/受平手/半球/0.800
+2026-04-12 00:48:17 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/daxiao-1216044.shtml
+2026-04-12 00:48:17 - football_crawler - INFO - 解析到大小球(t3*5): 即时盘 0.80/2.5/3/1.05, 初盘 0.88/2.5/3/0.98
+2026-04-12 00:48:17 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/rangqiu-1205768.shtml
+2026-04-12 00:48:18 - football_crawler - INFO - 解析到让球指数(竞*官*): 让球数=-2, 即时盘=2.98/4.25/1.79, 初盘=2.70/4.30/1.90
+2026-04-12 00:48:18 - football_crawler - INFO - 更新赔率数据: 1216099
+2026-04-12 00:48:18 - football_crawler - INFO - 解析到让球指数(竞*官*): 让球数=1, 即时盘=1.30/4.90/6.40, 初盘=1.47/3.90/5.25
+2026-04-12 00:48:18 - football_crawler - INFO - 更新赔率数据: 1216044
+2026-04-12 00:48:19 - football_crawler - INFO - 解析到亚盘(优先t3*5): 即时盘 0.850/平手降/0.950, 初盘 0.950/平手/半球/0.850
+2026-04-12 00:48:19 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/daxiao-1358255.shtml
+2026-04-12 00:48:19 - football_crawler - INFO - 解析到让球指数(竞*官*): 让球数=1, 即时盘=1.54/3.80/4.60, 初盘=1.51/3.85/4.85
+2026-04-12 00:48:19 - football_crawler - INFO - 更新赔率数据: 1199660
+2026-04-12 00:48:19 - football_crawler - INFO - 解析到大小球(t3*5): 即时盘 1.00/3/3.5/0.85, 初盘 0.93/3/3.5/0.93
+2026-04-12 00:48:19 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/rangqiu-1216301.shtml
+2026-04-12 00:48:19 - football_crawler - INFO - 解析到让球指数(竞*官*): 让球数=-1, 即时盘=1.99/3.35/3.05, 初盘=1.99/3.45/2.97
+2026-04-12 00:48:19 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/ouzhi-1358255.shtml
+2026-04-12 00:48:19 - football_crawler - INFO - 更新赔率数据: 1199658
+2026-04-12 00:48:19 - football_crawler - INFO - 解析到让球指数(竞*官*): 让球数=-1, 即时盘=2.75/3.45/2.10, 初盘=2.48/3.55/2.25
+2026-04-12 00:48:19 - football_crawler - INFO - 更新赔率数据: 1202459
+2026-04-12 00:48:19 - football_crawler - INFO - 解析到欧赔(竞*官*): 即时盘 12.00/5.95/1.14, 初盘 12.00/5.95/1.14
+2026-04-12 00:48:19 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/yazhi-1216301.shtml
+2026-04-12 00:48:20 - football_crawler - INFO - 解析到让球指数(竞*官*): 让球数=1, 即时盘=1.54/3.80/4.60, 初盘=1.51/3.85/4.85
+2026-04-12 00:48:20 - football_crawler - INFO - 更新赔率数据: 1199660
+2026-04-12 00:48:20 - football_crawler - INFO - 解析到让球指数(竞*官*): 让球数=-2, 即时盘=2.98/4.25/1.79, 初盘=2.70/4.30/1.90
+2026-04-12 00:48:20 - football_crawler - INFO - 更新赔率数据: 1216099
+2026-04-12 00:48:23 - football_crawler - INFO - 解析到大小球(t3*5): 即时盘 0.95/2.5/0.90, 初盘 0.98/2.5/0.88
+2026-04-12 00:48:23 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/rangqiu-1216044.shtml
+2026-04-12 00:48:23 - football_crawler - INFO - 解析到让球指数(竞*官*): 让球数=1, 即时盘=3.04/3.65/1.90, 初盘=3.15/3.72/1.84
+2026-04-12 00:48:23 - football_crawler - INFO - 更新赔率数据: 1206164
+2026-04-12 00:48:23 - football_crawler - INFO - 解析到让球指数(竞*官*): 让球数=-1, 即时盘=1.78/3.60/3.45, 初盘=1.87/3.55/3.20
+2026-04-12 00:48:23 - football_crawler - INFO - 更新赔率数据: 1205768
+2026-04-12 00:48:23 - football_crawler - INFO - 解析到大小球(t3*5): 即时盘 0.80/2.5/3/1.05, 初盘 0.88/2.5/3/0.98
+2026-04-12 00:48:23 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/rangqiu-1205768.shtml
+2026-04-12 00:48:24 - football_crawler - INFO - 解析到大小球(t3*5): 即时盘 0.88/2.5/0.93, 初盘 0.80/2.5/1.00
+2026-04-12 00:48:24 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/rangqiu-1358255.shtml
+2026-04-12 00:48:25 - football_crawler - INFO - 解析到让球指数(竞*官*): 让球数=2, 即时盘=2.03/3.90/2.64, 初盘=2.00/4.00/2.64
+2026-04-12 00:48:25 - football_crawler - INFO - 更新赔率数据: 1216301
+2026-04-12 00:48:26 - football_crawler - INFO - 解析到亚盘(优先t3*5): 即时盘 0.980/受球半/两球升/0.880, 初盘 0.830/受两球/1.030
+2026-04-12 00:48:26 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/daxiao-1216301.shtml
+2026-04-12 00:48:26 - football_crawler - INFO - 解析到欧赔(竞*官*): 即时盘 2.32/3.25/2.56, 初盘 2.36/3.25/2.51
+2026-04-12 00:48:26 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/yazhi-1358255.shtml
+2026-04-12 00:48:27 - football_crawler - INFO - 解析到让球指数(竞*官*): 让球数=-1, 即时盘=1.78/3.60/3.45, 初盘=1.87/3.55/3.20
+2026-04-12 00:48:27 - football_crawler - INFO - 更新赔率数据: 1205768
+2026-04-12 00:48:29 - football_crawler - INFO - 解析到让球指数(竞*官*): 让球数=1, 即时盘=1.30/4.90/6.40, 初盘=1.47/3.90/5.25
+2026-04-12 00:48:29 - football_crawler - INFO - 更新赔率数据: 1216044
+2026-04-12 00:48:30 - football_crawler - INFO - 解析到让球指数(竞*官*): 让球数=-1, 即时盘=5.15/4.00/1.46, 初盘=5.32/4.05/1.44
+2026-04-12 00:48:30 - football_crawler - INFO - 更新赔率数据: 1358255
+2026-04-12 00:48:31 - football_crawler - INFO - 解析到大小球(t3*5): 即时盘 1.00/3/3.5/0.85, 初盘 0.93/3/3.5/0.93
+2026-04-12 00:48:31 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/rangqiu-1216301.shtml
+2026-04-12 00:48:32 - football_crawler - INFO - 解析到亚盘(优先t3*5): 即时盘 0.850/平手降/0.950, 初盘 0.950/平手/半球/0.850
+2026-04-12 00:48:32 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/daxiao-1358255.shtml
+2026-04-12 00:48:38 - football_crawler - INFO - 解析到让球指数(竞*官*): 让球数=2, 即时盘=2.03/3.90/2.64, 初盘=2.00/4.00/2.64
+2026-04-12 00:48:38 - football_crawler - INFO - 更新赔率数据: 1216301
+2026-04-12 00:48:38 - football_crawler - INFO - 解析到大小球(t3*5): 即时盘 0.88/2.5/0.93, 初盘 0.80/2.5/1.00
+2026-04-12 00:48:38 - football_crawler - INFO - 请求URL: https://odds.500.com/fenxi/rangqiu-1358255.shtml
+2026-04-12 00:48:43 - football_crawler - INFO - 解析到让球指数(竞*官*): 让球数=-1, 即时盘=5.15/4.00/1.46, 初盘=5.32/4.05/1.44
+2026-04-12 00:48:43 - football_crawler - INFO - 更新赔率数据: 1358255
+✅ 定时任务: 已更新 40 场比赛赔率
+ * Restarting with stat
+2026-04-12 00:48:45 - football_crawler - INFO - 成功连接到MongoDB: mongodb://localhost:27017/
+2026-04-12 00:48:45 - football_crawler - INFO - 数据库索引创建成功
+ * Debugger is active!
+ * Debugger PIN: 852-802-166
+127.0.0.1 - - [12/Apr/2026 00:48:45] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [12/Apr/2026 00:48:45] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [12/Apr/2026 00:48:45] "GET / HTTP/1.1" 200 -
+ * Detected change in '/Users/wang/workspace/mygoal/web_app.py', reloading
+✅ 使用MongoDB数据库
+==================================================
+足球数据展示系统已启动
+访问地址: http://127.0.0.1:5002
+==================================================
+✅ 定时任务调度器已启动 (每15分钟刷新)
+ * Restarting with stat
+2026-04-12 00:49:00 - football_crawler - INFO - 成功连接到MongoDB: mongodb://localhost:27017/
+2026-04-12 00:49:00 - football_crawler - INFO - 数据库索引创建成功
+ * Debugger is active!
+ * Debugger PIN: 852-802-166
+127.0.0.1 - - [12/Apr/2026 00:49:32] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [12/Apr/2026 00:49:32] "[36mGET /static/favicon.svg HTTP/1.1[0m" 304 -
+127.0.0.1 - - [12/Apr/2026 00:49:32] "GET /api/leagues HTTP/1.1" 200 -
+127.0.0.1 - - [12/Apr/2026 00:49:32] "[36mGET /static/favicon.svg HTTP/1.1[0m" 304 -
+127.0.0.1 - - [12/Apr/2026 00:49:32] "GET /api/matches?page=1&page_size=50&start_date=2026-04-11&end_date=2026-04-12 HTTP/1.1" 200 -
+127.0.0.1 - - [12/Apr/2026 00:49:32] "GET /api/predictions?limit=200 HTTP/1.1" 200 -
+127.0.0.1 - - [12/Apr/2026 00:49:44] "GET /match/1366277 HTTP/1.1" 200 -
+127.0.0.1 - - [12/Apr/2026 00:49:44] "[36mGET /static/favicon.svg HTTP/1.1[0m" 304 -
+127.0.0.1 - - [12/Apr/2026 00:49:44] "GET /api/match/1366277 HTTP/1.1" 200 -
+127.0.0.1 - - [12/Apr/2026 00:49:44] "GET /api/predictions?limit=200 HTTP/1.1" 200 -
+127.0.0.1 - - [12/Apr/2026 00:49:44] "GET /api/match/1366277/movement HTTP/1.1" 200 -
+127.0.0.1 - - [12/Apr/2026 00:49:47] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [12/Apr/2026 00:49:47] "[36mGET /static/favicon.svg HTTP/1.1[0m" 304 -
+127.0.0.1 - - [12/Apr/2026 00:49:47] "GET /api/leagues HTTP/1.1" 200 -
+127.0.0.1 - - [12/Apr/2026 00:49:47] "GET /api/matches?page=1&page_size=50&start_date=2026-04-11&end_date=2026-04-12 HTTP/1.1" 200 -
+127.0.0.1 - - [12/Apr/2026 00:49:47] "GET /api/predictions?limit=200 HTTP/1.1" 200 -
+127.0.0.1 - - [12/Apr/2026 00:49:57] "GET /api/matches?page=1&page_size=50&status=0&start_date=2026-04-11&end_date=2026-04-12 HTTP/1.1" 200 -
+127.0.0.1 - - [12/Apr/2026 00:49:57] "GET /api/predictions?limit=200 HTTP/1.1" 200 -
+127.0.0.1 - - [12/Apr/2026 00:49:58] "GET /api/matches?page=1&page_size=50&status=1&start_date=2026-04-11&end_date=2026-04-12 HTTP/1.1" 200 -
+127.0.0.1 - - [12/Apr/2026 00:49:58] "GET /api/predictions?limit=200 HTTP/1.1" 200 -
+127.0.0.1 - - [12/Apr/2026 00:49:59] "GET /api/matches?page=1&page_size=50&status=2&start_date=2026-04-11&end_date=2026-04-12 HTTP/1.1" 200 -
+127.0.0.1 - - [12/Apr/2026 00:49:59] "GET /api/predictions?limit=200 HTTP/1.1" 200 -
+127.0.0.1 - - [12/Apr/2026 00:50:00] "GET /api/matches?page=1&page_size=50&start_date=2026-04-11&end_date=2026-04-12 HTTP/1.1" 200 -
+127.0.0.1 - - [12/Apr/2026 00:50:00] "GET /api/predictions?limit=200 HTTP/1.1" 200 -
+127.0.0.1 - - [12/Apr/2026 00:50:05] "GET /match/1373110 HTTP/1.1" 200 -
+127.0.0.1 - - [12/Apr/2026 00:50:06] "[36mGET /static/favicon.svg HTTP/1.1[0m" 304 -
+127.0.0.1 - - [12/Apr/2026 00:50:06] "GET /api/match/1373110 HTTP/1.1" 200 -
+127.0.0.1 - - [12/Apr/2026 00:50:06] "GET /api/predictions?limit=200 HTTP/1.1" 200 -
+127.0.0.1 - - [12/Apr/2026 00:50:06] "GET /api/match/1373110/movement HTTP/1.1" 200 -
+127.0.0.1 - - [12/Apr/2026 00:50:08] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [12/Apr/2026 00:50:08] "[36mGET /static/favicon.svg HTTP/1.1[0m" 304 -
+127.0.0.1 - - [12/Apr/2026 00:50:08] "GET /api/leagues HTTP/1.1" 200 -
+127.0.0.1 - - [12/Apr/2026 00:50:08] "GET /api/matches?page=1&page_size=50&start_date=2026-04-11&end_date=2026-04-12 HTTP/1.1" 200 -
+127.0.0.1 - - [12/Apr/2026 00:50:08] "GET /api/predictions?limit=200 HTTP/1.1" 200 -
+127.0.0.1 - - [12/Apr/2026 00:50:49] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [12/Apr/2026 00:50:49] "GET /api/leagues HTTP/1.1" 200 -
+127.0.0.1 - - [12/Apr/2026 00:50:49] "GET /api/matches?page=1&page_size=50&start_date=2026-04-11&end_date=2026-04-12 HTTP/1.1" 200 -
+127.0.0.1 - - [12/Apr/2026 00:50:49] "GET /api/predictions?limit=200 HTTP/1.1" 200 -
+127.0.0.1 - - [12/Apr/2026 00:50:51] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [12/Apr/2026 00:50:51] "GET /api/leagues HTTP/1.1" 200 -
+127.0.0.1 - - [12/Apr/2026 00:50:51] "GET /api/matches?page=1&page_size=50&start_date=2026-04-11&end_date=2026-04-12 HTTP/1.1" 200 -
+127.0.0.1 - - [12/Apr/2026 00:50:51] "GET /api/predictions?limit=200 HTTP/1.1" 200 -
+127.0.0.1 - - [12/Apr/2026 00:52:28] "GET /api/matches?page=1&page_size=50&status=0&start_date=2026-04-11&end_date=2026-04-12 HTTP/1.1" 200 -
+127.0.0.1 - - [12/Apr/2026 00:52:28] "GET /api/predictions?limit=200 HTTP/1.1" 200 -
+127.0.0.1 - - [12/Apr/2026 00:52:29] "GET /api/matches?page=1&page_size=50&start_date=2026-04-11&end_date=2026-04-12 HTTP/1.1" 200 -
+127.0.0.1 - - [12/Apr/2026 00:52:29] "GET /api/predictions?limit=200 HTTP/1.1" 200 -
+127.0.0.1 - - [12/Apr/2026 00:58:25] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [12/Apr/2026 00:58:25] "GET /api/leagues HTTP/1.1" 200 -
+127.0.0.1 - - [12/Apr/2026 00:58:25] "GET /api/matches?page=1&page_size=50&start_date=2026-04-11&end_date=2026-04-12 HTTP/1.1" 200 -
+127.0.0.1 - - [12/Apr/2026 00:58:25] "GET /api/predictions?limit=200 HTTP/1.1" 200 -
+127.0.0.1 - - [12/Apr/2026 00:58:45] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [12/Apr/2026 00:58:45] "GET /api/leagues HTTP/1.1" 200 -
+127.0.0.1 - - [12/Apr/2026 00:58:45] "GET /api/matches?page=1&page_size=50&start_date=2026-04-11&end_date=2026-04-12 HTTP/1.1" 200 -
+127.0.0.1 - - [12/Apr/2026 00:58:45] "GET /api/predictions?limit=200 HTTP/1.1" 200 -
+ * Detected change in '/Users/wang/workspace/mygoal/web_app.py', reloading
+✅ 使用MongoDB数据库
+==================================================
+足球数据展示系统已启动
+访问地址: http://127.0.0.1:5002
+==================================================
+✅ 定时任务调度器已启动 (每15分钟刷新)
+ * Restarting with stat
+2026-04-12 00:59:44 - football_crawler - INFO - 成功连接到MongoDB: mongodb://localhost:27017/
+2026-04-12 00:59:44 - football_crawler - INFO - 数据库索引创建成功
+✅ 使用MongoDB数据库
+Traceback (most recent call last):
+  File "/Users/wang/workspace/mygoal/web_app.py", line 710, in <module>
+    @app.route('/stats')
+     ~~~~~~~~~^^^^^^^^^^
+  File "/Users/wang/workspace/mygoal/venv/lib/python3.13/site-packages/flask/scaffold.py", line 439, in decorator
+    self.add_url_rule(rule, endpoint, f, **options)
+    ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/wang/workspace/mygoal/venv/lib/python3.13/site-packages/flask/scaffold.py", line 57, in wrapper_func
+    return f(self, *args, **kwargs)
+  File "/Users/wang/workspace/mygoal/venv/lib/python3.13/site-packages/flask/app.py", line 1090, in add_url_rule
+    raise AssertionError(
+    ...<2 lines>...
+    )
+AssertionError: View function mapping is overwriting an existing endpoint function: stats
+⏰ 开始定时爬取任务: 2026-04-12 00:45:00.075643
+ℹ️  上午时段，额外爬取昨天数据: 2026-04-11
+✅ 定时任务: 已更新 60 场比赛基本信息
+✅ 定时任务: 已更新 40 场比赛赔率

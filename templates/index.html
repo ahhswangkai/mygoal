@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>足彩分析</title>
+    <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
     <style>
         * {
             margin: 0;
@@ -658,12 +659,9 @@
                     <span style="color:#718096;">至</span>
                     <input type="date" id="endDate" style="padding: 10px 15px; border: 2px solid #e2e8f0; border-radius: 8px; font-size: 14px;" onchange="loadMatches(1)">
                 </div>
-                <button class="btn btn-success" onclick="crawlNewData()">📥 爬取新数据</button>
+                <button class="btn btn-success" onclick="crawlNewData()\">📥 爬取新数据</button>
 
-                <button class="btn btn-success" onclick="reviewFinished()" style="background:#48bb78;">🧾 复盘完场</button>
-                <button class="btn btn-success" onclick="location.href='/daily_recommendations'" style="background:linear-gradient(135deg, #f093fb 0%, #f5576c 100%);">📊 每日推荐</button>
-                <button class="btn btn-success" onclick="location.href='/lower_plate'" style="background:linear-gradient(135deg, #11998e 0%, #38ef7d 100%);">🎲 下盘筛选</button>
-                <button class="btn btn-success" onclick="location.href='/odds_filter'" style="background:linear-gradient(135deg, #fc4a1a 0%, #f7b733 100%);">📈 赔率筛选</button>
+                <a href="/stats" class="btn btn-success" style="background:linear-gradient(135deg, #fa709a 0%, #fee140 100%);">📊 数据统计</a>
                 <a href="/bets" class="btn btn-success" style="background:linear-gradient(135deg, #667eea 0%, #764ba2 100%);">📝 投注记录</a>
                 <a href="/my_picks" class="btn btn-success" style="background:linear-gradient(135deg, #00b09b 0%, #96c93d 100%);">🎯 我的选择</a>
             </div>
@@ -1348,42 +1346,6 @@
             const ouMap = {'over': '大球', 'under': '小球'};
             const isManual = !!(pred.manual || pred.source === 'manual' || pred.manual_option || (pred.manual_options && pred.manual_options.length));
             
-            // 已复盘（完场）的展示：根据预测来源显示
-            if (status === 2 && pred.is_reviewed) {
-                const accuracy = pred.accuracy || 0;
-                const icon = accuracy >= 75 ? '✅' : accuracy >= 50 ? '⚠️' : '❌';
-                const sourceLabel = pred.is_manual ? '手动' : 'AI';
-                
-                // 构建复盘项目显示（只显示有预测的项）
-                let reviewItems = [];
-                if (pred.manual_win_prediction || pred.win_prediction) {
-                    reviewItems.push(`胜负${pred.win_correct ? '✅' : '❌'}`);
-                }
-                if (pred.manual_asian_prediction || pred.asian_prediction) {
-                    reviewItems.push(`亚盘${pred.asian_correct ? '✅' : '❌'}`);
-                }
-                if (pred.ou_prediction) {
-                    reviewItems.push(`大小球${pred.ou_correct ? '✅' : '❌'}`);
-                }
-                
-                // 获取信心指数（手动优先）
-                const winConf = pred.manual_win_confidence || pred.win_confidence || 0;
-                const asianConf = pred.manual_asian_confidence || pred.asian_confidence || 0;
-                const ouConf = pred.ou_confidence || 0;
-                
-                return `
-                    <div style="line-height:1.4;">
-                        <div style="font-weight:600;margin-bottom:4px;">${icon} ${sourceLabel} ${accuracy.toFixed(0)}%</div>
-                        <div style="font-size:11px;color:#666;">
-                            ${reviewItems.join(' ')}
-                        </div>
-                        <div style="font-size:11px;color:#666;margin-top:4px;">
-                            ${pred.correct_count}/${pred.total_predictions}项正确
-                        </div>
-                    </div>
-                `;
-            }
-            
             // 未完场展示：如为手动预测，优先显示手动选项
             if (isManual) {
                 const labelMap = { 'win': '主胜', 'draw': '平', 'lose': '客胜', 'h_win': '让胜', 'h_draw': '让平', 'h_lose': '让负' };
@@ -1426,12 +1388,6 @@
         
         // 获取预测样式类
         function getPredictionClass(pred, status) {
-            if (status === 2 && pred.is_reviewed) {
-                const accuracy = pred.accuracy || 0;
-                if (accuracy >= 75) return 'pred-success';
-                if (accuracy >= 50) return 'pred-warning';
-                return 'pred-fail';
-            }
             return 'pred-pending';
         }
         
@@ -1484,39 +1440,6 @@
                             </div>
                         </div>
             `;
-            
-            // 如果已复盘，显示复盘结果
-            if (match.status === 2 && pred.is_reviewed) {
-                html += `
-                    <div style="margin-bottom:20px;">
-                        <div style="font-weight:600;margin-bottom:10px;color:#4a5568;">📈 复盘结果</div>
-                        <div style="background:#f7fafc;padding:15px;border-radius:8px;">
-                            <div style="margin:8px 0;">实际比分: <strong>${pred.actual_home_score}-${pred.actual_away_score}</strong></div>
-                            <div style="margin:8px 0;">总体准确度: <strong style="color:${pred.accuracy >= 75 ? '#48bb78' : pred.accuracy >= 50 ? '#f6ad55' : '#fc8181'};">${pred.accuracy.toFixed(1)}%</strong></div>
-                            <div style="margin:8px 0;font-size:14px;">
-                                ${pred.correct_count}/${pred.total_predictions} 项正确
-                            </div>
-                            <div style="margin:8px 0;font-size:14px;">
-                `;
-                
-                // 只显示有预测的项
-                if (winPred) {
-                    html += `胜负预测 ${pred.win_correct ? '✅' : '❌'} `;
-                }
-                if (asianPred) {
-                    html += `亚盘预测 ${pred.asian_correct ? '✅' : '❌'} `;
-                }
-                if (pred.ou_prediction) {
-                    html += `大小球预测 ${pred.ou_correct ? '✅' : '❌'}`;
-                }
-                
-                html += `
-                            </div>
-                        </div>
-                    </div>
-                `;
-            }
-            
             html += `
                         <button onclick="this.parentElement.parentElement.remove()" style="width:100%;padding:12px;background:#667eea;color:white;border:none;border-radius:8px;cursor:pointer;font-size:15px;">关闭</button>
                     </div>
@@ -1837,39 +1760,7 @@
                     if (btn) { btn.disabled = false; btn.textContent = '更新'; }
                 }
             }
-            async function reviewFinished() {
-                try {
-                    const predsRes = await fetch('/api/predictions?is_reviewed=false&limit=200');
-                    const predsJson = await predsRes.json();
-                    if (!predsJson.success || !predsJson.data || predsJson.data.length === 0) {
-                        alert('暂无未复盘的预测数据');
-                        return;
-                    }
-                    const preds = predsJson.data;
-                    const finishedIds = new Set((allMatches || []).filter(m => m.status === 2).map(m => m.match_id));
-                    const reviewIds = preds.map(p => p.match_id).filter(id => finishedIds.has(id));
-                    if (reviewIds.length === 0) {
-                        alert('当前页面没有【已完场且有预测】的比赛需要复盘');
-                        return;
-                    }
-                    let successCount = 0, failCount = 0;
-                    for (const mid of reviewIds) {
-                        try {
-                            const res = await fetch(`/api/review/${mid}`);
-                            const j = await res.json();
-                            if (j.success) successCount += 1;
-                            else { failCount += 1; console.warn('复盘失败', mid, j.message); }
-                        } catch (e) {
-                            failCount += 1; console.error('复盘异常', mid, e);
-                        }
-                    }
-                    alert(`复盘完成：成功 ${successCount} 场，失败 ${failCount} 场`);
-                    await loadMatches(currentPage);
-                } catch (e) {
-                    console.error('复盘请求失败:', e);
-                    alert('复盘请求失败：' + e.message);
-                }
-            }
+
 
 
 
