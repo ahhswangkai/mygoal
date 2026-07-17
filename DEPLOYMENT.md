@@ -52,5 +52,9 @@ sudo nginx -t
 
 ```bash
 sudo apt install certbot python3-certbot-nginx
-sudo certbot --nginx -d mygoal.top
+sudo certbot --nginx -d mygoal.top --redirect
+sudo systemctl enable --now certbot.timer
+sudo certbot renew --dry-run
 ```
+
+部署脚本会检测 `/etc/letsencrypt/live/mygoal.top/`。证书存在时会自动保留 HTTPS 和 HTTP 跳转配置，不会在下次部署时覆盖掉 HTTPS。

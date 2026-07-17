@@ -120,7 +120,54 @@ WantedBy=multi-user.target
 EOF
 
 log "写入 Nginx 配置"
-$SUDO tee "$NGINX_FILE" >/dev/null <<EOF
+CERT_DIR="/etc/letsencrypt/live/$DOMAIN"
+if $SUDO test -f "$CERT_DIR/fullchain.pem" && $SUDO test -f "$CERT_DIR/privkey.pem"; then
+  log "检测到有效证书配置文件，启用 HTTPS"
+  $SUDO tee "$NGINX_FILE" >/dev/null <<EOF
+server {
+    listen 80;
+    listen [::]:80;
+    server_name $DOMAIN;
+    return 301 https://\$host\$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    server_name $DOMAIN;
+
+    ssl_certificate $CERT_DIR/fullchain.pem;
+    ssl_certificate_key $CERT_DIR/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+
+    root $APP_DIR/frontend/dist;
+    index index.html;
+
+    location /api/ {
+        proxy_pass http://127.0.0.1:$BACKEND_PORT;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_connect_timeout 15s;
+        proxy_read_timeout 180s;
+    }
+
+    location / {
+        try_files \$uri \$uri/ /index.html;
+    }
+
+    location ~* \.(?:js|css|png|jpg|jpeg|gif|svg|ico|webp|woff2?)$ {
+        expires 7d;
+        add_header Cache-Control "public, immutable";
+        try_files \$uri =404;
+    }
+}
+EOF
+else
+  log "未检测到 Let's Encrypt 证书，先启用 HTTP"
+  $SUDO tee "$NGINX_FILE" >/dev/null <<EOF
 server {
     listen 80;
     listen [::]:80;
@@ -151,6 +198,7 @@ server {
     }
 }
 EOF
+fi
 
 $SUDO ln -sfn "$NGINX_FILE" "/etc/nginx/sites-enabled/${APP_NAME}"
 $SUDO nginx -t
@@ -172,6 +220,8 @@ printf '分支：%s\n' "$BRANCH"
 printf '后端：http://127.0.0.1:%s\n' "$BACKEND_PORT"
 if [[ "$DOMAIN" == "_" ]]; then
   printf '网站：http://服务器IP/\n'
+elif $SUDO test -f "$CERT_DIR/fullchain.pem"; then
+  printf '网站：https://%s/\n' "$DOMAIN"
 else
   printf '网站：http://%s/\n' "$DOMAIN"
 fi
