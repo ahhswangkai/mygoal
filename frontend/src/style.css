@@ -1,0 +1,4589 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, "PingFang SC", "Microsoft YaHei", sans-serif;
+  background: #f0f0f0;
+  color: #333;
+  font-size: 14px;
+}
+
+.app-container {
+  min-height: 100vh;
+  padding-bottom: 120px;
+}
+
+/* 顶部红色导航栏 */
+.top-header {
+  background: linear-gradient(90deg, #ff4b47 0%, #ff3333 100%);
+  height: 50px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 15px;
+  color: white;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+
+.back-btn {
+  font-size: 36px;
+  line-height: 1;
+  font-weight: 200;
+  cursor: pointer;
+}
+
+.header-title {
+  font-size: 18px;
+  font-weight: 500;
+}
+
+.menu-btn {
+  font-size: 24px;
+  cursor: pointer;
+}
+
+/* 玩法Tab栏 */
+.play-tabs {
+  background: white;
+  display: flex;
+  padding: 8px 6px;
+  gap: 6px;
+  border-bottom: 1px solid #e5e5e5;
+}
+
+.play-tab {
+  flex: 1;
+  text-align: center;
+  padding: 8px 4px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+  color: #666;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  line-height: 1.3;
+}
+
+.play-tab:first-child {
+  flex: 1.25;
+}
+
+.play-tab.active {
+  border: 2px solid #ff3333;
+  color: #ff3333;
+  padding: 7px 3px;
+}
+
+.play-tab .tab-line {
+  display: block;
+  white-space: nowrap;
+}
+
+/* 比赛列表 */
+.match-list {
+  padding-bottom: 10px;
+}
+
+/* 日期分组标题 */
+.date-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 15px;
+  background: #f5f5f5;
+}
+
+.date-info {
+  font-size: 13px;
+  color: #333;
+}
+
+.date-info .match-count {
+  margin-left: 5px;
+}
+
+.date-info .extra-info {
+  margin-left: 5px;
+  color: #666;
+}
+
+.hide-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: #ff3333;
+  font-size: 13px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.hide-dot {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #ff3333;
+  border: 2px solid #ff3333;
+  box-sizing: border-box;
+}
+
+.hide-btn-active .hide-dot {
+  background: white;
+  border: 2px solid #ff3333;
+}
+
+/* 比赛卡片 */
+.match-card {
+  display: flex;
+  background: white;
+  margin-bottom: 8px;
+}
+
+/* 左侧比赛信息 */
+.match-left {
+  width: 80px;
+  background: #e8e8e8;
+  padding: 10px 6px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.match-left-inline {
+  background: transparent;
+  padding: 4px 8px;
+  border-radius: 4px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin-right: 8px;
+  min-width: 70px;
+}
+
+.match-left-inline .match-num {
+  font-size: 13px;
+  color: #333;
+  font-weight: 500;
+  line-height: 1.2;
+}
+
+.match-left-inline .match-time {
+  font-size: 11px;
+  color: #666;
+  margin-top: 2px;
+  line-height: 1.2;
+}
+
+.match-num {
+  font-size: 15px;
+  font-weight: 500;
+  color: #333;
+}
+
+.match-time {
+  font-size: 12px;
+  color: #666;
+  margin-top: 4px;
+  white-space: nowrap;
+}
+
+/* 右侧赔率区域 */
+.match-right {
+  flex: 1;
+  padding: 8px 12px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.match-teams {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+  background: #f8f8f8;
+  padding: 6px 8px;
+  border-radius: 4px;
+}
+
+.league-name {
+  font-size: 13px;
+  color: #666;
+}
+
+.teams-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 15px;
+}
+
+.home-team {
+  font-size: 15px;
+  font-weight: 500;
+  color: #333;
+}
+
+.vs-text {
+  font-size: 13px;
+  color: #999;
+}
+
+.away-team {
+  font-size: 15px;
+  font-weight: 500;
+  color: #333;
+}
+
+/* 赔率行 */
+.odds-row {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 6px;
+  align-items: stretch;
+}
+
+.odds-row:last-child {
+  margin-bottom: 0;
+}
+
+/* 胜平负行 */
+.odds-row.had-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.odds-row.had-row .mix-btn {
+  flex: 1;
+}
+
+.goal-line {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 50px;
+  flex-shrink: 0;
+  position: relative;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.goal-line .line-text {
+  color: #ff3333;
+}
+
+.single-tag {
+  position: absolute;
+  top: -2px;
+  left: -2px;
+  background: #4a90e2;
+  color: white;
+  font-size: 10px;
+  font-weight: bold;
+  padding: 1px 4px;
+  border-radius: 6px 0 6px 0;
+  line-height: 1.2;
+  letter-spacing: -1px;
+}
+
+.odds-arrow {
+  position: absolute;
+  top: 2px;
+  left: 4px;
+  font-size: 11px;
+  font-weight: bold;
+  line-height: 1;
+}
+
+.odds-arrow.up {
+  color: #ff3333;
+}
+
+.odds-arrow.down {
+  color: #00b050;
+}
+
+.handicap-tag {
+  width: 55px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  color: #ff3333;
+  font-weight: 500;
+}
+
+.handicap-tag.empty {
+  visibility: hidden;
+}
+
+.odds-btn {
+  flex: 1;
+  background: white;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  padding: 6px 4px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  cursor: pointer;
+  position: relative;
+}
+
+.odds-btn.selected {
+  border: 2px solid #ff3333;
+  background: #fff3f3;
+}
+
+.odds-value {
+  font-size: 18px;
+  font-weight: bold;
+  color: #ff3333;
+}
+
+.odds-label {
+  font-size: 14px;
+  color: #ff3333;
+  font-weight: bold;
+  margin-top: 2px;
+}
+
+/* 混合过关 */
+.mixed-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.mixed-tab {
+  padding: 6px 12px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  font-size: 13px;
+  color: #333;
+  cursor: pointer;
+}
+
+.mixed-tab.active {
+  border-color: #ff3333;
+  color: #ff3333;
+}
+
+.mixed-more {
+  padding: 6px 10px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  font-size: 12px;
+  color: #666;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.mixed-more span {
+  transition: transform 0.2s;
+}
+
+.mixed-more span.rotated {
+  transform: rotate(180deg);
+}
+
+.mixed-games-more {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.mixed-odds {
+  display: flex;
+  gap: 8px;
+}
+
+/* 混合过关 - 分区样式 */
+.mixed-section {
+  margin-bottom: 10px;
+}
+
+.mixed-label {
+  font-size: 13px;
+  color: #666;
+  margin-bottom: 5px;
+  font-weight: 500;
+}
+
+.mixed-label .line-text {
+  color: #ff3333;
+  font-weight: normal;
+}
+
+.mixed-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}
+
+.mixed-grid-4 {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+}
+
+.mix-btn {
+  background: white;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  padding: 4px 2px;
+  text-align: center;
+  cursor: pointer;
+  position: relative;
+}
+
+.mix-btn.selected {
+  border: 2px solid #ff3333;
+  background: #fff3f3;
+}
+
+.mix-btn.disabled {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.mix-text {
+  font-size: 13px;
+  font-weight: 500;
+  color: #ff3333;
+}
+
+.mix-odds {
+  font-size: 12px;
+  color: #333;
+  margin-top: 2px;
+}
+
+.mix-arrow {
+  position: absolute;
+  top: 2px;
+  right: 4px;
+  font-size: 10px;
+  font-weight: bold;
+  line-height: 1;
+}
+
+.mix-arrow.up {
+  color: #ff3333;
+}
+
+.mix-arrow.down {
+  color: #00b050;
+}
+
+/* 过关选择弹窗 */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  z-index: 300;
+}
+
+.pass-modal {
+  width: 100%;
+  background: white;
+  border-radius: 12px 12px 0 0;
+  padding: 20px;
+}
+
+.pass-modal-title {
+  text-align: center;
+  font-size: 16px;
+  font-weight: bold;
+  margin-bottom: 20px;
+}
+
+.pass-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+}
+
+.pass-item {
+  padding: 12px 8px;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  text-align: center;
+  font-size: 14px;
+  color: #333;
+  cursor: pointer;
+}
+
+.pass-item.active {
+  border-color: #ff3333;
+  color: #ff3333;
+  background: #fff3f3;
+}
+
+.pass-item.disabled {
+  opacity: 0.4;
+  pointer-events: none;
+  color: #999;
+}
+
+.pass-modal-cancel {
+  margin-top: 20px;
+  text-align: center;
+  padding: 12px;
+  border-top: 1px solid #eee;
+  color: #666;
+  font-size: 15px;
+  cursor: pointer;
+}
+
+/* 比分 */
+.score-section-title {
+  font-size: 13px;
+  color: #666;
+  margin: 8px 0 5px;
+  font-weight: 500;
+}
+
+.score-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 6px;
+}
+
+.score-btn {
+  background: white;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  padding: 6px 2px;
+  text-align: center;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.score-btn.selected {
+  border: 2px solid #ff3333;
+  background: #fff3f3;
+}
+
+.score-other .score-text {
+  font-style: italic;
+}
+
+.score-text {
+  font-size: 15px;
+  font-weight: 500;
+  color: #ff3333;
+}
+
+.score-odds {
+  font-size: 12px;
+  color: #333;
+  margin-top: 2px;
+}
+
+/* 总进球 */
+.goals-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.goal-btn {
+  background: white;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  padding: 12px 8px;
+  text-align: center;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.goal-btn.selected {
+  border: 2px solid #ff3333;
+  background: #fff3f3;
+}
+
+.goal-text {
+  font-size: 14px;
+  font-weight: 500;
+  color: #ff3333;
+}
+
+.goal-odds {
+  font-size: 12px;
+  color: #333;
+  font-weight: normal;
+  margin-top: 4px;
+}
+
+/* 半全场 */
+.hafu-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.hafu-btn {
+  background: white;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  padding: 8px 6px;
+  text-align: center;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.hafu-btn.selected {
+  border: 2px solid #ff3333;
+  background: #fff3f3;
+}
+
+.hafu-btn.disabled {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.hafu-text {
+  font-size: 15px;
+  font-weight: 500;
+  color: #ff3333;
+}
+
+.hafu-odds {
+  font-size: 12px;
+  color: #333;
+  margin-top: 2px;
+}
+
+/* 折叠箭头 */
+.match-teams {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+  position: relative;
+  cursor: pointer;
+  background: #f8f8f8;
+  padding: 6px 8px;
+  border-radius: 4px;
+}
+
+.collapse-arrow {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 18px;
+  color: #999;
+  transition: transform 0.2s;
+}
+
+.collapse-arrow.collapsed {
+  transform: translateY(-50%) rotate(180deg);
+}
+
+/* 更新球队布局 */
+.teams-row {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 15px;
+}
+
+.league-name {
+  color: #3399ff;
+  font-size: 14px;
+  font-weight: 500;
+  margin-right: 20px;
+}
+
+/* 更新比赛卡片 */
+.match-card {
+  display: flex;
+  background: white;
+  margin-bottom: 0;
+  border-bottom: 1px solid #eee;
+}
+
+/* 更新比分和总进球布局 */
+.score-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 5px;
+}
+
+.score-btn {
+  background: white;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  padding: 6px 2px;
+  text-align: center;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 50px;
+}
+
+.score-btn.selected {
+  border: 2px solid #ff3333;
+  background: #fff3f3;
+}
+
+.score-text {
+  font-size: 12px;
+  font-weight: 500;
+  color: #ff3333;
+}
+
+.score-odds {
+  font-size: 12px;
+  color: #333;
+  margin-top: 2px;
+}
+
+/* 总进球 */
+.goals-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.goal-btn {
+  background: white;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  padding: 10px 6px;
+  text-align: center;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.goal-btn.selected {
+  border: 2px solid #ff3333;
+  background: #fff3f3;
+}
+
+.goal-btn.disabled {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.goal-text {
+  font-size: 14px;
+  font-weight: 500;
+  color: #ff3333;
+}
+
+.goal-odds {
+  font-size: 12px;
+  color: #333;
+  margin-top: 4px;
+}
+
+/* 底部操作栏 */
+.bottom-bar {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: white;
+  box-shadow: 0 -2px 8px rgba(0,0,0,0.1);
+  z-index: 200;
+}
+
+.bar-row {
+  display: flex;
+  align-items: center;
+  padding: 10px 15px;
+  gap: 10px;
+}
+
+.badge-column {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.badge-with-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.selected-badge {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: #ff3333;
+  color: white;
+  font-size: 16px;
+  font-weight: bold;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.selected-label {
+  font-size: 13px;
+  color: #333;
+  font-weight: 500;
+}
+
+.bar-middle {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+}
+
+.pass-select {
+  background: white;
+  border: 1.5px solid #ff3333;
+  border-radius: 4px;
+  padding: 8px 12px;
+  font-size: 14px;
+  color: #ff3333;
+  text-align: center;
+  margin-bottom: 6px;
+  cursor: pointer;
+  font-weight: 500;
+}
+
+.bet-info, .bonus-info {
+  font-size: 13px;
+  color: #666;
+}
+
+.label {
+  color: #666;
+}
+
+.highlight {
+  color: #ff3333;
+  font-weight: bold;
+  font-size: 17px;
+}
+
+.multiplier-btn {
+  background: white;
+  color: #ff3333;
+  border: 1px solid #ff3333;
+  border-radius: 4px;
+  padding: 6px 16px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.bar-right {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.clear-btn {
+  background: #f0f0f0;
+  color: #666;
+  border: none;
+  border-radius: 4px;
+  padding: 6px 12px;
+  font-size: 13px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  justify-content: center;
+}
+
+.clear-icon {
+  font-size: 13px;
+}
+
+.view-btn {
+  background: linear-gradient(90deg, #ff4b47 0%, #ff3333 100%);
+  color: white;
+  border: none;
+  border-radius: 4px;
+  padding: 10px 20px;
+  font-size: 15px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.bottom-padding {
+  height: 130px;
+}
+
+/* Loading */
+[v-loading] {
+  position: relative;
+}
+
+[v-loading]::after {
+  content: '加载中...';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  color: #666;
+  font-size: 15px;
+}
+
+/* 倍数选择弹窗 - 数字键盘 */
+.multiplier-modal {
+  width: 100%;
+  background: white;
+  border-radius: 12px 12px 0 0;
+  overflow: hidden;
+}
+
+.multiplier-header {
+  background: linear-gradient(90deg, #ff4b47 0%, #ff3333 100%);
+  padding: 30px 20px;
+  text-align: center;
+  color: white;
+}
+
+.multiplier-display {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.multiplier-value {
+  font-size: 56px;
+  font-weight: bold;
+  line-height: 1;
+}
+
+.multiplier-unit {
+  font-size: 24px;
+  font-weight: 500;
+}
+
+.multiplier-keypad {
+  background: #f5f5f5;
+  padding: 1px;
+}
+
+.keypad-row {
+  display: flex;
+  gap: 1px;
+  margin-bottom: 1px;
+}
+
+.key-btn {
+  flex: 1;
+  background: white;
+  border: none;
+  padding: 18px 0;
+  font-size: 24px;
+  font-weight: 500;
+  color: #333;
+  cursor: pointer;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  transition: background 0.1s;
+}
+
+.key-btn:active {
+  background: #e0e0e0;
+}
+
+.key-action {
+  background: #fafafa;
+  color: #ff3333;
+  font-size: 18px;
+}
+
+.key-action:active {
+  background: #e0e0e0;
+}
+
+.key-confirm {
+  background: linear-gradient(90deg, #ff4b47 0%, #ff3333 100%);
+  color: white;
+  font-size: 18px;
+  font-weight: 500;
+}
+
+.key-confirm:active {
+  background: linear-gradient(90deg, #e63e3a 0%, #e62929 100%);
+}
+
+/* 查看方案弹窗 */
+.view-modal {
+  width: 100%;
+  max-width: 500px;
+  max-height: 85vh;
+  background: white;
+  border-radius: 12px 12px 0 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  margin: auto 0 0 0;
+}
+
+.view-modal-header {
+  background: linear-gradient(90deg, #ff4b47 0%, #ff3333 100%);
+  color: white;
+  padding: 15px 20px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.view-modal-title {
+  font-size: 17px;
+  font-weight: 500;
+}
+
+.view-modal-close {
+  font-size: 28px;
+  line-height: 1;
+  cursor: pointer;
+  font-weight: 300;
+}
+
+.view-modal-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 15px;
+  background: #f5f5f5;
+}
+
+.view-empty {
+  text-align: center;
+  padding: 60px 20px;
+  color: #999;
+}
+
+.view-empty .empty-icon {
+  font-size: 48px;
+  margin-bottom: 15px;
+}
+
+.view-empty .empty-text {
+  font-size: 16px;
+  color: #666;
+  margin-bottom: 8px;
+}
+
+.view-empty .empty-hint {
+  font-size: 13px;
+  color: #999;
+}
+
+.view-summary {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  background: white;
+  border-radius: 8px;
+  padding: 15px 10px;
+  margin-bottom: 12px;
+}
+
+.summary-item {
+  text-align: center;
+}
+
+.summary-label {
+  font-size: 12px;
+  color: #999;
+  margin-bottom: 4px;
+}
+
+.summary-value {
+  font-size: 14px;
+  font-weight: bold;
+  color: #ff3333;
+}
+
+.view-list {
+  background: white;
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 12px;
+}
+
+.view-list-title {
+  font-size: 14px;
+  font-weight: 500;
+  color: #333;
+  margin-bottom: 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #eee;
+}
+
+.view-match-group {
+  margin-bottom: 12px;
+  border-bottom: 1px solid #f5f5f5;
+  padding-bottom: 8px;
+}
+
+.view-match-group:last-child {
+  border-bottom: none;
+  margin-bottom: 0;
+  padding-bottom: 0;
+}
+
+.view-match-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+  font-size: 13px;
+}
+
+.view-match-num {
+  background: #ff3333;
+  color: white;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: bold;
+  flex-shrink: 0;
+}
+
+.view-match-name {
+  color: #333;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+}
+
+.view-match-picks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding-left: 28px;
+}
+
+.view-pick-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: #fff3f3;
+  border: 1px solid #ffcccc;
+  border-radius: 4px;
+  padding: 3px 8px;
+  font-size: 12px;
+}
+
+.pick-pool {
+  color: #ff3333;
+  font-weight: 500;
+}
+
+.pick-opt {
+  color: #333;
+}
+
+.pick-odds {
+  color: #999;
+  font-size: 11px;
+}
+
+.view-stats {
+  background: white;
+  border-radius: 8px;
+  padding: 12px 15px;
+}
+
+.stat-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 0;
+  border-bottom: 1px solid #f5f5f5;
+}
+
+.stat-row:last-child {
+  border-bottom: none;
+}
+
+.stat-row.bonus-row {
+  margin-top: 5px;
+  padding-top: 12px;
+  border-top: 2px solid #ff3333;
+  border-bottom: none;
+}
+
+.stat-label {
+  font-size: 14px;
+  color: #666;
+}
+
+.stat-value {
+  font-size: 14px;
+  color: #333;
+  font-weight: 500;
+}
+
+.stat-value.highlight {
+  color: #ff3333;
+  font-size: 17px;
+  font-weight: bold;
+}
+
+.view-modal-footer {
+  display: flex;
+  gap: 10px;
+  padding: 12px 15px;
+  background: white;
+  border-top: 1px solid #eee;
+  flex-shrink: 0;
+}
+
+.footer-btn {
+  flex: 1;
+  border: none;
+  border-radius: 6px;
+  padding: 12px;
+  font-size: 15px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.cancel-btn {
+  background: #f0f0f0;
+  color: #666;
+}
+
+.confirm-btn {
+  background: linear-gradient(90deg, #ff4b47 0%, #ff3333 100%);
+  color: white;
+}
+
+/* ============== 通用页面样式 ============== */
+.app-container {
+  min-height: 100vh;
+  background: #f0f0f0;
+}
+
+.top-header {
+  background: linear-gradient(90deg, #ff4b47 0%, #ff3333 100%);
+  height: 50px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 15px;
+  color: white;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+
+.back-btn {
+  font-size: 30px;
+  line-height: 1;
+  font-weight: 200;
+  cursor: pointer;
+  color: white;
+  text-decoration: none;
+}
+
+.header-title {
+  font-size: 18px;
+  font-weight: 500;
+  flex: 1;
+  text-align: center;
+}
+
+.menu-btn {
+  font-size: 20px;
+  cursor: pointer;
+}
+
+.loading, .empty {
+  text-align: center;
+  padding: 40px 20px;
+  color: #999;
+  font-size: 14px;
+}
+
+/* ============== 控件栏 ============== */
+.controls-bar {
+  background: white;
+  padding: 8px 12px;
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  border-bottom: 1px solid #eee;
+  align-items: center;
+  position: sticky;
+  top: 50px;
+  z-index: 99;
+}
+
+.ctrl-select {
+  padding: 6px 10px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  font-size: 13px;
+  background: white;
+  color: #333;
+}
+
+.ctrl-btn {
+  padding: 6px 12px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  background: white;
+  color: #333;
+  font-size: 13px;
+  cursor: pointer;
+  text-decoration: none;
+  display: inline-block;
+}
+
+.ctrl-btn:hover {
+  background: #f5f5f5;
+}
+
+a.ctrl-btn {
+  color: #ff3333;
+  border-color: #ff3333;
+}
+
+/* ============== 首页 - 比赛列表 ============== */
+.match-list {
+  padding: 10px 12px;
+  padding-bottom: 80px;
+}
+
+.match-card {
+  background: white;
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 10px;
+  cursor: pointer;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.match-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.match-league {
+  display: flex;
+  flex-direction: column;
+}
+
+.league-name {
+  font-size: 12px;
+  color: #3399ff;
+  font-weight: 500;
+}
+
+.match-time {
+  font-size: 11px;
+  color: #999;
+  margin-top: 2px;
+}
+
+.match-status {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  color: white;
+}
+
+.status-pending { background: #999; }
+.status-live { background: #ff3333; }
+.status-finished { background: #4caf50; }
+
+.match-teams-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 0;
+  border-bottom: 1px solid #f5f5f5;
+  width: 100%;
+  flex: 1;
+  min-width: 0;
+}
+
+.team {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.team-name {
+  font-size: 15px;
+  color: #333;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.team.away { justify-content: flex-end; text-align: right; }
+
+.team-rank {
+  font-size: 11px;
+  color: #ff3333;
+}
+
+.team-handicap {
+  font-size: 11px;
+  color: #ff3333;
+  flex-shrink: 0;
+}
+
+.team-name {
+  font-size: 15px;
+  color: #333;
+  font-weight: 500;
+}
+
+.score {
+  padding: 0 12px;
+}
+
+.score-num {
+  font-size: 18px;
+  font-weight: bold;
+  color: #ff3333;
+}
+
+.vs-text {
+  font-size: 14px;
+  color: #999;
+}
+
+.odds-row {
+  display: flex;
+  gap: 4px;
+  margin-top: 8px;
+  flex-wrap: nowrap;
+  width: 100%;
+}
+
+.odds-cell {
+  flex: 1;
+  min-width: 80px;
+  background: #f8f8f8;
+  border-radius: 4px;
+  padding: 6px;
+  text-align: center;
+}
+
+.odds-label {
+  font-size: 11px;
+  color: #999;
+  margin-bottom: 3px;
+}
+
+.odds-val {
+  display: flex;
+  justify-content: space-around;
+  font-size: 13px;
+  color: #ff3333;
+  font-weight: 500;
+  white-space: nowrap;
+  gap: 4px;
+}
+
+.odds-cell {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: visible;
+  padding: 0 2px;
+}
+
+.odds-block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+  padding: 8px 10px;
+  background: #f8f8f8;
+  border-radius: 6px;
+}
+
+.odds-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.line-label {
+  font-size: 12px;
+  color: #999;
+  width: 32px;
+  flex-shrink: 0;
+}
+
+.line-cells {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+  flex-wrap: wrap;
+}
+
+.line-handicap {
+  color: #ff3333;
+  font-weight: 500;
+  font-size: 14px;
+}
+
+.line-cell {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 1px;
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+.line-cell .arrow {
+  font-size: 9px;
+  font-weight: bold;
+}
+
+.line-cell .arrow.up { color: #ff3333; }
+.line-cell .arrow.down { color: #00b050; }
+
+.line-cell .num {
+  color: #ff3333;
+  font-weight: 500;
+  font-size: 14px;
+}
+
+.line-cell .init {
+  color: #999;
+  font-size: 11px;
+}
+
+/* 首页赔率：盘口分块展示，避免即时盘和初盘挤在同一行 */
+.home-page .home-odds-markets {
+  display: grid;
+  gap: 10px;
+  margin-top: 10px;
+  padding: 10px;
+  background: #f5f6f8;
+  border-radius: 8px;
+}
+
+.home-page .home-market {
+  overflow: hidden;
+  background: #fff;
+  border: 1px solid #eceef2;
+  border-radius: 7px;
+}
+
+.home-page .home-market-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 32px;
+  padding: 0 10px;
+  color: #555;
+  font-size: 12px;
+  background: #fafafa;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.home-page .home-market-hint {
+  color: #aaa;
+  font-size: 10px;
+}
+
+.home-page .home-market-handicap {
+  margin-left: 3px;
+  color: #e64242;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.home-page .home-market-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  padding: 8px 4px 10px;
+}
+
+.home-page .home-market-item {
+  position: relative;
+  display: grid;
+  grid-template-rows: 18px 23px 17px;
+  align-items: center;
+  justify-items: center;
+  min-width: 0;
+  padding: 0 8px;
+  text-align: center;
+}
+
+.home-page .home-market-item + .home-market-item {
+  border-left: 1px solid #f0f0f0;
+}
+
+.home-page .home-market-option {
+  color: #888;
+  font-size: 11px;
+}
+
+.home-page .home-market-current {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  max-width: 100%;
+  color: #e64242;
+  font-size: 15px;
+  font-weight: 500;
+  line-height: 1.25;
+  white-space: nowrap;
+}
+
+.home-page .home-market-item--line .home-market-current {
+  font-size: 12px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.home-page .home-market-initial {
+  max-width: 100%;
+  overflow: hidden;
+  color: #999;
+  font-size: 10px;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.home-page .home-market-arrow {
+  min-width: 10px;
+  margin-right: 2px;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 600;
+}
+
+.home-page .home-market-arrow.up { color: #e64242; }
+.home-page .home-market-arrow.down { color: #13a05c; }
+
+/* 计算器 - 胜平负 tab，按体彩票面重排 */
+.calculator-page .date-header {
+  min-height: 42px;
+  padding: 8px 12px;
+  background: #fff;
+  border-top: 1px solid #ececec;
+  border-bottom: 1px solid #e5e5e5;
+}
+
+.calculator-page .date-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.calculator-page .date-title {
+  display: block;
+  overflow: hidden;
+  color: #444;
+  font-size: 11px;
+  line-height: 20px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.calculator-page .had-match-card {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  align-items: stretch;
+  margin: 0;
+  padding: 0;
+  overflow: visible;
+  background: #fff;
+  border: 0;
+  border-bottom: 1px solid #e5e5e5;
+  border-radius: 0;
+  box-shadow: none;
+  cursor: default;
+}
+
+.calculator-page .had-match-card > .match-left {
+  grid-column: 1;
+  grid-row: 2;
+  width: auto;
+  min-height: 108px;
+  margin: 0 0 10px 8px;
+  padding: 8px 4px;
+  background: #f7f7f7;
+  border-radius: 6px;
+}
+
+.calculator-page .had-match-card > .match-left .match-num {
+  color: #555;
+  font-size: 15px;
+  font-weight: 400;
+}
+
+.calculator-page .had-match-card > .match-left .match-time {
+  margin-top: 8px;
+  color: #aaa;
+  font-size: 11px;
+}
+
+.calculator-page .had-match-card > .match-right {
+  display: contents;
+}
+
+.calculator-page .had-match-card .match-teams {
+  grid-column: 1 / -1;
+  grid-row: 1;
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr);
+  align-items: center;
+  min-height: 40px;
+  margin: 0;
+  padding: 5px 8px;
+  background: #fff;
+  border-bottom: 1px solid #f1f1f1;
+  border-radius: 0;
+  cursor: default;
+}
+
+.calculator-page .had-match-card .league-name {
+  grid-column: 1;
+  margin: 0;
+  overflow: hidden;
+  color: #777;
+  font-size: 13px;
+  font-weight: 400;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.calculator-page .had-match-card .teams-row {
+  grid-column: 2;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 32px minmax(0, 1fr);
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  text-align: center;
+}
+
+.calculator-page .had-match-card .home-team,
+.calculator-page .had-match-card .away-team {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  color: #333;
+  font-size: 15px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.calculator-page .had-match-card .vs-text {
+  color: #555;
+  font-size: 14px;
+}
+
+.calculator-page .had-match-card .match-odds-area {
+  grid-column: 2;
+  grid-row: 2;
+  min-width: 0;
+  padding: 0 8px 10px 6px;
+}
+
+.calculator-page .had-match-card .odds-row.had-row {
+  display: grid;
+  grid-template-columns: 50px repeat(3, minmax(0, 1fr));
+  align-items: stretch;
+  gap: 4px;
+  min-height: 52px;
+  margin: 0 0 4px;
+}
+
+.calculator-page .had-match-card .odds-row.had-row:last-child {
+  margin-bottom: 0;
+}
+
+.calculator-page .had-match-card .goal-line {
+  width: auto;
+  min-width: 0;
+  color: #f04b55;
+  font-size: 14px;
+  font-weight: 400;
+}
+
+.calculator-page .had-match-card .goal-line .line-text {
+  color: #f04b55;
+}
+
+.calculator-page .had-match-card .mix-btn {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  min-height: 52px;
+  padding: 4px 2px;
+  background: #fff;
+  border: 1px solid #d8d8d8;
+  border-radius: 5px;
+}
+
+.calculator-page .had-match-card .mix-btn.selected {
+  padding: 3px 1px;
+  background: #fff5f5;
+  border: 2px solid #ff3b45;
+}
+
+.calculator-page .had-match-card .mix-text {
+  color: #ef4450;
+  font-size: 15px;
+  font-weight: 500;
+  line-height: 19px;
+}
+
+.calculator-page .had-match-card .mix-odds {
+  margin-top: 2px;
+  color: #555;
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 17px;
+}
+
+.calculator-page .had-match-card .mix-arrow {
+  top: 5px;
+  right: auto;
+  left: 5px;
+  font-size: 17px;
+  line-height: 1;
+}
+
+.calculator-page .had-match-card .single-tag {
+  top: 0;
+  left: 0;
+  width: 30px;
+  height: 30px;
+  padding: 3px 0 0 4px;
+  overflow: hidden;
+  background: #23a7dc;
+  border-radius: 0;
+  clip-path: polygon(0 0, 100% 0, 0 100%);
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1;
+  text-align: left;
+}
+
+@media (max-width: 420px) {
+  .calculator-page .had-match-card {
+    grid-template-columns: 82px minmax(0, 1fr);
+  }
+
+  .calculator-page .had-match-card .match-teams {
+    grid-template-columns: 82px minmax(0, 1fr);
+  }
+
+  .calculator-page .had-match-card .match-odds-area {
+    padding-right: 6px;
+    padding-left: 4px;
+  }
+
+  .calculator-page .had-match-card .odds-row.had-row {
+    grid-template-columns: 44px repeat(3, minmax(0, 1fr));
+    gap: 3px;
+  }
+
+  .calculator-page .had-match-card .home-team,
+  .calculator-page .had-match-card .away-team {
+    font-size: 14px;
+  }
+}
+
+/* 计算器 - 比分 tab，按体彩彩票网格展示 */
+.calculator-page .score-match-card {
+  display: block;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  background: #fff;
+  border: 0;
+  border-bottom: 1px solid #dedede;
+  border-radius: 0;
+  box-shadow: none;
+  cursor: default;
+}
+
+.calculator-page .score-match-card .match-right {
+  display: block;
+  padding: 0;
+}
+
+.calculator-page .score-match-card .match-teams {
+  display: grid;
+  grid-template-columns: 104px 60px minmax(0, 1fr) 18px;
+  align-items: center;
+  min-height: 58px;
+  margin: 0;
+  padding: 6px 10px;
+  background: #f7f7f7;
+  border-radius: 0;
+}
+
+.calculator-page .score-match-card .match-left-inline {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+}
+
+.calculator-page .score-match-card .match-left-inline .match-num {
+  color: #555;
+  font-size: 14px;
+  font-weight: 400;
+}
+
+.calculator-page .score-match-card .match-left-inline .match-time {
+  margin-top: 4px;
+  color: #aaa;
+  font-size: 11px;
+}
+
+.calculator-page .score-match-card .league-name {
+  margin: 0;
+  overflow: hidden;
+  color: #2297c9;
+  font-size: 13px;
+  font-weight: 500;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.calculator-page .score-match-card .teams-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 28px minmax(0, 1fr);
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  text-align: center;
+}
+
+.calculator-page .score-match-card .home-team,
+.calculator-page .score-match-card .away-team {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  color: #333;
+  font-size: 14px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.calculator-page .score-match-card .collapse-arrow {
+  position: static;
+  color: #ccc;
+  font-size: 15px;
+  text-align: center;
+  transform: rotate(180deg);
+}
+
+.calculator-page .score-match-card .collapse-arrow.collapsed {
+  transform: none;
+}
+
+.calculator-page .score-match-card .match-odds-area {
+  padding: 12px 12px 16px;
+  background: #fff;
+}
+
+.calculator-page .score-match-card .score-board {
+  display: grid;
+  gap: 8px;
+}
+
+.calculator-page .score-match-card .score-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.calculator-page .score-match-card .score-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  min-height: 56px;
+  padding: 4px 2px;
+  background: #fff;
+  border: 1px solid #d9d9d9;
+  border-radius: 5px;
+}
+
+.calculator-page .score-match-card .score-btn.selected {
+  padding: 3px 1px;
+  background: #fff5f5;
+  border: 2px solid #ff3b45;
+}
+
+.calculator-page .score-match-card .score-text {
+  color: #f0444f;
+  font-size: 16px;
+  font-style: italic;
+  font-weight: 500;
+  line-height: 20px;
+  white-space: nowrap;
+}
+
+.calculator-page .score-match-card .score-odds {
+  margin-top: 2px;
+  color: #b8b8b8;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 16px;
+  white-space: nowrap;
+}
+
+@media (max-width: 420px) {
+  .calculator-page .score-match-card .match-teams {
+    grid-template-columns: 92px 50px minmax(0, 1fr) 16px;
+    padding-right: 6px;
+    padding-left: 6px;
+  }
+
+  .calculator-page .score-match-card .match-odds-area {
+    padding-right: 8px;
+    padding-left: 8px;
+  }
+
+  .calculator-page .score-match-card .score-grid {
+    gap: 4px;
+  }
+
+  .calculator-page .score-match-card .score-btn {
+    min-height: 54px;
+  }
+
+  .calculator-page .score-match-card .score-text {
+    font-size: 15px;
+  }
+}
+
+/* 计算器 - 总进球 tab，按体彩 4 × 2 网格展示 */
+.calculator-page .goals-match-card {
+  display: block;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  background: #fff;
+  border: 0;
+  border-bottom: 1px solid #dedede;
+  border-radius: 0;
+  box-shadow: none;
+  cursor: default;
+}
+
+.calculator-page .goals-match-card .match-right {
+  display: block;
+  padding: 0;
+}
+
+.calculator-page .goals-match-card .match-teams {
+  display: grid;
+  grid-template-columns: 104px 60px minmax(0, 1fr) 18px;
+  align-items: center;
+  min-height: 58px;
+  margin: 0;
+  padding: 6px 10px;
+  background: #f7f7f7;
+  border-radius: 0;
+}
+
+.calculator-page .goals-match-card .match-left-inline {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+}
+
+.calculator-page .goals-match-card .match-left-inline .match-num {
+  color: #555;
+  font-size: 14px;
+  font-weight: 400;
+}
+
+.calculator-page .goals-match-card .match-left-inline .match-time {
+  margin-top: 4px;
+  color: #aaa;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.calculator-page .goals-match-card .league-name {
+  margin: 0;
+  overflow: hidden;
+  color: #2297c9;
+  font-size: 13px;
+  font-weight: 500;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.calculator-page .goals-match-card .teams-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 28px minmax(0, 1fr);
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  text-align: center;
+}
+
+.calculator-page .goals-match-card .home-team,
+.calculator-page .goals-match-card .away-team {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  color: #333;
+  font-size: 14px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.calculator-page .goals-match-card .collapse-arrow {
+  position: static;
+  color: #ccc;
+  font-size: 15px;
+  text-align: center;
+  transform: rotate(180deg);
+}
+
+.calculator-page .goals-match-card .collapse-arrow.collapsed {
+  transform: none;
+}
+
+.calculator-page .goals-match-card .match-odds-area {
+  padding: 12px 12px 16px;
+  background: #fff;
+}
+
+.calculator-page .goals-match-card .goals-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 4px;
+  margin: 0;
+}
+
+.calculator-page .goals-match-card .goal-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  min-height: 54px;
+  padding: 4px 2px;
+  background: #fff;
+  border: 1px solid #d9d9d9;
+  border-radius: 5px;
+}
+
+.calculator-page .goals-match-card .goal-btn.selected {
+  padding: 3px 1px;
+  background: #fff5f5;
+  border: 2px solid #ff3b45;
+}
+
+.calculator-page .goals-match-card .goal-text {
+  color: #f0444f;
+  font-size: 16px;
+  font-style: italic;
+  font-weight: 600;
+  line-height: 20px;
+  white-space: nowrap;
+}
+
+.calculator-page .goals-match-card .goal-odds {
+  margin-top: 2px;
+  color: #b8b8b8;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 16px;
+  white-space: nowrap;
+}
+
+@media (max-width: 420px) {
+  .calculator-page .goals-match-card .match-teams {
+    grid-template-columns: 92px 50px minmax(0, 1fr) 16px;
+    padding-right: 6px;
+    padding-left: 6px;
+  }
+
+  .calculator-page .goals-match-card .match-odds-area {
+    padding-right: 8px;
+    padding-left: 8px;
+  }
+
+  .calculator-page .goals-match-card .goal-btn {
+    min-height: 52px;
+  }
+
+  .calculator-page .goals-match-card .goal-text {
+    font-size: 15px;
+  }
+}
+
+/* 计算器 - 半全场 tab，按体彩 3 × 3 选项矩阵展示 */
+.calculator-page .hafu-match-card {
+  display: block;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  background: #fff;
+  border: 0;
+  border-bottom: 1px solid #dedede;
+  border-radius: 0;
+  box-shadow: none;
+  cursor: default;
+}
+
+.calculator-page .hafu-match-card .match-right {
+  display: block;
+  padding: 0;
+}
+
+.calculator-page .hafu-match-card .match-teams {
+  display: grid;
+  grid-template-columns: 104px 60px minmax(0, 1fr) 18px;
+  align-items: center;
+  min-height: 58px;
+  margin: 0;
+  padding: 6px 10px;
+  background: #f7f7f7;
+  border-radius: 0;
+}
+
+.calculator-page .hafu-match-card .match-left-inline {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+}
+
+.calculator-page .hafu-match-card .match-left-inline .match-num {
+  color: #555;
+  font-size: 14px;
+  font-weight: 400;
+}
+
+.calculator-page .hafu-match-card .match-left-inline .match-time {
+  margin-top: 4px;
+  color: #aaa;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.calculator-page .hafu-match-card .league-name {
+  margin: 0;
+  overflow: hidden;
+  color: #2297c9;
+  font-size: 13px;
+  font-weight: 500;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.calculator-page .hafu-match-card .teams-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 28px minmax(0, 1fr);
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  text-align: center;
+}
+
+.calculator-page .hafu-match-card .home-team,
+.calculator-page .hafu-match-card .away-team {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  color: #333;
+  font-size: 14px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.calculator-page .hafu-match-card .collapse-arrow {
+  position: static;
+  color: #ccc;
+  font-size: 15px;
+  text-align: center;
+  transform: rotate(180deg);
+}
+
+.calculator-page .hafu-match-card .collapse-arrow.collapsed {
+  transform: none;
+}
+
+.calculator-page .hafu-match-card .match-odds-area {
+  padding: 12px 18px 16px;
+  background: #fff;
+}
+
+.calculator-page .hafu-match-card .hafu-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  margin: 0;
+}
+
+.calculator-page .hafu-match-card .hafu-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  min-height: 56px;
+  padding: 4px 2px;
+  background: #fff;
+  border: 1px solid #d9d9d9;
+  border-radius: 5px;
+}
+
+.calculator-page .hafu-match-card .hafu-btn.selected {
+  padding: 3px 1px;
+  background: #fff5f5;
+  border: 2px solid #ff3b45;
+}
+
+.calculator-page .hafu-match-card .hafu-text {
+  color: #f0444f;
+  font-size: 16px;
+  font-weight: 500;
+  line-height: 20px;
+  white-space: nowrap;
+}
+
+.calculator-page .hafu-match-card .hafu-odds {
+  margin-top: 2px;
+  color: #b8b8b8;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 16px;
+  white-space: nowrap;
+}
+
+@media (max-width: 420px) {
+  .calculator-page .hafu-match-card .match-teams {
+    grid-template-columns: 92px 50px minmax(0, 1fr) 16px;
+    padding-right: 6px;
+    padding-left: 6px;
+  }
+
+  .calculator-page .hafu-match-card .match-odds-area {
+    padding-right: 8px;
+    padding-left: 8px;
+  }
+
+  .calculator-page .hafu-match-card .hafu-grid {
+    gap: 4px;
+  }
+
+  .calculator-page .hafu-match-card .hafu-btn {
+    min-height: 54px;
+  }
+
+  .calculator-page .hafu-match-card .hafu-text {
+    font-size: 15px;
+  }
+}
+
+/* 计算器 - 混合过关：基础赔率常显，更多玩法按场展开 */
+.calculator-page .mixed-match-card {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr);
+  grid-template-rows: auto auto auto auto;
+  align-items: stretch;
+  margin: 0;
+  padding: 0;
+  overflow: visible;
+  background: #fff;
+  border: 0;
+  border-bottom: 1px solid #dedede;
+  border-radius: 0;
+  box-shadow: none;
+  cursor: default;
+}
+
+.calculator-page .mixed-match-card > .match-left {
+  grid-column: 1;
+  grid-row: 2;
+  width: auto;
+  min-height: 108px;
+  margin: 0 0 10px 8px;
+  padding: 8px 4px;
+  background: #f7f7f7;
+  border-radius: 6px;
+}
+
+.calculator-page .mixed-match-card > .match-left .match-num {
+  color: #555;
+  font-size: 15px;
+  font-weight: 400;
+}
+
+.calculator-page .mixed-match-card > .match-left .match-time {
+  margin-top: 8px;
+  color: #aaa;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.calculator-page .mixed-match-card > .match-right,
+.calculator-page .mixed-match-card .match-odds-area {
+  display: contents;
+}
+
+.calculator-page .mixed-match-card .match-teams {
+  grid-column: 1 / -1;
+  grid-row: 1;
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr);
+  align-items: center;
+  min-height: 40px;
+  margin: 0;
+  padding: 5px 8px;
+  background: #fff;
+  border-bottom: 1px solid #f1f1f1;
+  border-radius: 0;
+  cursor: default;
+}
+
+.calculator-page .mixed-match-card .league-name {
+  grid-column: 1;
+  margin: 0;
+  overflow: hidden;
+  color: #777;
+  font-size: 13px;
+  font-weight: 400;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.calculator-page .mixed-match-card .teams-row {
+  grid-column: 2;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 32px minmax(0, 1fr);
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  text-align: center;
+}
+
+.calculator-page .mixed-match-card .home-team,
+.calculator-page .mixed-match-card .away-team {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  color: #333;
+  font-size: 15px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.calculator-page .mixed-match-card .vs-text {
+  color: #555;
+  font-size: 14px;
+}
+
+.calculator-page .mixed-match-card .mixed-base-odds {
+  grid-column: 2;
+  grid-row: 2;
+  min-width: 0;
+  padding: 0 8px 10px 6px;
+}
+
+.calculator-page .mixed-match-card .mixed-base-row {
+  display: grid;
+  grid-template-columns: 50px repeat(3, minmax(0, 1fr));
+  align-items: stretch;
+  gap: 4px;
+  min-height: 52px;
+  margin: 0 0 4px;
+}
+
+.calculator-page .mixed-match-card .mixed-base-row:last-child {
+  margin-bottom: 0;
+}
+
+.calculator-page .mixed-match-card .goal-line {
+  width: auto;
+  min-width: 0;
+  color: #f04b55;
+  font-size: 14px;
+  font-weight: 400;
+}
+
+.calculator-page .mixed-match-card .goal-line .line-text {
+  color: #f04b55;
+}
+
+.calculator-page .mixed-match-card .mixed-base-row .mix-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  min-height: 52px;
+  padding: 4px 2px;
+  background: #fff;
+  border: 1px solid #d8d8d8;
+  border-radius: 5px;
+}
+
+.calculator-page .mixed-match-card .mixed-base-row .mix-btn.selected {
+  padding: 3px 1px;
+  background: #fff5f5;
+  border: 2px solid #ff3b45;
+}
+
+.calculator-page .mixed-match-card .mixed-base-row .mix-text {
+  color: #ef4450;
+  font-size: 15px;
+  font-weight: 500;
+  line-height: 19px;
+}
+
+.calculator-page .mixed-match-card .mixed-base-row .mix-odds {
+  margin-top: 2px;
+  color: #b8b8b8;
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 17px;
+}
+
+.calculator-page .mixed-match-card .mixed-base-row .mix-arrow {
+  top: 5px;
+  right: auto;
+  left: 5px;
+  font-size: 17px;
+  line-height: 1;
+}
+
+.calculator-page .mixed-match-card .single-tag {
+  top: 0;
+  left: 0;
+  width: 30px;
+  height: 30px;
+  padding: 3px 0 0 4px;
+  overflow: hidden;
+  background: #23a7dc;
+  border-radius: 0;
+  clip-path: polygon(0 0, 100% 0, 0 100%);
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1;
+  text-align: left;
+}
+
+.calculator-page .mixed-more-toggle {
+  grid-column: 1 / -1;
+  grid-row: 3;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 5px;
+  width: 100%;
+  min-height: 38px;
+  padding: 5px 16px;
+  color: #2297c9;
+  font: inherit;
+  font-size: 15px;
+  background: #fff;
+  border: 0;
+  border-top: 1px solid #f1f1f1;
+  outline: none;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.calculator-page .mixed-more-arrow {
+  display: inline-block;
+  font-size: 12px;
+  line-height: 1;
+  transition: transform 0.2s ease;
+}
+
+.calculator-page .mixed-more-arrow.expanded {
+  transform: rotate(180deg);
+}
+
+.calculator-page .mixed-extra-games {
+  grid-column: 1 / -1;
+  grid-row: 4;
+  min-width: 0;
+  padding: 0 12px 16px;
+  background: #fff;
+}
+
+.calculator-page .mixed-extra-section {
+  margin: 0 0 10px;
+}
+
+.calculator-page .mixed-extra-section:last-child {
+  margin-bottom: 0;
+}
+
+.calculator-page .mixed-extra-title {
+  margin: 0 0 6px;
+  color: #ef4450;
+  font-size: 16px;
+  font-weight: 500;
+  line-height: 24px;
+}
+
+.calculator-page .mixed-hafu-grid,
+.calculator-page .mixed-goals-grid,
+.calculator-page .mixed-score-grid {
+  display: grid;
+  gap: 4px;
+}
+
+.calculator-page .mixed-hafu-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.calculator-page .mixed-goals-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.calculator-page .mixed-score-board {
+  display: grid;
+  gap: 7px;
+}
+
+.calculator-page .mixed-score-grid {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.calculator-page .mixed-option-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  min-height: 52px;
+  padding: 4px 2px;
+  background: #fff;
+  border: 1px solid #d8d8d8;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.calculator-page .mixed-option-btn.selected {
+  padding: 3px 1px;
+  background: #fff5f5;
+  border: 2px solid #ff3b45;
+}
+
+.calculator-page .mixed-option-btn.disabled {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.calculator-page .mixed-option-text {
+  color: #ef4450;
+  font-size: 15px;
+  font-weight: 500;
+  line-height: 19px;
+  white-space: nowrap;
+}
+
+.calculator-page .mixed-option-odds {
+  margin-top: 2px;
+  color: #b8b8b8;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 16px;
+  white-space: nowrap;
+}
+
+@media (max-width: 420px) {
+  .calculator-page .mixed-match-card {
+    grid-template-columns: 82px minmax(0, 1fr);
+  }
+
+  .calculator-page .mixed-match-card .match-teams {
+    grid-template-columns: 82px minmax(0, 1fr);
+  }
+
+  .calculator-page .mixed-match-card .mixed-base-odds {
+    padding-right: 6px;
+    padding-left: 4px;
+  }
+
+  .calculator-page .mixed-match-card .mixed-base-row {
+    grid-template-columns: 44px repeat(3, minmax(0, 1fr));
+    gap: 3px;
+  }
+
+  .calculator-page .mixed-match-card .home-team,
+  .calculator-page .mixed-match-card .away-team {
+    font-size: 14px;
+  }
+
+  .calculator-page .mixed-extra-games {
+    padding-right: 8px;
+    padding-left: 8px;
+  }
+
+  .calculator-page .mixed-option-btn {
+    min-height: 50px;
+  }
+
+  .calculator-page .mixed-score-grid {
+    gap: 3px;
+  }
+
+  .calculator-page .mixed-score-grid .mixed-option-text {
+    font-size: 14px;
+  }
+}
+
+/* 计算器 - 底部选号与查看方案区域 */
+.calculator-page .bottom-bar {
+  width: 100%;
+  max-width: 600px;
+  margin: 0 auto;
+  background: #fff;
+  border-top: 1px solid #dedede;
+  box-shadow: 0 -1px 5px rgba(0, 0, 0, 0.08);
+}
+
+.calculator-page .bar-row {
+  display: grid;
+  grid-template-columns: 70px minmax(0, 1fr) 78px;
+  align-items: stretch;
+  gap: 10px;
+  padding: 6px 2px 6px 20px;
+}
+
+.calculator-page .badge-column,
+.calculator-page .bar-middle,
+.calculator-page .bar-right {
+  min-width: 0;
+}
+
+.calculator-page .badge-column {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: 46px 42px;
+  gap: 5px;
+}
+
+.calculator-page .badge-with-label {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 46px;
+  padding-left: 10px;
+  background: #fff;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+}
+
+.calculator-page .selected-badge {
+  position: absolute;
+  top: -12px;
+  left: -8px;
+  width: 34px;
+  height: 34px;
+  font-size: 14px;
+  font-weight: 400;
+}
+
+.calculator-page .selected-label {
+  color: #555;
+  font-size: 14px;
+  font-weight: 400;
+}
+
+.calculator-page .multiplier-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 42px;
+  padding: 0;
+  color: #e94a53;
+  font-size: 14px;
+  font-weight: 400;
+  background: #fff;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+}
+
+.calculator-page .bar-middle {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: 46px 19px 19px;
+  gap: 2px;
+  justify-content: stretch;
+}
+
+.calculator-page .pass-select {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  height: 46px;
+  margin: 0;
+  padding: 0 8px;
+  overflow: hidden;
+  color: #777;
+  font-size: 14px;
+  font-weight: 400;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: #fff;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+}
+
+.calculator-page .pass-select.active {
+  border-color: #ff3b45;
+}
+
+.calculator-page .bet-info,
+.calculator-page .bonus-info {
+  overflow: hidden;
+  color: #999;
+  font-size: 11px;
+  line-height: 20px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.calculator-page .bet-info .label,
+.calculator-page .bonus-info .label {
+  color: #999;
+}
+
+.calculator-page .bet-info .highlight,
+.calculator-page .bonus-info .highlight {
+  color: #ef3f49;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.calculator-page .bar-right {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: 46px 42px;
+  gap: 5px;
+}
+
+.calculator-page .clear-btn,
+.calculator-page .view-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  padding: 0 4px;
+  border-radius: 4px;
+}
+
+.calculator-page .clear-btn {
+  height: 46px;
+  gap: 4px;
+  color: #aaa;
+  font-size: 13px;
+  background: #fafafa;
+  border: 1px solid #e4e4e4;
+}
+
+.calculator-page .clear-icon {
+  font-size: 12px;
+  filter: grayscale(1);
+  opacity: 0.55;
+}
+
+.calculator-page .view-btn {
+  height: 42px;
+  width: 92px;
+  justify-self: end;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 400;
+  background: #ff3540;
+  border: 1px solid #ff3540;
+}
+
+.calculator-page .bottom-padding {
+  height: 112px;
+}
+
+/* 过关选择浮层紧贴底栏，底栏本身保持可点击 */
+.calculator-page .pass-overlay {
+  align-items: flex-end;
+  padding: 0 0 106px;
+  background: transparent;
+  z-index: 190;
+}
+
+.calculator-page .pass-modal {
+  width: 100%;
+  max-width: 600px;
+  margin: 0 auto;
+  padding: 8px 10px;
+  background: #eee;
+  border-radius: 0;
+}
+
+.calculator-page .pass-modal-title,
+.calculator-page .pass-modal-cancel {
+  display: none;
+}
+
+.calculator-page .pass-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px 14px;
+}
+
+.calculator-page .pass-item {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  min-height: 48px;
+  padding: 0 4px;
+  color: #999;
+  font-size: 15px;
+  font-weight: 400;
+  background: #fff;
+  border: 1px solid #ddd;
+  border-radius: 5px;
+}
+
+.calculator-page .pass-item.active {
+  color: #ff3b45;
+  background: #fff;
+  border-color: #ff3b45;
+}
+
+.calculator-page .pass-item.disabled {
+  color: #aaa;
+  background: #fff;
+  opacity: 1;
+  pointer-events: none;
+}
+
+/* 计算器所有玩法的赔率颜色与胜平负保持一致 */
+.calculator-page .score-match-card .score-odds,
+.calculator-page .goals-match-card .goal-odds,
+.calculator-page .hafu-match-card .hafu-odds,
+.calculator-page .mixed-match-card .mixed-base-row .mix-odds,
+.calculator-page .mixed-match-card .mixed-option-odds {
+  color: #555;
+}
+
+.ai-prediction {
+  margin-top: 8px;
+  padding: 6px 10px;
+  background: #fff3f3;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ai-tag {
+  background: #ff3333;
+  color: white;
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-weight: bold;
+}
+
+.pred-text {
+  font-size: 13px;
+  color: #333;
+  font-weight: 500;
+}
+
+.pred-conf {
+  font-size: 11px;
+  color: #999;
+  margin-left: auto;
+}
+
+.pagination {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 12px;
+  padding: 15px;
+}
+
+.page-btn {
+  padding: 6px 14px;
+  background: white;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.page-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.page-info {
+  font-size: 13px;
+  color: #666;
+}
+
+/* ============== 投注记录 ============== */
+.stats-cards {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+  padding: 12px;
+}
+
+.stat-card {
+  background: white;
+  border-radius: 8px;
+  padding: 12px;
+  text-align: center;
+}
+
+.stat-label {
+  font-size: 12px;
+  color: #999;
+  margin-bottom: 4px;
+}
+
+.stat-value {
+  font-size: 18px;
+  font-weight: bold;
+  color: #333;
+}
+
+.stat-value.positive { color: #ff3333; }
+.stat-value.negative { color: #4caf50; }
+
+.stat-profit { background: linear-gradient(135deg, #ff4b47 0%, #ff3333 100%); }
+.stat-profit .stat-label, .stat-profit .stat-value { color: white; }
+
+.trend-section {
+  background: white;
+  margin: 0 12px 12px;
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.section-title {
+  font-size: 13px;
+  color: #666;
+  margin-bottom: 8px;
+  font-weight: 500;
+}
+
+.trend-bars {
+  display: flex;
+  align-items: flex-end;
+  height: 80px;
+  gap: 2px;
+}
+
+.trend-bar-wrap {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  height: 100%;
+  justify-content: flex-end;
+}
+
+.trend-bar {
+  width: 100%;
+  background: #ff3333;
+  border-radius: 2px 2px 0 0;
+  min-height: 2px;
+}
+
+.trend-bar.negative { background: #4caf50; }
+
+.trend-date {
+  font-size: 9px;
+  color: #999;
+  margin-top: 2px;
+}
+
+.bet-list {
+  padding: 0 12px 80px;
+}
+
+.bet-card {
+  background: white;
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 10px;
+  cursor: pointer;
+}
+
+.bet-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.bet-status {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  color: white;
+}
+
+.status-won { background: #ff3333; }
+.status-lost { background: #999; }
+
+.bet-time {
+  font-size: 12px;
+  color: #999;
+  flex: 1;
+}
+
+.delete-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 16px;
+}
+
+.bet-desc {
+  font-size: 14px;
+  color: #333;
+  margin-bottom: 6px;
+  font-weight: 500;
+}
+
+.bet-info {
+  display: flex;
+  gap: 16px;
+  font-size: 12px;
+  color: #666;
+}
+
+.bet-info strong { color: #ff3333; }
+
+/* ============== 详情弹窗 ============== */
+.modal-overlay {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0,0,0,0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 300;
+  padding: 20px;
+}
+
+.detail-modal {
+  background: white;
+  border-radius: 8px;
+  width: 100%;
+  max-width: 500px;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.modal-header {
+  padding: 12px 16px;
+  border-bottom: 1px solid #eee;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.modal-title {
+  font-size: 16px;
+  font-weight: 500;
+}
+
+.modal-close {
+  font-size: 24px;
+  cursor: pointer;
+  color: #999;
+  line-height: 1;
+}
+
+.modal-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px;
+}
+
+.detail-bet {
+  border-bottom: 1px solid #f0f0f0;
+  padding: 10px 0;
+}
+
+.detail-bet:last-child { border-bottom: none; }
+
+.detail-bet-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.detail-bet-status {
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  color: white;
+}
+
+.detail-bet-desc {
+  font-size: 13px;
+  color: #333;
+}
+
+.detail-bet-info {
+  font-size: 12px;
+  color: #666;
+  margin-bottom: 6px;
+}
+
+.detail-item {
+  background: #f8f8f8;
+  border-radius: 4px;
+  padding: 6px 8px;
+  margin-bottom: 4px;
+}
+
+.item-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.item-mark {
+  font-weight: bold;
+  width: 14px;
+  text-align: center;
+}
+
+.item-mark.won { color: #ff3333; }
+.item-mark.lost { color: #999; }
+
+.item-match, .item-name { color: #555; }
+
+/* ============== 比赛详情页 ============== */
+.detail-card {
+  background: white;
+  border-radius: 8px;
+  margin: 12px;
+  padding: 12px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+}
+
+.detail-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.league-tag {
+  font-size: 13px;
+  color: #3399ff;
+  font-weight: 500;
+}
+
+.match-teams-big {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 0;
+}
+
+.team-big {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.team-name-big {
+  font-size: 16px;
+  font-weight: 500;
+  color: #333;
+  text-align: center;
+}
+
+.team-score {
+  font-size: 28px;
+  font-weight: bold;
+  color: #ff3333;
+}
+
+.vs-divider {
+  font-size: 16px;
+  color: #999;
+  padding: 0 12px;
+}
+
+.card-title {
+  font-size: 15px;
+  font-weight: 500;
+  color: #333;
+  margin-bottom: 10px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.empty-card {
+  text-align: center;
+  padding: 20px;
+  color: #999;
+}
+
+.empty-card p { margin-bottom: 10px; font-size: 13px; }
+
+.odds-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.odds-block {
+  background: #f8f8f8;
+  border-radius: 6px;
+  padding: 10px;
+}
+
+.odds-block-title {
+  font-size: 13px;
+  color: #333;
+  font-weight: 500;
+  margin-bottom: 6px;
+}
+
+.odds-block-row {
+  display: flex;
+  gap: 6px;
+}
+
+.odds-col {
+  flex: 1;
+  background: white;
+  border-radius: 4px;
+  padding: 6px;
+  text-align: center;
+}
+
+.col-label {
+  font-size: 11px;
+  color: #999;
+  margin-bottom: 2px;
+}
+
+.col-val {
+  font-size: 16px;
+  font-weight: bold;
+  color: #ff3333;
+}
+
+.col-init {
+  font-size: 10px;
+  color: #999;
+  margin-top: 2px;
+}
+
+.prediction-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+}
+
+.pred-block {
+  background: #f8f8f8;
+  border-radius: 6px;
+  padding: 10px;
+  text-align: center;
+}
+
+.pred-label {
+  font-size: 12px;
+  color: #999;
+  margin-bottom: 4px;
+}
+
+.pred-value {
+  font-size: 18px;
+  font-weight: bold;
+  color: #ff3333;
+}
+
+.pred-conf {
+  font-size: 11px;
+  color: #666;
+  margin-top: 2px;
+}
+
+.movement-block {
+  margin-bottom: 10px;
+}
+
+.mv-title {
+  font-size: 13px;
+  color: #333;
+  margin-bottom: 6px;
+}
+
+.mv-row {
+  display: flex;
+  gap: 6px;
+}
+
+.mv-col {
+  flex: 1;
+  background: #f8f8f8;
+  border-radius: 4px;
+  padding: 6px;
+  text-align: center;
+}
+
+.mv-label {
+  font-size: 11px;
+  color: #999;
+}
+
+.mv-val {
+  font-size: 14px;
+  font-weight: 500;
+  margin-top: 2px;
+}
+
+.mv-val.up { color: #ff3333; }
+.mv-val.down { color: #4caf50; }
+
+/* 通用 anchor 链接 reset */
+a { text-decoration: none; color: inherit; }
+
+/* ============ 登录、主导航与用户中心 ============ */
+.main-bottom-nav {
+  position: fixed;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 400;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  width: 100%;
+  max-width: 600px;
+  height: 58px;
+  margin: 0 auto;
+  padding: 4px 8px 3px;
+  background: rgba(255, 255, 255, 0.98);
+  border-top: 1px solid #e4e4e4;
+  box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.06);
+}
+
+.main-nav-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  color: #888;
+  font-size: 11px;
+  line-height: 16px;
+  border-radius: 8px;
+}
+
+.main-nav-icon {
+  color: #777;
+  font-size: 21px;
+  line-height: 25px;
+}
+
+.main-nav-item.active,
+.main-nav-item.active .main-nav-icon {
+  color: #f33b48;
+}
+
+.primary-page {
+  min-height: 100vh;
+  padding-bottom: 76px;
+  background: #f4f5f7;
+}
+
+.calculator-page {
+  padding-bottom: 0;
+}
+
+.calculator-page .bottom-bar {
+  bottom: 58px;
+}
+
+.calculator-save-notice {
+  position: fixed;
+  z-index: 900;
+  left: 50%;
+  bottom: 176px;
+  max-width: calc(100% - 40px);
+  padding: 9px 15px;
+  color: #fff;
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: nowrap;
+  background: rgb(38 38 38 / 88%);
+  border-radius: 18px;
+  transform: translateX(-50%);
+  box-shadow: 0 4px 14px rgb(0 0 0 / 16%);
+}
+
+.calculator-page .bottom-padding {
+  height: 170px;
+}
+
+.calculator-page .pass-overlay {
+  padding-bottom: 164px;
+}
+
+.calculator-page .modal-overlay:not(.pass-overlay) {
+  z-index: 500;
+}
+
+.header-side-spacer,
+.header-account-btn,
+.calculator-page .back-btn {
+  width: 76px;
+  flex: 0 0 76px;
+}
+
+.header-account-btn {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  min-width: 0;
+  height: 36px;
+  padding: 0;
+  overflow: hidden;
+  color: #fff;
+  font: inherit;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.header-account-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 25px;
+  height: 25px;
+  color: #f33b48;
+  font-size: 12px;
+  background: #fff;
+  border-radius: 50%;
+  flex: 0 0 25px;
+}
+
+.header-account-text {
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.auth-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(20, 24, 32, 0.55);
+  backdrop-filter: blur(4px);
+}
+
+.auth-modal {
+  position: relative;
+  width: 100%;
+  max-width: 380px;
+  padding: 28px 24px 24px;
+  background: #fff;
+  border-radius: 16px;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.2);
+}
+
+.auth-close {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  width: 32px;
+  height: 32px;
+  color: #999;
+  font-size: 26px;
+  line-height: 28px;
+  background: transparent;
+  border: 0;
+}
+
+.auth-brand {
+  text-align: center;
+}
+
+.auth-logo {
+  font-size: 34px;
+}
+
+.auth-brand h2,
+.auth-account-view h2 {
+  margin-top: 6px;
+  color: #222;
+  font-size: 21px;
+  font-weight: 600;
+}
+
+.auth-brand p,
+.auth-account-view p {
+  margin-top: 5px;
+  color: #999;
+  font-size: 12px;
+}
+
+.auth-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  margin: 22px 0 18px;
+  padding: 3px;
+  background: #f2f3f5;
+  border-radius: 8px;
+}
+
+.auth-tabs button {
+  height: 36px;
+  color: #888;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+}
+
+.auth-tabs button.active {
+  color: #f33b48;
+  background: #fff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+}
+
+.auth-form {
+  display: grid;
+  gap: 14px;
+}
+
+.auth-form label {
+  display: grid;
+  gap: 6px;
+}
+
+.auth-form label span {
+  color: #555;
+  font-size: 12px;
+}
+
+.auth-form input {
+  width: 100%;
+  height: 44px;
+  padding: 0 12px;
+  color: #333;
+  font-size: 14px;
+  background: #fff;
+  border: 1px solid #ddd;
+  border-radius: 7px;
+  outline: none;
+}
+
+.auth-form input:focus {
+  border-color: #f33b48;
+  box-shadow: 0 0 0 3px rgba(243, 59, 72, 0.1);
+}
+
+.auth-error {
+  padding: 8px 10px;
+  color: #d92d3a;
+  font-size: 12px;
+  background: #fff1f2;
+  border-radius: 6px;
+}
+
+.auth-submit {
+  width: 100%;
+  height: 44px;
+  margin-top: 3px;
+  color: #fff;
+  font-size: 15px;
+  background: linear-gradient(90deg, #ff4b55, #f33143);
+  border: 0;
+  border-radius: 7px;
+}
+
+.auth-submit:disabled {
+  opacity: 0.6;
+}
+
+.auth-account-view {
+  padding-top: 8px;
+  text-align: center;
+}
+
+.auth-large-avatar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 68px;
+  height: 68px;
+  margin: 0 auto;
+  color: #fff;
+  font-size: 26px;
+  background: linear-gradient(135deg, #ff626a, #ef2f42);
+  border-radius: 50%;
+}
+
+.auth-account-meta {
+  margin: 20px 0 14px;
+  padding: 12px;
+  color: #777;
+  font-size: 12px;
+  background: #f6f7f8;
+  border-radius: 8px;
+}
+
+.auth-logout {
+  color: #e23b46;
+  background: #fff;
+  border: 1px solid #f0b3b8;
+}
+
+/* 用户投注记录 */
+.records-content,
+.user-stats-content {
+  width: 100%;
+  max-width: 600px;
+  margin: 0 auto;
+  padding: 14px 12px 20px;
+}
+
+.account-gate {
+  margin-top: 80px;
+  padding: 34px 24px;
+  text-align: center;
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.04);
+}
+
+.account-gate-icon {
+  color: #f33b48;
+  font-size: 42px;
+}
+
+.account-gate h2 {
+  margin-top: 12px;
+  color: #333;
+  font-size: 18px;
+}
+
+.account-gate p {
+  margin: 9px auto 20px;
+  color: #999;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.account-gate button {
+  min-width: 150px;
+  height: 42px;
+  color: #fff;
+  background: #f33b48;
+  border: 0;
+  border-radius: 7px;
+}
+
+.page-loading,
+.records-empty,
+.stats-panel-empty {
+  padding: 42px 16px;
+  color: #999;
+  text-align: center;
+}
+
+.records-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  padding: 14px;
+  background: linear-gradient(135deg, #ff535d, #ef2d41);
+  border-radius: 11px;
+  box-shadow: 0 8px 20px rgba(239, 45, 65, 0.16);
+}
+
+.records-summary div {
+  min-width: 0;
+  text-align: center;
+}
+
+.records-summary div + div {
+  border-left: 1px solid rgba(255, 255, 255, 0.28);
+}
+
+.records-summary span {
+  display: block;
+  color: rgba(255, 255, 255, 0.78);
+  font-size: 11px;
+}
+
+.records-summary strong {
+  display: block;
+  margin-top: 6px;
+  overflow: hidden;
+  color: #fff;
+  font-size: 16px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.records-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 18px 2px 10px;
+}
+
+.records-toolbar h2 {
+  color: #333;
+  font-size: 16px;
+}
+
+.records-toolbar p {
+  margin-top: 3px;
+  color: #aaa;
+  font-size: 11px;
+}
+
+.records-toolbar button {
+  padding: 6px 12px;
+  color: #f33b48;
+  background: #fff;
+  border: 1px solid #f1b0b5;
+  border-radius: 6px;
+}
+
+.records-filter {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  margin-bottom: 10px;
+  padding: 4px;
+  background: #e9eaec;
+  border-radius: 9px;
+}
+
+.records-filter button {
+  height: 34px;
+  color: #777;
+  font-size: 12px;
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
+}
+
+.records-filter button.active {
+  color: #ef3544;
+  font-weight: 500;
+  background: #fff;
+  box-shadow: 0 2px 7px rgba(0, 0, 0, 0.07);
+}
+
+.records-empty {
+  background: #fff;
+  border-radius: 10px;
+}
+
+.records-empty a {
+  display: inline-block;
+  margin-top: 12px;
+  color: #f33b48;
+}
+
+.records-list {
+  display: grid;
+  gap: 10px;
+}
+
+.record-card {
+  position: relative;
+  padding: 13px 14px;
+  background: #fff;
+  border: 1px solid #ececec;
+  border-radius: 10px;
+  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.035);
+}
+
+.record-card::before {
+  position: absolute;
+  top: 12px;
+  bottom: 12px;
+  left: 0;
+  width: 3px;
+  content: "";
+  background: #e2e4e7;
+  border-radius: 0 3px 3px 0;
+}
+
+.record-card--won::before {
+  background: #f33b48;
+}
+
+.record-card--lost::before {
+  background: #9ca1a8;
+}
+
+.record-card--draw::before {
+  background: #4b9de8;
+}
+
+.record-card-head {
+  display: grid;
+  grid-template-columns: auto 1fr 26px;
+  align-items: center;
+  gap: 8px;
+}
+
+.record-status {
+  padding: 3px 7px;
+  font-size: 10px;
+  border-radius: 10px;
+}
+
+.record-status--pending {
+  color: #b87811;
+  background: #fff7e8;
+}
+
+.record-status--won {
+  color: #f33b48;
+  background: #fff1f2;
+}
+
+.record-status--lost {
+  color: #777;
+  background: #f1f2f4;
+}
+
+.record-status--draw {
+  color: #3585cd;
+  background: #edf6ff;
+}
+
+.record-card-head time {
+  color: #aaa;
+  font-size: 11px;
+}
+
+.record-delete {
+  width: 26px;
+  height: 26px;
+  color: #aaa;
+  font-size: 20px;
+  background: transparent;
+  border: 0;
+}
+
+.record-description {
+  margin-top: 11px;
+  color: #333;
+  font-size: 15px;
+  font-weight: 500;
+}
+
+.record-meta {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.record-meta span {
+  padding: 3px 7px;
+  color: #777;
+  font-size: 10px;
+  background: #f4f5f6;
+  border-radius: 4px;
+}
+
+.record-money {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 11px;
+  padding-top: 10px;
+  color: #888;
+  font-size: 12px;
+  border-top: 1px dashed #e5e5e5;
+}
+
+.record-money strong {
+  color: #ef3544;
+  font-weight: 500;
+}
+
+.record-money--settled {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, auto));
+  gap: 8px;
+}
+
+.profit-positive {
+  color: #ef3544 !important;
+}
+
+.profit-negative {
+  color: #0a9c64 !important;
+}
+
+.profit-zero {
+  color: #777 !important;
+}
+
+.record-detail-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 800;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.48);
+}
+
+.record-detail-modal {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 600px;
+  max-height: 82vh;
+  background: #f5f6f7;
+  border-radius: 14px 14px 0 0;
+  overflow: hidden;
+}
+
+.record-detail-modal > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 15px 16px;
+  background: #fff;
+  border-bottom: 1px solid #eee;
+}
+
+.record-detail-modal h2 {
+  font-size: 17px;
+}
+
+.record-detail-modal header p {
+  margin-top: 3px;
+  color: #aaa;
+  font-size: 11px;
+}
+
+.record-detail-modal header button {
+  width: 32px;
+  height: 32px;
+  color: #888;
+  font-size: 25px;
+  background: transparent;
+  border: 0;
+}
+
+.record-detail-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  color: #555;
+  font-size: 13px;
+  background: #fff;
+}
+
+.record-detail-summary div {
+  display: grid;
+  gap: 4px;
+}
+
+.record-detail-summary small {
+  color: #999;
+  font-size: 10px;
+}
+
+.record-detail-summary strong,
+.record-detail-modal > footer strong {
+  color: #ef3544;
+}
+
+.record-detail-list {
+  padding: 10px 12px;
+  overflow-y: auto;
+}
+
+.record-match-group {
+  margin-bottom: 9px;
+  padding: 11px 12px;
+  background: #fff;
+  border-radius: 8px;
+}
+
+.record-match-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #888;
+  font-size: 11px;
+}
+
+.record-match-title strong {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: #333;
+  font-size: 13px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.record-result-score {
+  flex: 0 0 auto;
+  color: #ef3544;
+  font-size: 16px;
+  font-style: normal;
+  font-weight: 500;
+}
+
+.record-result-score--void {
+  color: #3689d4;
+}
+
+.record-match-result {
+  margin-top: 7px;
+  color: #999;
+  font-size: 10px;
+}
+
+.record-match-result--void {
+  color: #3689d4;
+}
+
+.record-picks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 9px;
+}
+
+.record-picks span {
+  padding: 4px 7px;
+  color: #e83e4c;
+  font-size: 11px;
+  background: #fff3f4;
+  border: 1px solid #ffd6d9;
+  border-radius: 4px;
+}
+
+.record-picks em {
+  color: #555;
+  font-style: normal;
+}
+
+.record-picks b {
+  margin-right: 2px;
+  font-weight: 500;
+}
+
+.record-picks .record-pick--win {
+  color: #e42f40;
+  background: #fff0f2;
+  border-color: #ffcbd0;
+}
+
+.record-picks .record-pick--lose {
+  color: #8d9298;
+  background: #f5f6f7;
+  border-color: #e1e3e5;
+}
+
+.record-picks .record-pick--void {
+  color: #3689d4;
+  background: #eef7ff;
+  border-color: #cfe8ff;
+}
+
+.record-detail-modal > footer {
+  display: flex;
+  justify-content: space-between;
+  padding: 14px 16px calc(14px + env(safe-area-inset-bottom));
+  background: #fff;
+  border-top: 1px solid #eee;
+}
+
+.record-detail-modal > .record-detail-footer--settled {
+  gap: 12px;
+}
+
+.record-detail-footer--settled > span {
+  display: grid;
+  gap: 3px;
+  color: #888;
+  font-size: 11px;
+}
+
+.record-detail-footer--settled > span:last-child {
+  text-align: right;
+}
+
+.record-detail-footer--settled strong {
+  font-size: 16px;
+  font-weight: 500;
+}
+
+/* 个人统计 */
+.stats-month-filter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+  padding: 11px 13px;
+  background: #fff;
+  border-radius: 10px;
+}
+
+.stats-month-filter div {
+  display: grid;
+  gap: 3px;
+}
+
+.stats-month-filter strong {
+  color: #333;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.stats-month-filter span {
+  color: #aaa;
+  font-size: 10px;
+}
+
+.stats-month-filter select {
+  min-width: 122px;
+  height: 36px;
+  padding: 0 30px 0 11px;
+  color: #ef3544;
+  font-size: 12px;
+  background: #fff5f6;
+  border: 1px solid #ffd3d7;
+  border-radius: 7px;
+  outline: 0;
+}
+
+.stats-hero {
+  padding: 19px 18px;
+  color: #fff;
+  background: linear-gradient(135deg, #ff5962, #ee2e42);
+  border-radius: 12px;
+  box-shadow: 0 8px 22px rgba(238, 46, 66, 0.17);
+}
+
+.stats-hero p,
+.stats-hero span {
+  color: rgba(255, 255, 255, 0.78);
+  font-size: 11px;
+}
+
+.stats-hero > strong {
+  display: block;
+  margin: 7px 0;
+  font-size: 31px;
+  font-weight: 500;
+}
+
+.stats-hero small {
+  font-size: 14px;
+  font-weight: 400;
+}
+
+.personal-stat-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 9px;
+  margin-top: 10px;
+}
+
+.personal-stat-grid article {
+  padding: 14px;
+  background: #fff;
+  border-radius: 9px;
+}
+
+.personal-stat-grid span {
+  display: block;
+  color: #999;
+  font-size: 11px;
+}
+
+.personal-stat-grid strong {
+  display: block;
+  margin-top: 7px;
+  color: #333;
+  font-size: 19px;
+  font-weight: 500;
+}
+
+.stats-panel {
+  margin-top: 10px;
+  padding: 14px;
+  background: #fff;
+  border-radius: 10px;
+}
+
+.stats-panel > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.stats-panel h2 {
+  color: #333;
+  font-size: 15px;
+}
+
+.stats-panel header span {
+  color: #aaa;
+  font-size: 10px;
+}
+
+.daily-chart {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  min-height: 130px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+.daily-chart-item {
+  display: grid;
+  justify-items: center;
+  flex: 0 0 48px;
+  color: #999;
+  font-size: 9px;
+}
+
+.daily-bar-shell {
+  position: relative;
+  width: 16px;
+  height: 86px;
+  background: #f2f3f5;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.daily-bar-shell i {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  background: linear-gradient(#ff6871, #ef3344);
+  border-radius: 8px;
+}
+
+.daily-chart-item span {
+  margin-top: 5px;
+}
+
+.daily-chart-item em {
+  margin-top: 2px;
+  color: #888;
+  font-size: 9px;
+  font-style: normal;
+}
+
+.daily-chart-item strong {
+  margin-top: 2px;
+  font-size: 9px;
+  font-weight: 500;
+}
+
+.distribution-list {
+  display: grid;
+  gap: 11px;
+}
+
+.distribution-list > div {
+  display: grid;
+  grid-template-columns: 50px 1fr 28px;
+  align-items: center;
+  gap: 8px;
+  color: #666;
+  font-size: 11px;
+}
+
+.distribution-list i {
+  height: 7px;
+  background: #f1f2f4;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.distribution-list b {
+  display: block;
+  height: 100%;
+  background: #f34a57;
+  border-radius: 4px;
+}
+
+.distribution-list strong {
+  color: #333;
+  text-align: right;
+}
+
+.pool-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.pool-chips span {
+  padding: 7px 10px;
+  color: #666;
+  font-size: 11px;
+  background: #f5f6f7;
+  border-radius: 6px;
+}
+
+.pool-chips strong {
+  margin-left: 4px;
+  color: #ef3544;
+}
+
+@media (max-width: 360px) {
+  .header-side-spacer,
+  .header-account-btn,
+  .calculator-page .back-btn {
+    width: 66px;
+    flex-basis: 66px;
+  }
+
+  .records-content,
+  .user-stats-content {
+    padding-right: 9px;
+    padding-left: 9px;
+  }
+}

@@ -661,6 +661,7 @@
                 </div>
                 <button class="btn btn-success" onclick="crawlNewData()\">📥 爬取新数据</button>
 
+                <a href="/calculator" class="btn btn-success" style="background:linear-gradient(135deg, #ff416c 0%, #ff4b2b 100%);">🧮 计算器</a>
                 <a href="/stats" class="btn btn-success" style="background:linear-gradient(135deg, #fa709a 0%, #fee140 100%);">📊 数据统计</a>
                 <a href="/bets" class="btn btn-success" style="background:linear-gradient(135deg, #667eea 0%, #764ba2 100%);">📝 投注记录</a>
                 <a href="/my_picks" class="btn btn-success" style="background:linear-gradient(135deg, #00b09b 0%, #96c93d 100%);">🎯 我的选择</a>
@@ -1022,9 +1023,9 @@
                     ? (ouHasInitial ? '<div>初: ' + ouInit + '</div>' : '') + (ouHasCurrent ? '<div>即: ' + ouCurr + '</div>' : '')
                     : '';
                 
-                // 让球指数
-                const hiHasInitial = match.hi_initial_home_odds && match.hi_initial_draw_odds && match.hi_initial_away_odds;
-                const hiHasCurrent = match.hi_current_home_odds && match.hi_current_draw_odds && match.hi_current_away_odds;
+                // 让球指数（任一存在即显示，参考欧赔/亚盘的 OR 逻辑）
+                const hiHasInitial = (match.hi_initial_home_odds || match.hi_initial_draw_odds || match.hi_initial_away_odds);
+                const hiHasCurrent = (match.hi_current_home_odds || match.hi_current_draw_odds || match.hi_current_away_odds);
                 const hiHandicap = match.hi_handicap_value || '';
                 
                 const hiInitHome = hiResult === 'win' ? `<span class="odds-hit">${match.hi_initial_home_odds || ''}</span>` : (match.hi_initial_home_odds || '');

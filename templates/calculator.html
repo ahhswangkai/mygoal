@@ -1,0 +1,1325 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>足彩计算器</title>
+    <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 10px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #ff416c 0%, #ff4b2b 100%);
+            padding: 20px;
+            border-radius: 15px 15px 0 0;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+        }
+
+        .header h1 {
+            color: white;
+            text-align: center;
+            font-size: 24px;
+            font-weight: bold;
+        }
+
+        .pool-tabs {
+            display: flex;
+            background: white;
+            padding: 5px;
+            gap: 5px;
+        }
+
+        .pool-tab {
+            flex: 1;
+            text-align: center;
+            padding: 12px 8px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 500;
+            color: #666;
+            transition: all 0.3s;
+            background: #f5f5f5;
+        }
+
+        .pool-tab:hover {
+            background: #e8e8e8;
+        }
+
+        .pool-tab.active {
+            background: #ff416c;
+            color: white;
+        }
+
+        .content {
+            background: #f5f5f5;
+            min-height: 60vh;
+        }
+
+        .date-header {
+            background: white;
+            padding: 15px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid #eee;
+        }
+
+        .date-info {
+            font-size: 14px;
+            color: #333;
+            font-weight: 500;
+        }
+
+        .hide-btn {
+            background: #ff416c;
+            color: white;
+            border: none;
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            cursor: pointer;
+        }
+
+        .match-list {
+            padding: 10px;
+        }
+
+        .match-card {
+            background: white;
+            border-radius: 10px;
+            margin-bottom: 10px;
+            overflow: hidden;
+        }
+
+        .match-info {
+            padding: 12px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            border-bottom: 1px solid #f0f0f0;
+        }
+
+        .match-number {
+            background: #f0f0f0;
+            padding: 8px 10px;
+            border-radius: 6px;
+            font-size: 12px;
+            color: #666;
+            min-width: 70px;
+            text-align: center;
+        }
+
+        .match-league {
+            font-size: 12px;
+            color: #999;
+        }
+
+        .match-time {
+            font-size: 12px;
+            color: #666;
+        }
+
+        .match-detail {
+            display: flex;
+            justify-content: space-around;
+            align-items: center;
+            padding: 15px;
+            gap: 10px;
+        }
+
+        .team {
+            flex: 1;
+            text-align: center;
+            font-size: 15px;
+            font-weight: 500;
+            color: #333;
+        }
+
+        .vs {
+            color: #999;
+            font-size: 14px;
+        }
+
+        .odds-grid {
+            padding: 0 15px 15px;
+        }
+
+        .odds-row {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 8px;
+        }
+
+        .odds-item {
+            flex: 1;
+            text-align: center;
+            padding: 12px 8px;
+            background: #f8f8f8;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s;
+            border: 2px solid transparent;
+        }
+
+        .odds-item:hover {
+            background: #f0f0f0;
+        }
+
+        .odds-item.selected {
+            background: #fff3f5;
+            border-color: #ff416c;
+        }
+
+        .odds-item .odds-value {
+            font-size: 18px;
+            font-weight: bold;
+            color: #ff416c;
+        }
+
+        .odds-item .odds-label {
+            font-size: 12px;
+            color: #666;
+            margin-top: 4px;
+        }
+
+        .handicap-tag {
+            display: inline-block;
+            background: #ff416c;
+            color: white;
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-size: 11px;
+            margin-bottom: 5px;
+        }
+
+        /* Score grid specific */
+        .score-grid {
+            padding: 10px 15px 15px;
+        }
+
+        .score-section {
+            margin-bottom: 15px;
+        }
+
+        .score-section-title {
+            font-size: 13px;
+            color: #666;
+            margin-bottom: 8px;
+            padding-left: 5px;
+        }
+
+        .score-items {
+            display: grid;
+            grid-template-columns: repeat(5, 1fr);
+            gap: 6px;
+        }
+
+        .score-item {
+            padding: 10px 5px;
+            background: #f8f8f8;
+            border-radius: 6px;
+            text-align: center;
+            cursor: pointer;
+            border: 2px solid transparent;
+            transition: all 0.2s;
+        }
+
+        .score-item:hover {
+            background: #f0f0f0;
+        }
+
+        .score-item.selected {
+            background: #fff3f5;
+            border-color: #ff416c;
+        }
+
+        .score-item .score {
+            font-size: 14px;
+            font-weight: bold;
+            color: #333;
+        }
+
+        .score-item .odds {
+            font-size: 11px;
+            color: #ff416c;
+            margin-top: 3px;
+        }
+
+        .other-scores {
+            grid-template-columns: repeat(4, 1fr);
+        }
+
+        /* Total goals specific */
+        .goals-grid {
+            padding: 10px 15px 15px;
+        }
+
+        .goals-items {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 8px;
+        }
+
+        .goal-item {
+            padding: 15px 10px;
+            background: #f8f8f8;
+            border-radius: 8px;
+            text-align: center;
+            cursor: pointer;
+            border: 2px solid transparent;
+            transition: all 0.2s;
+        }
+
+        .goal-item:hover {
+            background: #f0f0f0;
+        }
+
+        .goal-item.selected {
+            background: #fff3f5;
+            border-color: #ff416c;
+        }
+
+        .goal-item .goal-label {
+            font-size: 14px;
+            font-weight: bold;
+            color: #333;
+        }
+
+        .goal-item .goal-odds {
+            font-size: 16px;
+            color: #ff416c;
+            margin-top: 5px;
+            font-weight: bold;
+        }
+
+        /* Half/full specific */
+        .hafu-grid {
+            padding: 10px 15px 15px;
+        }
+
+        .hafu-items {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 8px;
+        }
+
+        .hafu-item {
+            padding: 15px 10px;
+            background: #f8f8f8;
+            border-radius: 8px;
+            text-align: center;
+            cursor: pointer;
+            border: 2px solid transparent;
+            transition: all 0.2s;
+        }
+
+        .hafu-item:hover {
+            background: #f0f0f0;
+        }
+
+        .hafu-item.selected {
+            background: #fff3f5;
+            border-color: #ff416c;
+        }
+
+        .hafu-item .hafu-label {
+            font-size: 13px;
+            font-weight: bold;
+            color: #333;
+        }
+
+        .hafu-item .hafu-odds {
+            font-size: 15px;
+            color: #ff416c;
+            margin-top: 5px;
+            font-weight: bold;
+        }
+
+        /* Footer cart */
+        .footer {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: white;
+            box-shadow: 0 -4px 20px rgba(0,0,0,0.15);
+            padding: 15px;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            z-index: 100;
+        }
+
+        .cart-info {
+            flex: 1;
+        }
+
+        .cart-count {
+            background: #ff416c;
+            color: white;
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
+            font-weight: bold;
+        }
+
+        .cart-text {
+            font-size: 14px;
+            color: #666;
+            margin-left: 10px;
+        }
+
+        .cart-text .highlight {
+            color: #ff416c;
+            font-weight: bold;
+        }
+
+        .bet-input {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .bet-input label {
+            font-size: 14px;
+            color: #333;
+        }
+
+        .bet-input input {
+            width: 100px;
+            padding: 10px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 16px;
+            text-align: center;
+        }
+
+        .btn-calc {
+            background: linear-gradient(135deg, #ff416c 0%, #ff4b2b 100%);
+            color: white;
+            border: none;
+            padding: 12px 30px;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .btn-calc:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 20px rgba(255, 65, 108, 0.4);
+        }
+
+        .btn-clear {
+            background: #999;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 8px;
+            font-size: 14px;
+            cursor: pointer;
+        }
+
+        .nav-links {
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+            background: white;
+            padding: 10px;
+            flex-wrap: wrap;
+        }
+
+        .nav-link {
+            padding: 8px 16px;
+            background: #f0f0f0;
+            border-radius: 20px;
+            color: #666;
+            text-decoration: none;
+            font-size: 13px;
+            transition: all 0.3s;
+        }
+
+        .nav-link:hover {
+            background: #667eea;
+            color: white;
+        }
+
+        /* Result modal */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.5);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 200;
+            padding: 20px;
+        }
+
+        .modal-overlay.show {
+            display: flex;
+        }
+
+        .modal {
+            background: white;
+            border-radius: 15px;
+            max-width: 500px;
+            width: 100%;
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+
+        .modal-header {
+            padding: 20px;
+            border-bottom: 1px solid #eee;
+            text-align: center;
+        }
+
+        .modal-header h2 {
+            color: #333;
+            font-size: 20px;
+        }
+
+        .modal-body {
+            padding: 20px;
+        }
+
+        .result-item {
+            background: #f8f8f8;
+            padding: 15px;
+            border-radius: 10px;
+            margin-bottom: 10px;
+        }
+
+        .result-title {
+            font-size: 14px;
+            color: #666;
+            margin-bottom: 8px;
+        }
+
+        .result-value {
+            font-size: 24px;
+            font-weight: bold;
+            color: #ff416c;
+        }
+
+        .result-detail {
+            font-size: 13px;
+            color: #999;
+            margin-top: 5px;
+        }
+
+        .modal-footer {
+            padding: 20px;
+            border-top: 1px solid #eee;
+            text-align: center;
+        }
+
+        .btn-close {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 12px 40px;
+            border-radius: 8px;
+            font-size: 16px;
+            cursor: pointer;
+        }
+
+        /* Selected list preview */
+        .selected-preview {
+            background: white;
+            margin: 10px;
+            border-radius: 10px;
+            padding: 15px;
+        }
+
+        .selected-title {
+            font-size: 14px;
+            color: #333;
+            font-weight: 500;
+            margin-bottom: 10px;
+        }
+
+        .selected-list {
+            max-height: 150px;
+            overflow-y: auto;
+        }
+
+        .selected-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px 0;
+            border-bottom: 1px solid #f0f0f0;
+        }
+
+        .selected-item:last-child {
+            border-bottom: none;
+        }
+
+        .selected-info {
+            flex: 1;
+        }
+
+        .selected-match {
+            font-size: 13px;
+            color: #333;
+        }
+
+        .selected-option {
+            font-size: 12px;
+            color: #666;
+            margin-top: 3px;
+        }
+
+        .selected-odds {
+            font-size: 15px;
+            font-weight: bold;
+            color: #ff416c;
+        }
+
+        .selected-remove {
+            background: #ff416c;
+            color: white;
+            border: none;
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            cursor: pointer;
+            font-size: 14px;
+            margin-left: 10px;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #999;
+        }
+
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 4px solid #f0f0f0;
+            border-top-color: #ff416c;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 15px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: #999;
+        }
+
+        .empty-state svg {
+            width: 80px;
+            height: 80px;
+            margin-bottom: 20px;
+            opacity: 0.5;
+        }
+
+        .footer-placeholder {
+            height: 100px;
+        }
+
+        .refresh-btn {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 12px;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🎯 足彩计算器</h1>
+        </div>
+
+        <div class="nav-links">
+            <a href="/" class="nav-link">🏠 比赛列表</a>
+            <a href="/stats" class="nav-link">📊 统计分析</a>
+            <a href="/my_picks" class="nav-link">💡 我的推荐</a>
+            <a href="/bets" class="nav-link">💰 投注记录</a>
+        </div>
+
+        <div class="pool-tabs">
+            <div class="pool-tab active" data-pool="had" onclick="switchPool('had')">
+                胜平负<br><span style="font-size:11px">让球胜平负</span>
+            </div>
+            <div class="pool-tab" data-pool="crs" onclick="switchPool('crs')">比分</div>
+            <div class="pool-tab" data-pool="ttg" onclick="switchPool('ttg')">总进球</div>
+            <div class="pool-tab" data-pool="hafu" onclick="switchPool('hafu')">半全场</div>
+            <div class="pool-tab" data-pool="mix" onclick="switchPool('mix')">混合过关</div>
+        </div>
+
+        <div class="content">
+            <div class="date-header">
+                <div class="date-info" id="dateInfo">周三 2025-07-16 共 0 场比赛</div>
+                <div style="display:flex;gap:10px;">
+                    <button class="refresh-btn" onclick="refreshData()">🔄 刷新</button>
+                    <button class="hide-btn" onclick="toggleHide()">● 已选</button>
+                </div>
+            </div>
+
+            <div id="selectedPreview" class="selected-preview" style="display:none;">
+                <div class="selected-title">📋 已选投注项</div>
+                <div class="selected-list" id="selectedList"></div>
+            </div>
+
+            <div class="match-list" id="matchList">
+                <div class="loading">
+                    <div class="spinner"></div>
+                    加载中...
+                </div>
+            </div>
+
+            <div class="footer-placeholder"></div>
+        </div>
+
+        <div class="footer">
+            <div class="cart-info" style="display:flex;align-items:center;">
+                <div class="cart-count" id="cartCount">0</div>
+                <div class="cart-text">
+                    已选 <span class="highlight" id="selectedCount">0</span> 场<br>
+                    <span style="font-size:12px;">理论最高奖金: <span class="highlight" id="maxBonus">0.00</span> 元</span>
+                </div>
+            </div>
+            <button class="btn-clear" onclick="clearAll()">清空</button>
+            <div class="bet-input">
+                <label>倍数</label>
+                <input type="number" id="multipleInput" value="1" min="1">
+            </div>
+            <div class="bet-input">
+                <label>金额</label>
+                <input type="number" id="stakeInput" value="2" min="1">
+            </div>
+            <button class="btn-calc" onclick="showResult()">查看方案</button>
+        </div>
+    </div>
+
+    <!-- Result Modal -->
+    <div class="modal-overlay" id="resultModal">
+        <div class="modal">
+            <div class="modal-header">
+                <h2>🎰 投注方案</h2>
+            </div>
+            <div class="modal-body" id="modalBody"></div>
+            <div class="modal-footer">
+                <button class="btn-close" onclick="closeModal()">关闭</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentPool = 'had';
+        let selectedItems = []; // {mid, pool, opt, odds, matchName, label}
+        let matchesData = {};
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', () => {
+            loadMockData();
+            updateDateInfo();
+        });
+
+        function switchPool(pool) {
+            currentPool = pool;
+            document.querySelectorAll('.pool-tab').forEach(t => t.classList.remove('active'));
+            document.querySelector(`.pool-tab[data-pool="${pool}"]`).classList.add('active');
+            renderMatches();
+        }
+
+        function loadMockData() {
+            // Mock match data similar to the screenshot
+            matchesData = {
+                '260716001': {
+                    mid: '260716001',
+                    number: '周三001',
+                    league: '世界杯',
+                    date: '2025-07-16',
+                    time: '03:00',
+                    home: '英格兰',
+                    away: '阿根廷',
+                    had: { win: 2.36, draw: 2.75, lose: 2.92 },
+                    hhad: { val: -1, win: 5.65, draw: 3.80, lose: 1.45 }
+                },
+                '260716002': {
+                    mid: '260716002',
+                    number: '周三002',
+                    league: '欧冠',
+                    date: '2025-07-16',
+                    time: '02:15',
+                    home: '比森',
+                    away: '克拉克斯',
+                    had: { win: 2.38, draw: 3.14, lose: 2.56 },
+                    hhad: { val: 1, win: 1.38, draw: 4.20, lose: 6.00 }
+                },
+                '260716003': {
+                    mid: '260716003',
+                    number: '周三003',
+                    league: '欧冠',
+                    date: '2025-07-16',
+                    time: '03:00',
+                    home: '苏捷斯卡',
+                    away: '阿拉木图',
+                    had: { win: 4.75, draw: 3.85, lose: 1.52 },
+                    hhad: { val: 2, win: 2.15, draw: 3.09, lose: 2.94 }
+                }
+            };
+
+            // Add more mock matches
+            const teamPairs = [
+                ['瓦勒伦加', '奥勒松'], ['博德闪耀', '莫尔德'], ['罗森博格', '维京'],
+                ['曼联', '利物浦'], ['切尔西', '阿森纳'], ['曼城', '纽卡斯尔'],
+                ['拜仁', '多特'], ['莱比锡', '勒沃库森'], ['巴萨', '皇马'], ['马竞', '塞维利亚']
+            ];
+
+            teamPairs.forEach((pair, idx) => {
+                const mid = `260716${String(100 + idx + 4).slice(-3)}`;
+                matchesData[mid] = {
+                    mid: mid,
+                    number: `周三${idx + 4}`,
+                    league: idx < 3 ? '挪超' : (idx < 6 ? '英超' : (idx < 8 ? '德甲' : '西甲')),
+                    date: '2025-07-16',
+                    time: `${String((idx % 3) + 20).padStart(2, '0')}:${String((idx * 7) % 60).padStart(2, '0')}`,
+                    home: pair[0],
+                    away: pair[1],
+                    had: {
+                        win: (1.5 + Math.random() * 3).toFixed(2),
+                        draw: (2.8 + Math.random() * 1.5).toFixed(2),
+                        lose: (1.8 + Math.random() * 2.5).toFixed(2)
+                    },
+                    hhad: {
+                        val: Math.floor(Math.random() * 3) - 1,
+                        win: (1.4 + Math.random() * 4).toFixed(2),
+                        draw: (3.0 + Math.random() * 2).toFixed(2),
+                        lose: (1.4 + Math.random() * 3).toFixed(2)
+                    },
+                    crs: generateScoreOdds(),
+                    ttg: generateGoalOdds(),
+                    hafu: generateHafuOdds()
+                };
+            });
+
+            renderMatches();
+            updateDateInfo();
+        }
+
+        function generateScoreOdds() {
+            const scores = {};
+            // Home win scores
+            ['1:0','2:0','2:1','3:0','3:1','3:2','4:0','4:1','4:2','5:0','5:1','5:2'].forEach(s => {
+                scores[s] = (4 + Math.random() * 20).toFixed(2);
+            });
+            // Draw scores
+            ['0:0','1:1','2:2','3:3'].forEach(s => {
+                scores[s] = (5 + Math.random() * 15).toFixed(2);
+            });
+            // Away win scores
+            ['0:1','0:2','1:2','0:3','1:3','2:3','0:4','1:4','2:4','0:5','1:5','2:5'].forEach(s => {
+                scores[s] = (4 + Math.random() * 20).toFixed(2);
+            });
+            scores['胜其他'] = (8 + Math.random() * 10).toFixed(2);
+            scores['平其他'] = (15 + Math.random() * 20).toFixed(2);
+            scores['负其他'] = (8 + Math.random() * 10).toFixed(2);
+            return scores;
+        }
+
+        function generateGoalOdds() {
+            return {
+                '0': (10 + Math.random() * 15).toFixed(2),
+                '1': (5 + Math.random() * 8).toFixed(2),
+                '2': (3.5 + Math.random() * 4).toFixed(2),
+                '3': (4 + Math.random() * 5).toFixed(2),
+                '4': (6 + Math.random() * 8).toFixed(2),
+                '5': (10 + Math.random() * 12).toFixed(2),
+                '6': (15 + Math.random() * 15).toFixed(2),
+                '7+': (20 + Math.random() * 20).toFixed(2)
+            };
+        }
+
+        function generateHafuOdds() {
+            return {
+                '胜胜': (3 + Math.random() * 6).toFixed(2),
+                '胜平': (5 + Math.random() * 8).toFixed(2),
+                '胜负': (8 + Math.random() * 12).toFixed(2),
+                '平胜': (5 + Math.random() * 8).toFixed(2),
+                '平平': (4 + Math.random() * 6).toFixed(2),
+                '平负': (5 + Math.random() * 8).toFixed(2),
+                '负胜': (10 + Math.random() * 15).toFixed(2),
+                '负平': (7 + Math.random() * 10).toFixed(2),
+                '负负': (3 + Math.random() * 5).toFixed(2)
+            };
+        }
+
+        function updateDateInfo() {
+            const count = Object.keys(matchesData).length;
+            document.getElementById('dateInfo').textContent = `周三 2025-07-16 共 ${count} 场比赛`;
+        }
+
+        function renderMatches() {
+            const list = document.getElementById('matchList');
+
+            if (!matchesData || Object.keys(matchesData).length === 0) {
+                list.innerHTML = `
+                    <div class="empty-state">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+                        </svg>
+                        <div>暂无比赛数据</div>
+                    </div>
+                `;
+                return;
+            }
+
+            let html = '';
+            Object.values(matchesData).forEach(match => {
+                html += renderMatchCard(match);
+            });
+
+            list.innerHTML = html;
+        }
+
+        function renderMatchCard(match) {
+            return `
+                <div class="match-card" data-mid="${match.mid}">
+                    <div class="match-info">
+                        <div class="match-number">
+                            <div>${match.number}</div>
+                            <div style="font-size:11px;">${match.time}</div>
+                        </div>
+                        <div style="flex:1;">
+                            <div class="match-league">${match.league}</div>
+                        </div>
+                    </div>
+                    <div class="match-detail">
+                        <div class="team">${match.home}</div>
+                        <div class="vs">VS</div>
+                        <div class="team">${match.away}</div>
+                    </div>
+                    ${renderOddsSection(match)}
+                </div>
+            `;
+        }
+
+        function renderOddsSection(match) {
+            switch(currentPool) {
+                case 'had':
+                    return renderHadSection(match);
+                case 'crs':
+                    return renderCrsSection(match);
+                case 'ttg':
+                    return renderTtgSection(match);
+                case 'hafu':
+                    return renderHafuSection(match);
+                case 'mix':
+                    return renderMixSection(match);
+                default:
+                    return renderHadSection(match);
+            }
+        }
+
+        function renderHadSection(match) {
+            const had = match.had || {win:'-', draw:'-', lose:'-'};
+            const hhad = match.hhad || {val:0, win:'-', draw:'-', lose:'-'};
+            const handicap = hhad.val || 0;
+            const handicapStr = handicap > 0 ? `+${handicap}` : `${handicap}`;
+
+            const hadWinSel = isSelected(match.mid, 'had', 'win');
+            const hadDrawSel = isSelected(match.mid, 'had', 'draw');
+            const hadLoseSel = isSelected(match.mid, 'had', 'lose');
+            const hhadWinSel = isSelected(match.mid, 'hhad', 'win');
+            const hhadDrawSel = isSelected(match.mid, 'hhad', 'draw');
+            const hhadLoseSel = isSelected(match.mid, 'hhad', 'lose');
+
+            return `
+                <div class="odds-grid">
+                    <div class="odds-row">
+                        <div class="odds-item ${hadWinSel ? 'selected' : ''}"
+                             onclick="toggleOdds('${match.mid}', 'had', 'win', ${had.win}, '胜', '${match.home} vs ${match.away}')">
+                            <div class="odds-value">${had.win}</div>
+                            <div class="odds-label">胜</div>
+                        </div>
+                        <div class="odds-item ${hadDrawSel ? 'selected' : ''}"
+                             onclick="toggleOdds('${match.mid}', 'had', 'draw', ${had.draw}, '平', '${match.home} vs ${match.away}')">
+                            <div class="odds-value">${had.draw}</div>
+                            <div class="odds-label">平</div>
+                        </div>
+                        <div class="odds-item ${hadLoseSel ? 'selected' : ''}"
+                             onclick="toggleOdds('${match.mid}', 'had', 'lose', ${had.lose}, '负', '${match.home} vs ${match.away}')">
+                            <div class="odds-value">${had.lose}</div>
+                            <div class="odds-label">负</div>
+                        </div>
+                    </div>
+                    <div class="odds-row">
+                        <div class="odds-item ${hhadWinSel ? 'selected' : ''}"
+                             onclick="toggleOdds('${match.mid}', 'hhad', 'win', ${hhad.win}, '让胜', '${match.home} vs ${match.away}', ${handicap})">
+                            <div class="handicap-tag">${handicapStr}</div>
+                            <div class="odds-value">${hhad.win}</div>
+                            <div class="odds-label">让胜</div>
+                        </div>
+                        <div class="odds-item ${hhadDrawSel ? 'selected' : ''}"
+                             onclick="toggleOdds('${match.mid}', 'hhad', 'draw', ${hhad.draw}, '让平', '${match.home} vs ${match.away}', ${handicap})">
+                            <div class="handicap-tag">&nbsp;</div>
+                            <div class="odds-value">${hhad.draw}</div>
+                            <div class="odds-label">让平</div>
+                        </div>
+                        <div class="odds-item ${hhadLoseSel ? 'selected' : ''}"
+                             onclick="toggleOdds('${match.mid}', 'hhad', 'lose', ${hhad.lose}, '让负', '${match.home} vs ${match.away}', ${handicap})">
+                            <div class="handicap-tag">&nbsp;</div>
+                            <div class="odds-value">${hhad.lose}</div>
+                            <div class="odds-label">让负</div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderCrsSection(match) {
+            const crs = match.crs || {};
+
+            const homeScores = ['1:0','2:0','2:1','3:0','3:1','3:2','4:0','4:1','4:2','5:0','5:1','5:2'];
+            const drawScores = ['0:0','1:1','2:2','3:3'];
+            const awayScores = ['0:1','0:2','1:2','0:3','1:3','2:3','0:4','1:4','2:4','0:5','1:5','2:5'];
+
+            return `
+                <div class="score-grid">
+                    <div class="score-section">
+                        <div class="score-section-title">🎯 主胜比分</div>
+                        <div class="score-items">
+                            ${homeScores.map(s => `
+                                <div class="score-item ${isSelected(match.mid, 'crs', s) ? 'selected' : ''}"
+                                     onclick="toggleOdds('${match.mid}', 'crs', '${s}', ${crs[s] || 99}, '${s}', '${match.home} vs ${match.away}')">
+                                    <div class="score">${s}</div>
+                                    <div class="odds">${crs[s] || '-'}</div>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                    <div class="score-section">
+                        <div class="score-section-title">🤝 平局比分</div>
+                        <div class="score-items">
+                            ${drawScores.map(s => `
+                                <div class="score-item ${isSelected(match.mid, 'crs', s) ? 'selected' : ''}"
+                                     onclick="toggleOdds('${match.mid}', 'crs', '${s}', ${crs[s] || 99}, '${s}', '${match.home} vs ${match.away}')">
+                                    <div class="score">${s}</div>
+                                    <div class="odds">${crs[s] || '-'}</div>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                    <div class="score-section">
+                        <div class="score-section-title">🎯 客胜比分</div>
+                        <div class="score-items">
+                            ${awayScores.map(s => `
+                                <div class="score-item ${isSelected(match.mid, 'crs', s) ? 'selected' : ''}"
+                                     onclick="toggleOdds('${match.mid}', 'crs', '${s}', ${crs[s] || 99}, '${s}', '${match.home} vs ${match.away}')">
+                                    <div class="score">${s}</div>
+                                    <div class="odds">${crs[s] || '-'}</div>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                    <div class="score-section">
+                        <div class="score-section-title">📋 其他</div>
+                        <div class="score-items other-scores">
+                            <div class="score-item ${isSelected(match.mid, 'crs', '胜其他') ? 'selected' : ''}"
+                                 onclick="toggleOdds('${match.mid}', 'crs', '胜其他', ${crs['胜其他'] || 99}, '胜其他', '${match.home} vs ${match.away}')">
+                                <div class="score">胜其他</div>
+                                <div class="odds">${crs['胜其他'] || '-'}</div>
+                            </div>
+                            <div class="score-item ${isSelected(match.mid, 'crs', '平其他') ? 'selected' : ''}"
+                                 onclick="toggleOdds('${match.mid}', 'crs', '平其他', ${crs['平其他'] || 99}, '平其他', '${match.home} vs ${match.away}')">
+                                <div class="score">平其他</div>
+                                <div class="odds">${crs['平其他'] || '-'}</div>
+                            </div>
+                            <div class="score-item ${isSelected(match.mid, 'crs', '负其他') ? 'selected' : ''}"
+                                 onclick="toggleOdds('${match.mid}', 'crs', '负其他', ${crs['负其他'] || 99}, '负其他', '${match.home} vs ${match.away}')">
+                                <div class="score">负其他</div>
+                                <div class="odds">${crs['负其他'] || '-'}</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderTtgSection(match) {
+            const ttg = match.ttg || {};
+            const goals = ['0','1','2','3','4','5','6','7+'];
+
+            return `
+                <div class="goals-grid">
+                    <div class="goals-items">
+                        ${goals.map(g => `
+                            <div class="goal-item ${isSelected(match.mid, 'ttg', g) ? 'selected' : ''}"
+                                 onclick="toggleOdds('${match.mid}', 'ttg', '${g}', ${ttg[g] || 99}, '${g}球', '${match.home} vs ${match.away}')">
+                                <div class="goal-label">${g}</div>
+                                <div class="goal-odds">${ttg[g] || '-'}</div>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderHafuSection(match) {
+            const hafu = match.hafu || {};
+            const options = [
+                {k:'胜胜', l:'胜-胜'}, {k:'胜平', l:'胜-平'}, {k:'胜负', l:'胜-负'},
+                {k:'平胜', l:'平-胜'}, {k:'平平', l:'平-平'}, {k:'平负', l:'平-负'},
+                {k:'负胜', l:'负-胜'}, {k:'负平', l:'负-平'}, {k:'负负', l:'负-负'}
+            ];
+
+            return `
+                <div class="hafu-grid">
+                    <div class="hafu-items">
+                        ${options.map(o => `
+                            <div class="hafu-item ${isSelected(match.mid, 'hafu', o.k) ? 'selected' : ''}"
+                                 onclick="toggleOdds('${match.mid}', 'hafu', '${o.k}', ${hafu[o.k] || 99}, '${o.l}', '${match.home} vs ${match.away}')">
+                                <div class="hafu-label">${o.l}</div>
+                                <div class="hafu-odds">${hafu[o.k] || '-'}</div>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderMixSection(match) {
+            return renderHadSection(match);
+        }
+
+        function isSelected(mid, pool, opt) {
+            return selectedItems.some(i => i.mid === mid && i.pool === pool && i.opt === opt);
+        }
+
+        function toggleOdds(mid, pool, opt, odds, label, matchName, handicap = null) {
+            const existingIdx = selectedItems.findIndex(i => i.mid === mid && i.pool === pool && i.opt === opt);
+
+            if (existingIdx >= 0) {
+                selectedItems.splice(existingIdx, 1);
+            } else {
+                selectedItems.push({
+                    mid: mid,
+                    pool: pool,
+                    opt: opt,
+                    odds: parseFloat(odds) || 1,
+                    label: label,
+                    matchName: matchName,
+                    handicap: handicap
+                });
+            }
+
+            updateCart();
+            renderMatches();
+            renderSelectedPreview();
+        }
+
+        function updateCart() {
+            const count = selectedItems.length;
+            document.getElementById('cartCount').textContent = count;
+            document.getElementById('selectedCount').textContent = [...new Set(selectedItems.map(i => i.mid))].length;
+
+            let totalOdds = 1;
+            selectedItems.forEach(i => totalOdds *= i.odds);
+
+            const stake = parseFloat(document.getElementById('stakeInput').value) || 2;
+            const multiple = parseFloat(document.getElementById('multipleInput').value) || 1;
+            const maxBonus = totalOdds * stake * multiple;
+
+            document.getElementById('maxBonus').textContent = maxBonus.toFixed(2);
+        }
+
+        function renderSelectedPreview() {
+            const preview = document.getElementById('selectedPreview');
+            const list = document.getElementById('selectedList');
+
+            if (selectedItems.length === 0) {
+                preview.style.display = 'none';
+                return;
+            }
+
+            preview.style.display = 'block';
+
+            const poolNames = {
+                'had': '胜平负',
+                'hhad': '让球',
+                'crs': '比分',
+                'ttg': '进球',
+                'hafu': '半全场'
+            };
+
+            list.innerHTML = selectedItems.map((item, idx) => `
+                <div class="selected-item">
+                    <div class="selected-info">
+                        <div class="selected-match">${item.matchName}</div>
+                        <div class="selected-option">${poolNames[item.pool] || item.pool} - ${item.label}</div>
+                    </div>
+                    <div class="selected-odds">${item.odds.toFixed(2)}</div>
+                    <button class="selected-remove" onclick="removeItem(${idx})">×</button>
+                </div>
+            `).join('');
+        }
+
+        function removeItem(idx) {
+            selectedItems.splice(idx, 1);
+            updateCart();
+            renderMatches();
+            renderSelectedPreview();
+        }
+
+        function clearAll() {
+            selectedItems = [];
+            updateCart();
+            renderMatches();
+            renderSelectedPreview();
+        }
+
+        function toggleHide() {
+            const preview = document.getElementById('selectedPreview');
+            preview.style.display = preview.style.display === 'none' ? 'block' : 'none';
+        }
+
+        function showResult() {
+            if (selectedItems.length === 0) {
+                alert('请先选择投注项');
+                return;
+            }
+
+            const stake = parseFloat(document.getElementById('stakeInput').value) || 2;
+            const multiple = parseFloat(document.getElementById('multipleInput').value) || 1;
+
+            let totalOdds = 1;
+            selectedItems.forEach(i => totalOdds *= i.odds);
+
+            const singleBet = stake * 2; // 每注2元
+            const totalStake = singleBet * multiple;
+            const maxWin = totalOdds * singleBet * multiple;
+
+            const modal = document.getElementById('resultModal');
+            const body = document.getElementById('modalBody');
+
+            const poolNames = {
+                'had': '胜平负',
+                'hhad': '让球胜平负',
+                'crs': '比分',
+                'ttg': '总进球',
+                'hafu': '半全场'
+            };
+
+            body.innerHTML = `
+                <div class="result-item">
+                    <div class="result-title">🎫 投注信息</div>
+                    <div style="display:flex;justify-content:space-between;margin-top:10px;">
+                        <div>
+                            <div style="font-size:13px;color:#666;">投注项</div>
+                            <div style="font-size:18px;font-weight:bold;">${selectedItems.length} 项</div>
+                        </div>
+                        <div>
+                            <div style="font-size:13px;color:#666;">过关方式</div>
+                            <div style="font-size:18px;font-weight:bold;">${selectedItems.length > 1 ? `${selectedItems.length}串1` : '单关'}</div>
+                        </div>
+                        <div>
+                            <div style="font-size:13px;color:#666;">倍数</div>
+                            <div style="font-size:18px;font-weight:bold;">${multiple} 倍</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="result-item">
+                    <div class="result-title">💰 金额</div>
+                    <div class="result-value">${totalStake.toFixed(2)} 元</div>
+                    <div class="result-detail">单价 2 元 × ${selectedItems.length > 1 ? '1注' : '1注'} × ${multiple}倍</div>
+                </div>
+
+                <div class="result-item">
+                    <div class="result-title">📊 理论最高奖金</div>
+                    <div class="result-value">${maxWin.toFixed(2)} 元</div>
+                    <div class="result-detail">
+                        总赔率 ${totalOdds.toFixed(2)} = ${selectedItems.map(i => i.odds.toFixed(2)).join(' × ')}
+                    </div>
+                </div>
+
+                <div class="result-item">
+                    <div class="result-title">📋 投注明细</div>
+                    <div style="margin-top:10px;max-height:200px;overflow-y:auto;">
+                        ${selectedItems.map(i => `
+                            <div style="padding:8px 0;border-bottom:1px solid #eee;display:flex;justify-content:space-between;">
+                                <div>
+                                    <div style="font-size:13px;">${i.matchName}</div>
+                                    <div style="font-size:12px;color:#666;">${poolNames[i.pool] || i.pool} - ${i.label}</div>
+                                </div>
+                                <div style="color:#ff416c;font-weight:bold;">${i.odds.toFixed(2)}</div>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            `;
+
+            modal.classList.add('show');
+        }
+
+        function closeModal() {
+            document.getElementById('resultModal').classList.remove('show');
+        }
+
+        function refreshData() {
+            document.getElementById('matchList').innerHTML = `
+                <div class="loading">
+                    <div class="spinner"></div>
+                    加载中...
+                </div>
+            `;
+
+            setTimeout(() => {
+                loadMockData();
+            }, 500);
+        }
+
+        // Listen for input changes
+        document.getElementById('stakeInput').addEventListener('input', updateCart);
+        document.getElementById('multipleInput').addEventListener('input', updateCart);
+
+        // Close modal on backdrop click
+        document.getElementById('resultModal').addEventListener('click', (e) => {
+            if (e.target.id === 'resultModal') {
+                closeModal();
+            }
+        });
+    </script>
+</body>
+</html>

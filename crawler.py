@@ -15,6 +15,14 @@ from utils import setup_logger
 from config import REQUEST_HEADERS, REQUEST_TIMEOUT, REQUEST_DELAY, MAX_RETRIES
 
 
+def clean_asian_handicap(value):
+    """去掉盘口单元格末尾的升降走势标记，保留真正的盘口名称。"""
+    if value is None:
+        return ''
+    text = re.sub(r'\s+', '', str(value))
+    return re.sub(r'(?:[↑↓]|升|降)+$', '', text)
+
+
 class FootballCrawler:
     """足球比赛和赔率数据爬虫"""
     
@@ -464,12 +472,12 @@ class FootballCrawler:
                 try:
                     # 列3-5：即时盘（主队赔率、让球数、客队赔率）
                     current_home = tds[3].get_text(strip=True)
-                    current_handicap = tds[4].get_text(strip=True)
+                    current_handicap = clean_asian_handicap(tds[4].get_text(strip=True))
                     current_away = tds[5].get_text(strip=True)
                     
                     # 列9-11：初盘（主队赔率、让球数、客队赔率）
                     initial_home = tds[9].get_text(strip=True)
-                    initial_handicap = tds[10].get_text(strip=True)
+                    initial_handicap = clean_asian_handicap(tds[10].get_text(strip=True))
                     initial_away = tds[11].get_text(strip=True)
                     
                     # 清理箭头符号
@@ -619,7 +627,7 @@ class FootballCrawler:
         if not text: return 0
         try:
             # 移除常见干扰词
-            text = text.strip()
+            text = clean_asian_handicap(text)
             
             is_receive = '受' in text
             clean_text = text.replace('受', '')
@@ -1287,6 +1295,150 @@ class FootballCrawler:
         except Exception as e:
             self.logger.error(f"爬取赔率信息失败: {str(e)}")
             return {}
+
+    def crawl_match_analysis(self, match_id):
+        """抓取 500 官方比赛数据分析页并转换为稳定的结构化数据。"""
+        url = f"https://odds.500.com/fenxi/shuju-{match_id}.shtml"
+        response = self._make_request(url)
+        response.encoding = response.apparent_encoding or 'gb18030'
+        soup = BeautifulSoup(response.text, 'lxml')
+
+        title = soup.select_one('title')
+        if not title or '数据分析' not in title.get_text():
+            raise ValueError('500 比赛分析页返回异常')
+
+        def text(node):
+            return ' '.join(node.get_text(' ', strip=True).split()) if node else ''
+
+        def parse_match_cell(cell):
+            if not cell:
+                return {'home_team': '', 'away_team': '', 'score': ''}
+            home = cell.select_one('.dz-l')
+            away = cell.select_one('.dz-r')
+            score_node = cell.select_one('em')
+            def team_name(node):
+                if not node:
+                    return ''
+                clone = BeautifulSoup(str(node), 'lxml')
+                for rank in clone.select('.gray'):
+                    rank.decompose()
+                return text(clone)
+            return {
+                'home_team': team_name(home),
+                'away_team': team_name(away),
+                'score': text(score_node).replace(' ', ''),
+            }
+
+        def parse_form_table(table):
+            rows = []
+            if not table:
+                return rows
+            for tr in table.select('tr')[1:]:
+                cells = tr.select('td')
+                if len(cells) < 6:
+                    continue
+                match_cell = parse_match_cell(tr.select_one('td.dz'))
+                handicap_cell = cells[3]
+                rows.append({
+                    'match_id': tr.get('fid') or '',
+                    'league': text(cells[0]),
+                    'date': text(cells[1]),
+                    **match_cell,
+                    'handicap': text(handicap_cell),
+                    'handicap_name': handicap_cell.get('title') or '',
+                    'half_score': text(cells[4]).replace(' ', ''),
+                    'result': text(cells[5]),
+                    'handicap_result': text(cells[6]) if len(cells) > 6 else '',
+                    'total_result': text(cells[7]) if len(cells) > 7 else '',
+                })
+            return rows
+
+        history = []
+        history_table = soup.select_one('#team_jiaozhan table.pub_table')
+        if history_table:
+            for tr in history_table.select('tr')[1:]:
+                cells = tr.select('td')
+                if len(cells) < 5:
+                    continue
+                match_cell = parse_match_cell(tr.select_one('td.dz'))
+                asian_parts = [text(span) for span in cells[6].select('span')] if len(cells) > 6 else []
+                history.append({
+                    'match_id': tr.get('fid') or '',
+                    'league': text(cells[0]),
+                    'date': text(cells[1]),
+                    **match_cell,
+                    'half_score': text(cells[3]).replace(' ', ''),
+                    'result': text(cells[4]),
+                    'euro_odds': [text(span) for span in cells[5].select('span')] if len(cells) > 5 else [],
+                    'asian_odds': asian_parts,
+                    'handicap_result': text(cells[7]) if len(cells) > 7 else '',
+                    'total_result': text(cells[8]) if len(cells) > 8 else '',
+                })
+
+        record_tables = []
+        for table in soup.select('div.record table.pub_table'):
+            first_row_cells = table.select_one('tr').select('th,td') if table.select_one('tr') else []
+            if len(first_row_cells) == 8:
+                record_tables.append(table)
+        recent = {
+            'home': parse_form_table(record_tables[0] if len(record_tables) > 0 else None),
+            'away': parse_form_table(record_tables[2] if len(record_tables) > 2 else None),
+        }
+
+        standings = []
+        standings_table = soup.select_one('.hd_jfb table')
+        if standings_table:
+            for tr in standings_table.select('tr'):
+                cells = tr.select('td')
+                if len(cells) >= 3:
+                    standings.append({
+                        'rank': text(cells[0]),
+                        'team': text(cells[1]),
+                        'points': text(cells[2]),
+                        'current_match_team': 'jfb_this' in (tr.get('class') or []),
+                    })
+
+        future = {'home': [], 'away': []}
+        future_box = next(
+            (box for box in soup.select('div.M_box.integral')
+             if box.select_one('h4') and '未来赛事' in text(box.select_one('h4'))),
+            None
+        )
+        if future_box:
+            for side, table in zip(('home', 'away'), future_box.select('table.pub_table')[:2]):
+                for tr in table.select('tr')[1:]:
+                    cells = tr.select('td')
+                    if len(cells) < 4:
+                        continue
+                    teams = cells[2].select('a')
+                    future[side].append({
+                        'league': text(cells[0]),
+                        'date': text(cells[1]),
+                        'home_team': text(teams[0]) if len(teams) > 0 else '',
+                        'away_team': text(teams[1]) if len(teams) > 1 else '',
+                        'interval': text(cells[3]),
+                    })
+
+        team_names = []
+        rank_box = next(
+            (box for box in soup.select('div.M_box')
+             if box.select_one('h4') and '赛前联赛积分排名' in text(box.select_one('h4'))),
+            None
+        )
+        if rank_box:
+            team_names = [text(node) for node in rank_box.select('.team_name')[:2]]
+
+        return {
+            'source': '500彩票网',
+            'source_url': url,
+            'match_id': str(match_id),
+            'title': text(title),
+            'teams': team_names,
+            'standings': standings,
+            'history': history,
+            'recent': recent,
+            'future': future,
+        }
     
     def _map_odds_details(self, match, odds_details):
         """将爬取的详细赔率数据映射到比赛对象"""
@@ -1305,10 +1457,10 @@ class FootballCrawler:
         if odds_details.get('asian_handicap'):
             asian = odds_details['asian_handicap'][0]
             match['asian_initial_home_odds'] = asian.get('initial_home_odds')
-            match['asian_initial_handicap'] = asian.get('initial_handicap')
+            match['asian_initial_handicap'] = clean_asian_handicap(asian.get('initial_handicap'))
             match['asian_initial_away_odds'] = asian.get('initial_away_odds')
             match['asian_current_home_odds'] = asian.get('current_home_odds')
-            match['asian_current_handicap'] = asian.get('current_handicap')
+            match['asian_current_handicap'] = clean_asian_handicap(asian.get('current_handicap'))
             match['asian_current_away_odds'] = asian.get('current_away_odds')
             match['asian_odds'] = f"{match['asian_current_home_odds']}/{match['asian_current_handicap']}/{match['asian_current_away_odds']}"
 

@@ -1,0 +1,267 @@
+<template>
+  <div class="app-container primary-page bet-records-page">
+    <header class="top-header">
+      <span class="header-side-spacer"></span>
+      <span class="header-title">投注记录</span>
+      <AccountButton />
+    </header>
+
+    <main class="records-content">
+      <section v-if="authState.initialized && !authState.user" class="account-gate">
+        <div class="account-gate-icon">▤</div>
+        <h2>登录后查看投注记录</h2>
+        <p>每个账号的投注方案独立保存，其他用户无法查看。</p>
+        <button type="button" @click="openAuth('login')">登录 / 注册</button>
+      </section>
+
+      <template v-else-if="authState.user">
+        <section class="records-summary">
+          <div>
+            <span>累计方案</span>
+            <strong>{{ stats.total_bets || 0 }}</strong>
+          </div>
+          <div>
+            <span>累计投入</span>
+            <strong>{{ money(stats.total_stake) }} 元</strong>
+          </div>
+          <div>
+            <span>净盈亏</span>
+            <strong>{{ signedMoney(stats.net_profit) }} 元</strong>
+          </div>
+        </section>
+
+        <div class="records-toolbar">
+          <div>
+            <h2>我的方案</h2>
+            <p>仅当前账号可见</p>
+          </div>
+          <button type="button" :disabled="loading" @click="fetchRecords">{{ loading ? '刷新中…' : '刷新' }}</button>
+        </div>
+
+        <div class="records-filter" aria-label="方案筛选">
+          <button
+            type="button"
+            :class="{ active: recordFilter === 'all' }"
+            @click="setRecordFilter('all')"
+          >全部方案</button>
+          <button
+            type="button"
+            :class="{ active: recordFilter === 'won' }"
+            @click="setRecordFilter('won')"
+          >盈利单</button>
+        </div>
+
+        <div v-if="loading && records.length === 0" class="page-loading">正在加载投注记录…</div>
+        <section v-else-if="records.length === 0" class="records-empty">
+          <div>{{ recordFilter === 'won' ? '暂无盈利方案' : '暂无投注记录' }}</div>
+          <router-link v-if="recordFilter === 'all'" to="/calculator">去计算器选择比赛</router-link>
+        </section>
+
+        <section v-else class="records-list">
+          <article
+            v-for="record in records"
+            :key="record.id"
+            class="record-card"
+            :class="'record-card--' + record.status"
+            @click="selectedRecord = record"
+          >
+            <div class="record-card-head">
+              <span class="record-status" :class="'record-status--' + record.status">
+                {{ statusText(record.status) }}
+              </span>
+              <time>{{ formatTime(record.created_at) }}</time>
+              <button type="button" class="record-delete" aria-label="删除" @click.stop="removeRecord(record.id)">×</button>
+            </div>
+            <div class="record-description">{{ record.description }}</div>
+            <div class="record-meta">
+              <span>{{ record.match_count }}场</span>
+              <span>{{ record.option_count }}个选项</span>
+              <span>{{ record.notes }}注</span>
+            </div>
+            <div class="record-money" :class="{ 'record-money--settled': record.status !== 'pending' }">
+              <span>投入 <strong>{{ money(record.stake) }}元</strong></span>
+              <span v-if="record.status === 'pending'">理论最高 <strong>{{ money(record.max_bonus) }}元</strong></span>
+              <template v-else>
+                <span>实际返还 <strong>{{ money(record.actual_return) }}元</strong></span>
+                <span>
+                  {{ profitLabel(record.profit) }}
+                  <strong :class="profitClass(record.profit)">{{ signedMoney(record.profit) }}元</strong>
+                </span>
+              </template>
+            </div>
+          </article>
+        </section>
+      </template>
+
+      <div v-else class="page-loading">正在确认登录状态…</div>
+    </main>
+
+    <div v-if="selectedRecord" class="record-detail-overlay" @click.self="selectedRecord = null">
+      <section class="record-detail-modal">
+        <header>
+          <div>
+            <h2>投注方案</h2>
+            <p>{{ formatTime(selectedRecord.created_at) }}</p>
+          </div>
+          <button type="button" @click="selectedRecord = null">×</button>
+        </header>
+        <div class="record-detail-summary">
+          <div>
+            <span>{{ selectedRecord.description }}</span>
+            <small>{{ statusText(selectedRecord.status) }}</small>
+          </div>
+          <strong>{{ money(selectedRecord.stake) }}元</strong>
+        </div>
+        <div class="record-detail-list">
+          <section v-for="group in groupedItems(selectedRecord)" :key="group.matchId" class="record-match-group">
+            <div class="record-match-title">
+              <span>{{ group.items[0].match_num || '比赛' }}</span>
+              <strong>{{ group.items[0].home_team }} VS {{ group.items[0].away_team }}</strong>
+              <em v-if="group.fullScore" class="record-result-score">{{ group.fullScore }}</em>
+              <em v-else-if="group.isVoid" class="record-result-score record-result-score--void">退</em>
+            </div>
+            <div v-if="group.fullScore" class="record-match-result">
+              全场 {{ group.fullScore }}<span v-if="group.halfScore"> · 半场 {{ group.halfScore }}</span>
+            </div>
+            <div v-else-if="group.resultStatus" class="record-match-result record-match-result--void">
+              {{ group.resultStatus }}
+            </div>
+            <div class="record-picks">
+              <span
+                v-for="item in group.items"
+                :key="item.pool + item.opt"
+                :class="item.result ? 'record-pick--' + item.result : ''"
+              >
+                <b v-if="item.result">{{ resultIcon(item.result) }}</b>
+                {{ item.pool_name }} {{ item.label }} <em>{{ money(item.odd) }}</em>
+              </span>
+            </div>
+          </section>
+        </div>
+        <footer :class="{ 'record-detail-footer--settled': selectedRecord.status !== 'pending' }">
+          <template v-if="selectedRecord.status === 'pending'">
+            <span>理论最高奖金</span>
+            <strong>{{ money(selectedRecord.max_bonus) }} 元</strong>
+          </template>
+          <template v-else>
+            <span>实际返还 <strong>{{ money(selectedRecord.actual_return) }} 元</strong></span>
+            <span>
+              {{ profitLabel(selectedRecord.profit) }}
+              <strong :class="profitClass(selectedRecord.profit)">{{ signedMoney(selectedRecord.profit) }} 元</strong>
+            </span>
+          </template>
+        </footer>
+      </section>
+    </div>
+  </div>
+</template>
+
+<script setup>
+import { onMounted, reactive, ref, watch } from 'vue'
+import AccountButton from '../components/AccountButton.vue'
+import { apiRequest, authState, loadCurrentUser, openAuth } from '../auth'
+
+const records = ref([])
+const stats = reactive({ total_bets: 0, total_stake: 0, total_notes: 0, net_profit: 0 })
+const loading = ref(false)
+const selectedRecord = ref(null)
+const recordFilter = ref('all')
+
+const money = (value) => Number(value || 0).toFixed(2)
+const signedMoney = (value) => {
+  const number = Number(value || 0)
+  return `${number > 0 ? '+' : ''}${number.toFixed(2)}`
+}
+const statusText = (status) => ({
+  pending: '待结算',
+  won: '已盈利',
+  lost: '已结算',
+  draw: '已返还'
+}[status] || '待结算')
+const profitLabel = (value) => Number(value || 0) > 0 ? '净盈利' : Number(value || 0) < 0 ? '净亏损' : '盈亏'
+const profitClass = (value) => Number(value || 0) > 0 ? 'profit-positive' : Number(value || 0) < 0 ? 'profit-negative' : 'profit-zero'
+const resultIcon = (result) => ({ win: '✓', lose: '×', void: '退' }[result] || '')
+
+const formatTime = (value) => {
+  if (!value) return ''
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value.slice(0, 16).replace('T', ' ')
+  return date.toLocaleString('zh-CN', { hour12: false, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+}
+
+const groupedItems = (record) => {
+  const map = new Map()
+  const settledMatches = new Map(
+    (record.settlement?.matches || []).map(match => [String(match.match_id), match])
+  )
+  ;(record.selected_items || []).forEach(item => {
+    const matchId = String(item.match_id)
+    if (!map.has(matchId)) {
+      const settled = settledMatches.get(matchId) || {}
+      map.set(matchId, {
+        matchId,
+        fullScore: settled.full_score || '',
+        halfScore: settled.half_score || '',
+        resultStatus: settled.result_status || '',
+        isVoid: !!settled.is_void,
+        settled,
+        items: []
+      })
+    }
+    const group = map.get(matchId)
+    const itemResult = (group.settled.item_results || []).find(
+      result => result.pool === item.pool && result.opt === item.opt
+    )
+    group.items.push({ ...item, result: itemResult?.result || '' })
+  })
+  return [...map.values()]
+}
+
+const fetchRecords = async () => {
+  if (!authState.user) return
+  loading.value = true
+  try {
+    const [recordResult, statsResult] = await Promise.all([
+      apiRequest(recordFilter.value === 'won' ? '/api/user/bets?status=won' : '/api/user/bets'),
+      apiRequest('/api/user/bet-stats')
+    ])
+    records.value = recordResult.data || []
+    Object.assign(stats, statsResult.data || {})
+  } catch (error) {
+    if (error.status === 401) openAuth('login')
+  } finally {
+    loading.value = false
+  }
+}
+
+const setRecordFilter = (filter) => {
+  if (recordFilter.value === filter) return
+  recordFilter.value = filter
+  records.value = []
+  selectedRecord.value = null
+  fetchRecords()
+}
+
+const removeRecord = async (id) => {
+  if (!window.confirm('确定删除这条投注记录吗？')) return
+  try {
+    await apiRequest(`/api/user/bets/${id}`, { method: 'DELETE' })
+    if (selectedRecord.value?.id === id) selectedRecord.value = null
+    await fetchRecords()
+  } catch (error) {
+    window.alert(error.message || '删除失败')
+  }
+}
+
+watch(() => authState.user?.id, () => {
+  records.value = []
+  recordFilter.value = 'all'
+  Object.assign(stats, { total_bets: 0, total_stake: 0, total_notes: 0, net_profit: 0 })
+  if (authState.user) fetchRecords()
+})
+
+onMounted(async () => {
+  await loadCurrentUser()
+  if (authState.user) fetchRecords()
+})
+</script>

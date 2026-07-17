@@ -1,12 +1,21 @@
 """
 足球数据展示Web服务
 """
-from flask import Flask, render_template, jsonify, request, Response, stream_with_context
+from flask import Flask, render_template, jsonify, request, Response, stream_with_context, session
 
 
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from functools import wraps
+from itertools import combinations
+from bet_settlement import (
+    SportteryResultClient,
+    candidate_result_dates,
+    merge_rescheduled_void_results,
+    settle_bet,
+)
 from crawler import FootballCrawler
+from user_storage import UserStorage
 
 from db_storage import MongoDBStorage
 from prediction_engine import PredictionEngine
@@ -18,7 +27,11 @@ except Exception as e:
     BackgroundScheduler = None
     CronTrigger = None
 import os
+import re
 import requests
+import random
+import threading
+import uuid
 from config import WECHAT_WEBHOOK_URL
 
 
@@ -26,6 +39,36 @@ from config import WECHAT_WEBHOOK_URL
 app = Flask(__name__)
 app.config['JSON_AS_ASCII'] = False
 app.config['JSONIFY_MIMETYPE'] = "application/json; charset=utf-8"
+app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'mygoal-local-session-key-change-in-production')
+app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=30)
+
+user_storage = UserStorage(
+    os.getenv('USER_DATABASE_PATH', os.path.join(os.path.dirname(__file__), 'data', 'users.db'))
+)
+sporttery_result_client = SportteryResultClient()
+settlement_lock = threading.Lock()
+
+
+def login_required(view):
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        user_id = session.get('user_id')
+        if not user_id or not user_storage.get_user(user_id):
+            session.pop('user_id', None)
+            return jsonify({'success': False, 'message': '请先登录', 'code': 'AUTH_REQUIRED'}), 401
+        return view(*args, **kwargs)
+    return wrapped
+
+
+@app.after_request
+def after_request(response):
+    """添加CORS响应头"""
+    response.headers.add('Access-Control-Allow-Origin', '*')
+    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
+    response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
+    return response
 
 # 初始化爬虫和存储
 crawler = FootballCrawler()
@@ -545,11 +588,6 @@ def get_matches():
     else:
         matches = []
     
-    # 支持按联赛筛选
-    league = request.args.get('league')
-    if league:
-        matches = [m for m in matches if m.get('league') == league]
-    
     # 支持按状态筛选
     status = request.args.get('status')
     if status:
@@ -567,6 +605,23 @@ def get_matches():
         # 如果用户明确查看历史日期，则不默认过滤状态
         # 修改：同时展示未开始(0)和改期(6)的比赛
         matches = [m for m in matches if m.get('status') in [0, 6]]
+
+    # 联赛筛选弹层需要完整候选列表，因此先按日期和状态统计，再筛选联赛。
+    available_leagues = sorted({
+        str(match.get('league')).strip()
+        for match in matches
+        if match.get('league')
+    })
+    available_total = len(matches)
+    league_value = str(request.args.get('league') or '').strip()
+    selected_leagues = {
+        item.strip() for item in league_value.split(',') if item.strip()
+    }
+    if selected_leagues:
+        matches = [
+            match for match in matches
+            if str(match.get('league') or '').strip() in selected_leagues
+        ]
     
     # 排序：未开始的比赛按时间升序（默认或明确传入status=0）
     try:
@@ -616,6 +671,8 @@ def get_matches():
         'data': paginated_matches,
         'count': len(paginated_matches),
         'total': total,
+        'available_total': available_total,
+        'leagues': available_leagues,
         'page': page,
         'page_size': page_size,
         'total_pages': (total + page_size - 1) // page_size
@@ -632,11 +689,111 @@ def get_match_detail(match_id):
             'success': False,
             'message': '比赛不存在'
         }), 404
+
+    # 兼容清理历史记录：500.com 盘口单元格会把“升/降”走势附在文本末尾。
+    for field in ('asian_initial_handicap', 'asian_current_handicap'):
+        if match.get(field) is not None:
+            match[field] = re.sub(r'(?:[↑↓]|升|降)+$', '', str(match[field]).strip())
     
     return jsonify({
         'success': True,
         'data': match
     })
+
+
+@app.route('/api/match/<match_id>/sporttery-preview')
+def get_sporttery_preview(match_id):
+    """代理中国体彩网的赛前数据，避免前端跨域并统一上游异常处理。"""
+    match = mongo_storage.get_match_by_id(match_id) if mongo_storage else None
+    if not match:
+        return jsonify({'success': False, 'message': '比赛不存在'}), 404
+
+    known_match_ids = {
+        # 500.com 比赛 ID -> 中国竞彩 sportteryMatchId
+        '1362704': '2040532',
+    }
+    sporttery_match_id = (
+        request.args.get('sporttery_mid')
+        or match.get('sporttery_match_id')
+        or known_match_ids.get(str(match_id))
+    )
+    if not sporttery_match_id:
+        return jsonify({
+            'success': False,
+            'message': '当前比赛尚未关联竞彩比赛 ID'
+        }), 422
+
+    base_url = 'https://webapi.sporttery.cn/gateway/uniform/football'
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) '
+                      'AppleWebKit/605.1.15 Mobile/15E148',
+        'Referer': 'https://m.sporttery.cn/',
+        'Accept': 'application/json, text/plain, */*',
+    }
+    endpoints = {
+        'history': ('getResultHistoryV1.qry', {
+            'termLimits': 10, 'tournamentFlag': 0, 'homeAwayFlag': 0
+        }),
+        'recent': ('getMatchResultV1.qry', {
+            'termLimits': 10, 'tournamentFlag': 0, 'homeAwayFlag': 0
+        }),
+        'feature': ('getMatchFeatureV1.qry', {'termLimits': 10}),
+        'table': ('getMatchTablesV1.qry', {}),
+        'future': ('getFutureMatchesV1.qry', {'termLimits': 4}),
+        'injury': ('getInjurySuspensionV1.qry', {}),
+    }
+    result = {}
+    unavailable = []
+    for key, (endpoint, params) in endpoints.items():
+        params['sportteryMatchId'] = sporttery_match_id
+        try:
+            response = requests.get(
+                f'{base_url}/{endpoint}',
+                params=params,
+                headers=headers,
+                timeout=8,
+            )
+            if response.status_code != 200 or 'application/json' not in response.headers.get('Content-Type', ''):
+                unavailable.append(key)
+                continue
+            payload = response.json()
+            if payload.get('errorCode') == '0':
+                result[key] = payload.get('value') or {}
+            else:
+                unavailable.append(key)
+        except (requests.RequestException, ValueError):
+            unavailable.append(key)
+
+    if not result:
+        return jsonify({
+            'success': False,
+            'message': '竞彩数据源暂时不可用',
+            'sporttery_match_id': sporttery_match_id,
+        }), 502
+
+    return jsonify({
+        'success': True,
+        'data': result,
+        'sporttery_match_id': sporttery_match_id,
+        'unavailable': unavailable,
+        'source': '中国体彩网',
+    })
+
+
+@app.route('/api/match/<match_id>/500-analysis')
+def get_500_match_analysis(match_id):
+    """500 官方数据分析页的结构化代理接口。"""
+    if not re.fullmatch(r'\d+', str(match_id)):
+        return jsonify({'success': False, 'message': '比赛 ID 格式错误'}), 400
+    try:
+        data = crawler.crawl_match_analysis(match_id)
+        return jsonify({'success': True, 'data': data})
+    except requests.RequestException as exc:
+        app.logger.warning('500 analysis request failed for %s: %s', match_id, exc)
+        return jsonify({'success': False, 'message': '500 数据源请求失败'}), 502
+    except (ValueError, AttributeError, IndexError) as exc:
+        app.logger.warning('500 analysis parse failed for %s: %s', match_id, exc)
+        return jsonify({'success': False, 'message': '500 数据解析失败'}), 502
 
 
 @app.route('/api/leagues')
@@ -917,6 +1074,42 @@ def my_picks_page():
     return render_template('my_picks.html')
 
 
+@app.route('/calculator')
+def calculator_page():
+    """计算器页面"""
+    return render_template('calculator.html')
+
+
+@app.route('/api/calculator/matches')
+def get_calculator_matches():
+    """获取计算器比赛数据（代理体彩API）"""
+    try:
+        import requests
+        url = 'https://webapi.sporttery.cn/gateway/uniform/football/getMatchCalculatorV1.qry'
+        params = {
+            'poolCode': request.args.get('poolCode', 'had,hhad,crs,ttg,hafu')
+        }
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1',
+            'Referer': 'https://www.sporttery.cn/'
+        }
+
+        resp = requests.get(url, params=params, headers=headers, timeout=15)
+
+        if resp.status_code == 200:
+            try:
+                data = resp.json()
+                return jsonify({'success': True, 'data': data})
+            except:
+                # If not JSON, return raw
+                return jsonify({'success': True, 'raw': resp.text})
+        else:
+            return jsonify({'success': False, 'status': resp.status_code, 'message': 'API request failed'})
+
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)})
+
+
 @app.route('/api/predictions')
 def get_predictions():
     """API - 获取预测列表"""
@@ -1091,8 +1284,14 @@ def _start_scheduler():
             if scheduler is None:
                 scheduler = BackgroundScheduler()
                 scheduler.add_job(_crawl_latest, CronTrigger(minute='*/15'), id='crawl_every_15m', replace_existing=True)
+                scheduler.add_job(
+                    _settle_pending_calculator_bets,
+                    CronTrigger(minute='*/5'),
+                    id='settle_calculator_bets_every_5m',
+                    replace_existing=True,
+                )
                 scheduler.start()
-                print("✅ 定时任务调度器已启动 (每15分钟刷新)")
+                print("✅ 定时任务调度器已启动 (每15分钟刷新，每5分钟结算投注)")
         else:
             print("⚠️  无法启动定时任务: APScheduler未安装")
     except Exception as e:
@@ -1881,7 +2080,267 @@ def get_my_picks():
 
 
 
-# --- Betting System Routes ---
+# --- Account and calculator bet routes ---
+
+@app.route('/api/auth/me', methods=['GET'])
+def auth_me():
+    user_id = session.get('user_id')
+    user = user_storage.get_user(user_id) if user_id else None
+    if not user:
+        session.pop('user_id', None)
+    return jsonify({'success': True, 'authenticated': bool(user), 'user': user})
+
+
+@app.route('/api/auth/register', methods=['POST'])
+def auth_register():
+    data = request.get_json(silent=True) or {}
+    username = str(data.get('username') or '').strip()
+    display_name = str(data.get('display_name') or username).strip()
+    password = str(data.get('password') or '')
+
+    if not re.fullmatch(r'[A-Za-z0-9_\u4e00-\u9fff]{2,32}', username):
+        return jsonify({'success': False, 'message': '用户名需为2-32位中文、字母、数字或下划线'}), 400
+    if len(display_name) < 1 or len(display_name) > 32:
+        return jsonify({'success': False, 'message': '昵称长度需为1-32位'}), 400
+    if len(password) < 6 or len(password) > 128:
+        return jsonify({'success': False, 'message': '密码长度需为6-128位'}), 400
+
+    user = user_storage.create_user(username, display_name, password)
+    if not user:
+        return jsonify({'success': False, 'message': '用户名已存在'}), 409
+
+    session.clear()
+    session.permanent = True
+    session['user_id'] = user['id']
+    return jsonify({'success': True, 'user': user}), 201
+
+
+@app.route('/api/auth/login', methods=['POST'])
+def auth_login():
+    data = request.get_json(silent=True) or {}
+    username = str(data.get('username') or '').strip()
+    password = str(data.get('password') or '')
+    user = user_storage.authenticate(username, password)
+    if not user:
+        return jsonify({'success': False, 'message': '用户名或密码错误'}), 401
+
+    session.clear()
+    session.permanent = True
+    session['user_id'] = user['id']
+    return jsonify({'success': True, 'user': user})
+
+
+@app.route('/api/auth/logout', methods=['POST'])
+def auth_logout():
+    session.clear()
+    return jsonify({'success': True})
+
+
+POOL_NAMES = {
+    'had': '胜平负',
+    'hhad': '让球胜平负',
+    'score': '比分',
+    'goals': '总进球',
+    'hafu': '半全场',
+}
+
+
+def _settle_pending_calculator_bets(user_id=None):
+    with settlement_lock:
+        pending_bets = user_storage.list_pending_bets(user_id)
+        if not pending_bets:
+            return {'checked': 0, 'settled': 0}
+
+        dates = {
+            str(item.get('date') or '')[:10]
+            for bet in pending_bets
+            for item in bet.get('selected_items') or []
+            if item.get('date')
+        }
+        result_index = {}
+        for match_date in candidate_result_dates(dates):
+            try:
+                result_index.update(sporttery_result_client.build_index([match_date]))
+            except Exception as exc:
+                print("⚠️  获取 {} 体彩赛果失败: {}".format(match_date, exc))
+
+        if mongo_storage and dates:
+            try:
+                rescheduled_matches = mongo_storage.get_matches({
+                    'owner_date': {'$in': sorted(dates)},
+                    'status': 6,
+                })
+                merge_rescheduled_void_results(
+                    result_index,
+                    pending_bets,
+                    rescheduled_matches,
+                )
+            except Exception as exc:
+                print("⚠️  获取改期比赛失败: {}".format(exc))
+
+        settled_count = 0
+        for bet in pending_bets:
+            settlement = settle_bet(bet, result_index)
+            if settlement and user_storage.settle_bet(bet['id'], settlement):
+                settled_count += 1
+        return {'checked': len(pending_bets), 'settled': settled_count}
+
+
+def _calculator_bet_payload(data):
+    raw_items = data.get('selected_items') or []
+    if not isinstance(raw_items, list) or not raw_items:
+        raise ValueError('请至少选择一个投注项')
+    if len(raw_items) > 200:
+        raise ValueError('投注选项过多')
+
+    try:
+        multiplier = int(data.get('multiplier', 1))
+    except (TypeError, ValueError):
+        raise ValueError('倍数格式错误')
+    if multiplier < 1 or multiplier > 9999:
+        raise ValueError('倍数需为1-9999')
+
+    sanitized_items = []
+    option_counts = {}
+    total_odds = 1.0
+    for item in raw_items:
+        if not isinstance(item, dict):
+            raise ValueError('投注项格式错误')
+        match_id = str(item.get('match_id') or item.get('matchId') or '').strip()
+        pool = str(item.get('pool') or '').strip()
+        option = str(item.get('opt') or '').strip()
+        if not match_id or pool not in POOL_NAMES or not option:
+            raise ValueError('投注项缺少必要字段')
+        try:
+            odds = float(item.get('odd'))
+        except (TypeError, ValueError):
+            raise ValueError('赔率格式错误')
+        if odds <= 0 or odds > 10000:
+            raise ValueError('赔率超出有效范围')
+
+        match = item.get('match') if isinstance(item.get('match'), dict) else {}
+        sanitized = {
+            'match_id': match_id[:64],
+            'pool': pool,
+            'pool_name': POOL_NAMES[pool],
+            'opt': option[:32],
+            'label': str(item.get('label') or option)[:32],
+            'odd': round(odds, 2),
+            'match_num': str(match.get('num') or item.get('match_num') or '')[:32],
+            'league': str(match.get('league') or item.get('league') or '')[:64],
+            'home_team': str(match.get('homeTeam') or item.get('home_team') or '')[:64],
+            'away_team': str(match.get('awayTeam') or item.get('away_team') or '')[:64],
+            'date': str(match.get('date') or item.get('date') or '')[:16],
+            'time': str(match.get('time') or item.get('time') or '')[:16],
+            'handicap': match.get('handicap', item.get('handicap')),
+        }
+        sanitized_items.append(sanitized)
+        option_counts[match_id] = option_counts.get(match_id, 0) + 1
+        total_odds *= odds
+
+    match_count = len(option_counts)
+    if match_count > 8:
+        raise ValueError('最多只能选择8场比赛')
+
+    raw_pass_counts = data.get('pass_counts') or []
+    if not isinstance(raw_pass_counts, list):
+        raise ValueError('过关方式格式错误')
+    try:
+        pass_counts = sorted(set(int(count) for count in raw_pass_counts))
+    except (TypeError, ValueError):
+        raise ValueError('过关方式格式错误')
+    if not pass_counts:
+        raise ValueError('请选择过关方式')
+    if any(count < 1 or count > match_count or count > 8 for count in pass_counts):
+        raise ValueError('过关方式与已选比赛场数不匹配')
+
+    counts = list(option_counts.values())
+    notes = 0
+    for pass_count in pass_counts:
+        for combo in combinations(counts, pass_count):
+            combo_notes = 1
+            for count in combo:
+                combo_notes *= count
+            notes += combo_notes
+    if notes < 1:
+        raise ValueError('无法计算投注注数')
+
+    stake = round(notes * 2 * multiplier, 2)
+    max_bonus = round(total_odds * notes * 2 * multiplier, 2)
+    pass_text = '、'.join('单关' if count == 1 else '{}关'.format(count) for count in pass_counts)
+    description = '{}场 · {} · {}倍'.format(match_count, pass_text, multiplier)
+    return {
+        'id': str(uuid.uuid4()),
+        'status': 'pending',
+        'multiplier': multiplier,
+        'pass_counts': pass_counts,
+        'selected_items': sanitized_items,
+        'match_count': match_count,
+        'option_count': len(sanitized_items),
+        'notes': notes,
+        'stake': stake,
+        'total_odds': round(total_odds, 2),
+        'max_bonus': max_bonus,
+        'description': description,
+        'created_at': datetime.utcnow().replace(microsecond=0).isoformat() + 'Z',
+    }
+
+
+@app.route('/api/user/bets', methods=['POST'])
+@login_required
+def create_user_bet():
+    try:
+        bet = _calculator_bet_payload(request.get_json(silent=True) or {})
+    except ValueError as exc:
+        return jsonify({'success': False, 'message': str(exc)}), 400
+    saved = user_storage.create_bet(session['user_id'], bet)
+    return jsonify({'success': True, 'data': saved}), 201
+
+
+@app.route('/api/user/bets', methods=['GET'])
+@login_required
+def list_user_bets():
+    try:
+        limit = max(1, min(100, int(request.args.get('limit', 50))))
+        offset = max(0, int(request.args.get('offset', 0)))
+    except ValueError:
+        return jsonify({'success': False, 'message': '分页参数错误'}), 400
+    status = str(request.args.get('status') or '').strip()
+    if status and status not in {'pending', 'won', 'lost', 'draw'}:
+        return jsonify({'success': False, 'message': '投注状态参数错误'}), 400
+    _settle_pending_calculator_bets(session['user_id'])
+    records = user_storage.list_bets(
+        session['user_id'],
+        limit=limit,
+        offset=offset,
+        status=status or None,
+    )
+    return jsonify({'success': True, 'data': records})
+
+
+@app.route('/api/user/bets/<bet_id>', methods=['DELETE'])
+@login_required
+def delete_user_bet(bet_id):
+    deleted = user_storage.delete_bet(session['user_id'], bet_id)
+    if not deleted:
+        return jsonify({'success': False, 'message': '记录不存在'}), 404
+    return jsonify({'success': True})
+
+
+@app.route('/api/user/bet-stats', methods=['GET'])
+@login_required
+def get_user_bet_stats():
+    month = str(request.args.get('month') or '').strip()
+    if month and not re.fullmatch(r'\d{4}-(0[1-9]|1[0-2])', month):
+        return jsonify({'success': False, 'message': '月份参数格式错误'}), 400
+    _settle_pending_calculator_bets(session['user_id'])
+    return jsonify({
+        'success': True,
+        'data': user_storage.get_stats(session['user_id'], month=month or None),
+    })
+
+
+# --- Legacy device-based betting system routes ---
 
 @app.route('/bets')
 def betting_list_page():
@@ -2140,6 +2599,230 @@ def _check_leg_result(match, opt, item_handicap=None):
             return 'pending'
             
     return 'pending'
+
+
+# ============ 计算器API ============
+@app.route('/api/calc/matches', methods=['GET'])
+def get_calc_matches():
+    """获取计算器比赛数据 - 从体彩官方API获取真实数据"""
+    try:
+        url = 'https://webapi.sporttery.cn/gateway/uniform/football/getMatchCalculatorV1.qry'
+        params = {'poolCode': 'had,hhad,crs,ttg,hafu'}
+
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1',
+            'Referer': 'https://www.sporttery.cn/'
+        }
+
+        resp = requests.get(url, params=params, headers=headers, timeout=10)
+        data = resp.json()
+
+        if not data.get('success'):
+            return jsonify({
+                'success': False,
+                'message': data.get('errorMessage', '获取数据失败')
+            })
+
+        matches = []
+        value = data.get('value', {})
+        match_info_list = value.get('matchInfoList', [])
+
+        week_map = {'1': '周日', '2': '周一', '3': '周二', '4': '周三',
+                    '5': '周四', '6': '周五', '7': '周六'}
+
+        match_idx = 0
+        for group in match_info_list:
+            business_date = group.get('businessDate', '')
+            sub_match_list = group.get('subMatchList', [])
+
+            for sm in sub_match_list:
+                match_id = str(sm.get('matchId', match_idx))
+                match_num_str = sm.get('matchNumStr', '')
+                match_week = str(sm.get('matchWeek', ''))
+                week_name = week_map.get(match_week, '')
+
+                match = {
+                    'id': match_id,
+                    'num': match_num_str or f'{week_name}{101 + match_idx}',
+                    'league': sm.get('leagueAbbName') or sm.get('leagueAllName', sm.get('leagueName', '')),
+                    'date': business_date,
+                    'dateText': f'{week_name} {business_date}' if week_name else business_date,
+                    'time': sm.get('matchTime', ''),
+                    'homeTeam': sm.get('homeTeamAbbName') or sm.get('homeTeamAllName', ''),
+                    'awayTeam': sm.get('awayTeamAbbName') or sm.get('awayTeamAllName', ''),
+                    'handicap': 0,
+                    'had': _parse_had_odds(sm.get('had')),
+                    'hhad': _parse_hhad_odds(sm.get('hhad')),
+                    'score': _parse_crs_odds(sm.get('crs')),
+                    'goals': _parse_ttg_odds(sm.get('ttg')),
+                    'hafu': _parse_hafu_odds(sm.get('hafu')),
+                    'hadSingle': 0,
+                    'hhadSingle': 0
+                }
+
+                handicap_val = sm.get('hhad', {}).get('goalLineValue', '')
+                if handicap_val:
+                    try:
+                        match['handicap'] = float(handicap_val)
+                    except:
+                        pass
+
+                # 从 poolList 中提取单关标识
+                pool_list = sm.get('poolList', [])
+                for p in pool_list:
+                    if p.get('poolCode') == 'HAD':
+                        match['hadSingle'] = int(p.get('bettingSingle', 0) or 0)
+                    elif p.get('poolCode') == 'HHAD':
+                        match['hhadSingle'] = int(p.get('bettingSingle', 0) or 0)
+
+                matches.append(match)
+                match_idx += 1
+
+        return jsonify({
+            'success': True,
+            'data': matches
+        })
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+
+def _parse_had_odds(had):
+    """解析胜平负赔率 (0=无变化, 1=上升, 2=下降)"""
+    if not had:
+        return {'win': 0, 'draw': 0, 'lose': 0,
+                'winFlag': 0, 'drawFlag': 0, 'loseFlag': 0}
+    return {
+        'win': float(had.get('h', 0)),
+        'draw': float(had.get('d', 0)),
+        'lose': float(had.get('a', 0)),
+        'winFlag': int(had.get('hf', 0) or 0),
+        'drawFlag': int(had.get('df', 0) or 0),
+        'loseFlag': int(had.get('af', 0) or 0)
+    }
+
+
+def _parse_hhad_odds(hhad):
+    """解析让球胜平负赔率 (0=无变化, 1=上升, 2=下降)"""
+    if not hhad:
+        return {'win': 0, 'draw': 0, 'lose': 0,
+                'winFlag': 0, 'drawFlag': 0, 'loseFlag': 0,
+                'goalLine': ''}
+    return {
+        'win': float(hhad.get('h', 0)),
+        'draw': float(hhad.get('d', 0)),
+        'lose': float(hhad.get('a', 0)),
+        'winFlag': int(hhad.get('hf', 0) or 0),
+        'drawFlag': int(hhad.get('df', 0) or 0),
+        'loseFlag': int(hhad.get('af', 0) or 0),
+        'goalLine': hhad.get('goalLine', '')
+    }
+
+
+def _parse_crs_odds(crs):
+    """解析比分赔率"""
+    if not crs:
+        return {}
+    result = {}
+    score_key_map = {
+        's01s00': '1:0',
+        's02s00': '2:0',
+        's02s01': '2:1',
+        's03s00': '3:0',
+        's03s01': '3:1',
+        's03s02': '3:2',
+        's04s00': '4:0',
+        's04s01': '4:1',
+        's04s02': '4:2',
+        's05s00': '5:0',
+        's05s01': '5:1',
+        's05s02': '5:2',
+        's00s00': '0:0',
+        's01s01': '1:1',
+        's02s02': '2:2',
+        's03s03': '3:3',
+        's00s01': '0:1',
+        's00s02': '0:2',
+        's01s02': '1:2',
+        's00s03': '0:3',
+        's01s03': '1:3',
+        's02s03': '2:3',
+        's00s04': '0:4',
+        's01s04': '1:4',
+        's02s04': '2:4',
+        's00s05': '0:5',
+        's01s05': '1:5',
+        's02s05': '2:5',
+        's1sh': '胜其他',
+        's1sd': '平其他',
+        's1sa': '负其他',
+    }
+    for key, display in score_key_map.items():
+        if key in crs:
+            try:
+                val = float(crs[key])
+                if val > 0:
+                    result[display] = val
+            except:
+                continue
+    return result
+
+
+def _parse_ttg_odds(ttg):
+    """解析总进球赔率"""
+    if not ttg:
+        return {}
+    result = {}
+    ttg_key_map = {
+        's0': '0',
+        's1': '1',
+        's2': '2',
+        's3': '3',
+        's4': '4',
+        's5': '5',
+        's6': '6',
+        's7': '7+',
+    }
+    for key, display in ttg_key_map.items():
+        if key in ttg:
+            try:
+                val = float(ttg[key])
+                if val > 0:
+                    result[display] = val
+            except:
+                continue
+    return result
+
+
+def _parse_hafu_odds(hafu):
+    """解析半全场赔率"""
+    if not hafu:
+        return {}
+    result = {}
+    hafu_key_map = {
+        'hh': '胜胜',
+        'hd': '胜平',
+        'ha': '胜负',
+        'dh': '平胜',
+        'dd': '平平',
+        'da': '平负',
+        'ah': '负胜',
+        'ad': '负平',
+        'aa': '负负',
+    }
+    for key, display in hafu_key_map.items():
+        if key in hafu:
+            try:
+                val = float(hafu[key])
+                if val > 0:
+                    result[display] = val
+            except:
+                continue
+    return result
 
 
 if __name__ == '__main__':

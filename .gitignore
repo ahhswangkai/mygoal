@@ -41,7 +41,13 @@ logs/
 *.log
 *.csv
 *.json
+!frontend/package.json
+!frontend/package-lock.json
 *.xlsx
+
+# Frontend dependencies and generated output
+node_modules/
+frontend/dist/
 
 # OS
 .DS_Store

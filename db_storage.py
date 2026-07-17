@@ -7,6 +7,15 @@ from datetime import datetime
 from utils import setup_logger
 import os
 import certifi
+import re
+
+
+def clean_asian_handicap(value):
+    """标准化亚盘盘口；升/降是走势，不属于盘口文本。"""
+    if value is None:
+        return ''
+    text = re.sub(r'\s+', '', str(value))
+    return re.sub(r'(?:[↑↓]|升|降)+$', '', text)
 
 
 class MongoDBStorage:
@@ -227,10 +236,10 @@ class MongoDBStorage:
                 asian = odds_data['asian_handicap'][0]
                 update_fields.update({
                     'asian_current_home_odds': asian.get('current_home_odds', ''),
-                    'asian_current_handicap': asian.get('current_handicap', ''),
+                    'asian_current_handicap': clean_asian_handicap(asian.get('current_handicap', '')),
                     'asian_current_away_odds': asian.get('current_away_odds', ''),
                     'asian_initial_home_odds': asian.get('initial_home_odds', ''),
-                    'asian_initial_handicap': asian.get('initial_handicap', ''),
+                    'asian_initial_handicap': clean_asian_handicap(asian.get('initial_handicap', '')),
                     'asian_initial_away_odds': asian.get('initial_away_odds', '')
                 })
             
