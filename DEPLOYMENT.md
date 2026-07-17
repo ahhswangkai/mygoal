@@ -14,14 +14,16 @@
 git clone -b codex/match-analysis-integration git@github.com:ahhswangkai/mygoal.git
 cd mygoal
 chmod +x deploy.sh
-DOMAIN=你的域名 ./deploy.sh
-```
-
-没有域名时：
-
-```bash
 ./deploy.sh
 ```
+
+脚本默认域名为 `mygoal.top`。使用其他域名时：
+
+```bash
+DOMAIN=example.com ./deploy.sh
+```
+
+`DOMAIN` 不需要写 `http://`；即使传入，脚本也会自动去除协议。
 
 以后更新只需在项目目录重新运行：
 
@@ -50,5 +52,5 @@ sudo nginx -t
 
 ```bash
 sudo apt install certbot python3-certbot-nginx
-sudo certbot --nginx -d 你的域名
+sudo certbot --nginx -d mygoal.top
 ```

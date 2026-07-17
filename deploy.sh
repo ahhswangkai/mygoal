@@ -7,7 +7,10 @@ set -Eeuo pipefail
 
 APP_NAME="${APP_NAME:-mygoal}"
 BRANCH="${BRANCH:-codex/match-analysis-integration}"
-DOMAIN="${DOMAIN:-_}"
+DOMAIN="${DOMAIN:-mygoal.top}"
+DOMAIN="${DOMAIN#http://}"
+DOMAIN="${DOMAIN#https://}"
+DOMAIN="${DOMAIN%/}"
 BACKEND_PORT="${BACKEND_PORT:-5002}"
 REPO_URL="${REPO_URL:-git@github.com:ahhswangkai/mygoal.git}"
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
