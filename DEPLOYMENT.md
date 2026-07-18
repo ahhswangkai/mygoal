@@ -39,6 +39,25 @@ MONGODB_URI=mongodb://用户名:密码@数据库地址:27017/football_data
 
 然后重新运行 `./deploy.sh`。
 
+配置火山方舟 Skill AI 分析时，编辑 `.env`：
+
+```bash
+ARK_API_KEY=你的火山方舟APIKey
+ARK_BASE_URL=https://ark.cn-beijing.volces.com/api/v3
+ARK_MODEL=你在方舟控制台开通的模型ID
+AI_REQUEST_TIMEOUT=90
+AI_MAX_RETRIES=1
+AI_MIN_REFRESH_SECONDS=300
+```
+
+API Key 只保存在服务器 `.env`，不要提交到 Git。修改后重启后端：
+
+```bash
+sudo systemctl restart mygoal
+```
+
+运行时 Skills 位于 `ai_skills/*/SKILL.md`。生成分析时，后端会根据比赛实际可用的数据自动选择相关 Skills，并将结果缓存到 MongoDB 的 `ai_analyses` 集合。
+
 常用命令：
 
 ```bash

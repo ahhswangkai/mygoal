@@ -52,6 +52,7 @@ class MongoDBStorage:
         self.matches_collection = self.db['matches']
         self.odds_collection = self.db['odds']
         self.predictions_collection = self.db['predictions']
+        self.ai_analyses_collection = self.db['ai_analyses']
         self.user_picks_collection = self.db['user_picks']
         self.bets_collection = self.db['bets']
         
@@ -76,6 +77,11 @@ class MongoDBStorage:
             self.predictions_collection.create_index([('match_id', ASCENDING)], unique=True)
             self.predictions_collection.create_index([('predict_date', DESCENDING)])
             self.predictions_collection.create_index([('is_reviewed', ASCENDING)])
+
+            # Skill 驱动的生成式 AI 分析
+            self.ai_analyses_collection.create_index([('match_id', ASCENDING)], unique=True)
+            self.ai_analyses_collection.create_index([('generated_at', DESCENDING)])
+            self.ai_analyses_collection.create_index([('data_hash', ASCENDING)])
             
             # 用户选择表索引
             self.user_picks_collection.create_index([('device_id', ASCENDING), ('match_id', ASCENDING)], unique=True)
@@ -616,6 +622,34 @@ class MongoDBStorage:
         except Exception as e:
             self.logger.error(f"获取预测列表失败: {str(e)}")
             return []
+
+    def save_ai_analysis(self, analysis_data):
+        """保存或更新单场比赛的 Skill 驱动 AI 分析。"""
+        try:
+            payload = dict(analysis_data)
+            payload['match_id'] = str(payload.get('match_id') or '')
+            payload['updated_at'] = datetime.utcnow().isoformat() + 'Z'
+            result = self.ai_analyses_collection.update_one(
+                {'match_id': payload['match_id']},
+                {'$set': payload},
+                upsert=True
+            )
+            self.logger.info(f"保存 AI 分析: {payload['match_id']}")
+            return result
+        except Exception as e:
+            self.logger.error(f"保存 AI 分析失败: {str(e)}")
+            return None
+
+    def get_ai_analysis(self, match_id):
+        """读取单场比赛最近一次生成式 AI 分析。"""
+        try:
+            return self.ai_analyses_collection.find_one(
+                {'match_id': str(match_id)},
+                {'_id': 0}
+            )
+        except Exception as e:
+            self.logger.error(f"获取 AI 分析失败: {str(e)}")
+            return None
     
     def update_prediction_review(self, match_id, review_data):
         """

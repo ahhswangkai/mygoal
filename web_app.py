@@ -16,6 +16,11 @@ from bet_settlement import (
 )
 from crawler import FootballCrawler
 from user_storage import UserStorage
+from ai_analysis import (
+    AIAnalysisError,
+    AIAnalysisService,
+    AIConfigurationError,
+)
 
 from db_storage import MongoDBStorage
 from prediction_engine import PredictionEngine
@@ -72,6 +77,7 @@ def after_request(response):
 
 # 初始化爬虫和存储
 crawler = FootballCrawler()
+ai_analysis_service = AIAnalysisService()
 
 
 # 初始化MongoDB存储（优先使用MongoDB，如果连接失败则使用文件存储）
@@ -794,6 +800,96 @@ def get_500_match_analysis(match_id):
     except (ValueError, AttributeError, IndexError) as exc:
         app.logger.warning('500 analysis parse failed for %s: %s', match_id, exc)
         return jsonify({'success': False, 'message': '500 数据解析失败'}), 502
+
+
+@app.route('/api/match/<match_id>/ai-analysis', methods=['GET'])
+def get_match_ai_analysis(match_id):
+    """读取缓存的 Skill 驱动 AI 分析，不触发模型调用。"""
+    if not mongo_storage:
+        return jsonify({'success': False, 'message': 'MongoDB不可用'}), 500
+    match = mongo_storage.get_match_by_id(match_id)
+    if not match:
+        return jsonify({'success': False, 'message': '比赛不存在'}), 404
+    cached = mongo_storage.get_ai_analysis(match_id)
+    return jsonify({
+        'success': True,
+        'data': cached,
+        'configured': ai_analysis_service.configured,
+        'model': ai_analysis_service.client.model if ai_analysis_service.configured else None,
+    })
+
+
+@app.route('/api/match/<match_id>/ai-analysis', methods=['POST'])
+@login_required
+def generate_match_ai_analysis(match_id):
+    """选择并加载项目 Skills，调用火山方舟生成单场分析。"""
+    if not mongo_storage:
+        return jsonify({'success': False, 'message': 'MongoDB不可用'}), 500
+    match = mongo_storage.get_match_by_id(match_id)
+    if not match:
+        return jsonify({'success': False, 'message': '比赛不存在'}), 404
+
+    payload = request.get_json(silent=True) or {}
+    force = bool(payload.get('force'))
+    cached = mongo_storage.get_ai_analysis(match_id)
+    if cached and not force:
+        return jsonify({
+            'success': True,
+            'data': cached,
+            'cache_hit': True,
+        })
+
+    if cached and force:
+        refresh_seconds = max(60, int(os.getenv('AI_MIN_REFRESH_SECONDS', '300')))
+        generated_at = str(cached.get('generated_at') or '')
+        try:
+            generated_time = datetime.fromisoformat(generated_at.replace('Z', '+00:00'))
+            now = datetime.now(generated_time.tzinfo) if generated_time.tzinfo else datetime.now()
+            age_seconds = (now - generated_time).total_seconds()
+            if age_seconds < refresh_seconds:
+                return jsonify({
+                    'success': True,
+                    'data': cached,
+                    'cache_hit': True,
+                    'message': f'分析生成未满{refresh_seconds // 60}分钟，已返回缓存',
+                })
+        except (TypeError, ValueError):
+            pass
+
+    try:
+        source_analysis = {}
+        try:
+            source_analysis = crawler.crawl_match_analysis(match_id)
+        except (requests.RequestException, ValueError, AttributeError, IndexError) as exc:
+            app.logger.warning('AI analysis source unavailable for %s: %s', match_id, exc)
+
+        predictions = mongo_storage.get_predictions(
+            filters={'match_id': str(match_id)},
+            limit=1,
+        )
+        prediction = predictions[0] if predictions else None
+        context = ai_analysis_service.build_context(
+            match=match,
+            source_analysis=source_analysis,
+            prediction=prediction,
+        )
+        analysis = ai_analysis_service.generate_from_context(context)
+        if not mongo_storage.save_ai_analysis(analysis):
+            return jsonify({'success': False, 'message': 'AI分析保存失败'}), 500
+        return jsonify({
+            'success': True,
+            'data': analysis,
+            'cache_hit': False,
+        })
+    except AIConfigurationError as exc:
+        app.logger.warning('AI analysis configuration error: %s', exc)
+        return jsonify({'success': False, 'message': str(exc)}), 503
+    except AIAnalysisError as exc:
+        app.logger.warning('AI analysis failed for %s: %s', match_id, exc)
+        return jsonify({'success': False, 'message': str(exc)}), 502
+    except Exception as exc:
+        app.logger.exception('Unexpected AI analysis error for %s', match_id)
+        return jsonify({'success': False, 'message': f'AI分析生成失败: {exc}'}), 500
 
 
 @app.route('/api/leagues')
