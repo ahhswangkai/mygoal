@@ -43,8 +43,9 @@ MONGODB_URI=mongodb://用户名:密码@数据库地址:27017/football_data
 
 ```bash
 ARK_API_KEY=你的火山方舟APIKey
-ARK_BASE_URL=https://ark.cn-beijing.volces.com/api/v3
-ARK_MODEL=你在方舟控制台开通的模型ID
+ARK_BASE_URL=https://ark.cn-beijing.volces.com/api/coding/v3
+ARK_MODEL=ark-code-latest
+ARK_API_MODE=chat_completions
 AI_REQUEST_TIMEOUT=90
 AI_MAX_RETRIES=1
 AI_MIN_REFRESH_SECONDS=300
@@ -57,6 +58,8 @@ sudo systemctl restart mygoal
 ```
 
 运行时 Skills 位于 `ai_skills/*/SKILL.md`。生成分析时，后端会根据比赛实际可用的数据自动选择相关 Skills，并将结果缓存到 MongoDB 的 `ai_analyses` 集合。
+
+`/api/coding/v3` 使用 OpenAI 兼容的 Chat Completions 协议。若改用普通火山方舟模型 API，可将 `ARK_BASE_URL` 改为普通方舟地址，并把 `ARK_API_MODE` 改为 `responses`。
 
 常用命令：
 

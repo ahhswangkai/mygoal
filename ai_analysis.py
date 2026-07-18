@@ -187,13 +187,23 @@ class ArkResponsesClient:
         self.base_url = (
             base_url
             or os.getenv("ARK_BASE_URL")
-            or "https://ark.cn-beijing.volces.com/api/v3"
+            or "https://ark.cn-beijing.volces.com/api/coding/v3"
         ).rstrip("/")
         self.model = (
             model
             or os.getenv("ARK_MODEL")
-            or "doubao-seed-2-0-lite-260215"
+            or "ark-code-latest"
         )
+        configured_mode = str(os.getenv("ARK_API_MODE") or "").strip().lower()
+        self.api_mode = configured_mode or (
+            "chat_completions"
+            if "/api/coding/" in self.base_url
+            else "responses"
+        )
+        if self.api_mode not in {"responses", "chat_completions"}:
+            raise AIConfigurationError(
+                "ARK_API_MODE 只支持 responses 或 chat_completions"
+            )
         self.timeout = timeout or int(os.getenv("AI_REQUEST_TIMEOUT", "90"))
         self.max_retries = max(0, int(os.getenv("AI_MAX_RETRIES", "1")))
 
@@ -205,11 +215,20 @@ class ArkResponsesClient:
         if not self.configured:
             raise AIConfigurationError("火山方舟尚未配置 ARK_API_KEY 或 ARK_MODEL")
 
-        url = f"{self.base_url}/responses"
-        payload = {
-            "model": self.model,
-            "input": prompt,
-        }
+        if self.api_mode == "chat_completions":
+            url = f"{self.base_url}/chat/completions"
+            payload = {
+                "model": self.model,
+                "messages": [
+                    {"role": "user", "content": prompt},
+                ],
+            }
+        else:
+            url = f"{self.base_url}/responses"
+            payload = {
+                "model": self.model,
+                "input": prompt,
+            }
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",

@@ -1,6 +1,8 @@
+import os
 import unittest
+from unittest.mock import Mock, patch
 
-from ai_analysis import AIAnalysisService, SkillLoader
+from ai_analysis import AIAnalysisService, ArkResponsesClient, SkillLoader
 
 
 class FakeArkClient:
@@ -106,6 +108,39 @@ class AIAnalysisServiceTests(unittest.TestCase):
         self.assertEqual(
             result["analysis"]["disclaimer"],
             "仅基于现有数据进行分析，不构成投注建议",
+        )
+
+
+class ArkResponsesClientTests(unittest.TestCase):
+    @patch("ai_analysis.requests.post")
+    def test_coding_gateway_uses_chat_completions(self, post):
+        response = Mock()
+        response.status_code = 200
+        response.json.return_value = {
+            "id": "chat-response",
+            "choices": [{"message": {"content": "{\"summary\":\"ok\"}"}}],
+        }
+        post.return_value = response
+        with patch.dict(os.environ, {}, clear=False):
+            client = ArkResponsesClient(
+                api_key="test-key",
+                base_url="https://ark.cn-beijing.volces.com/api/coding/v3",
+                model="ark-code-latest",
+            )
+
+        text, metadata = client.generate("test prompt")
+
+        self.assertEqual(client.api_mode, "chat_completions")
+        self.assertEqual(text, "{\"summary\":\"ok\"}")
+        self.assertEqual(metadata["response_id"], "chat-response")
+        request_args = post.call_args
+        self.assertEqual(
+            request_args.args[0],
+            "https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions",
+        )
+        self.assertEqual(
+            request_args.kwargs["json"]["messages"][0]["content"],
+            "test prompt",
         )
 
 
