@@ -522,6 +522,7 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import AccountButton from '../components/AccountButton.vue'
 import { apiRequest, authState, openAuth } from '../auth'
+import { oddsTrend, oddsTrendArrow } from '../utils/oddsTrend'
 
 const currentTab = ref(0)
 const matches = ref([])
@@ -761,18 +762,12 @@ const formatHandicap = (h) => {
 
 const flagArrow = (pool, opt) => {
   if (!pool) return ''
-  const flag = pool[opt + 'Flag']
-  if (flag === 1) return '↑'
-  if (flag === 2) return '↓'
-  return ''
+  return oddsTrendArrow(pool[opt + 'Flag'])
 }
 
 const flagClass = (pool, opt) => {
   if (!pool) return ''
-  const flag = pool[opt + 'Flag']
-  if (flag === 1) return 'up'
-  if (flag === 2) return 'down'
-  return ''
+  return oddsTrend(pool[opt + 'Flag'])
 }
 
 const getOdds = (pool) => {

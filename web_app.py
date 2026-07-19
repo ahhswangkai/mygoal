@@ -16,10 +16,18 @@ from bet_settlement import (
 )
 from crawler import FootballCrawler
 from user_storage import UserStorage
-from ai_analysis import (
-    AIAnalysisError,
-    AIAnalysisService,
-    AIConfigurationError,
+from football_ai import (
+    FAEAIReviewAnalyzer,
+    FAEDailyAIAnalyzer,
+    FAEDailyAIReviewEngine,
+    FAEDrawReviewEngine,
+    FAEError,
+    FAEReviewEngine,
+    FootballAIEngine,
+    ArkNarrativeClient,
+    ENGINE_VERSION,
+    SKILL_DEFINITIONS,
+    build_daily_match_input,
 )
 
 from db_storage import MongoDBStorage
@@ -53,6 +61,10 @@ user_storage = UserStorage(
     os.getenv('USER_DATABASE_PATH', os.path.join(os.path.dirname(__file__), 'data', 'users.db'))
 )
 sporttery_result_client = SportteryResultClient()
+# 计算器访问体彩接口时必须直连。requests 默认读取 HTTP(S)_PROXY
+# 环境变量，服务器若配置了代理会导致体彩接口超时或被 WAF 拦截。
+sporttery_calculator_session = requests.Session()
+sporttery_calculator_session.trust_env = False
 settlement_lock = threading.Lock()
 
 
@@ -67,6 +79,40 @@ def login_required(view):
     return wrapped
 
 
+def _fae_admin_user():
+    user_id = session.get('user_id')
+    user = user_storage.get_user(user_id) if user_id else None
+    if not user:
+        return None
+    allowed = {
+        item.strip().lower()
+        for item in os.getenv('FAE_ADMIN_USERNAMES', '').split(',')
+        if item.strip()
+    }
+    return user if str(user.get('username') or '').lower() in allowed else None
+
+
+def fae_admin_required(view):
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        user_id = session.get('user_id')
+        user = user_storage.get_user(user_id) if user_id else None
+        if not user:
+            return jsonify({
+                'success': False,
+                'message': '请先登录',
+                'code': 'AUTH_REQUIRED',
+            }), 401
+        if not _fae_admin_user():
+            return jsonify({
+                'success': False,
+                'message': '当前账号没有 FAE Skill 发布权限',
+                'code': 'FAE_ADMIN_REQUIRED',
+            }), 403
+        return view(*args, **kwargs)
+    return wrapped
+
+
 @app.after_request
 def after_request(response):
     """添加CORS响应头"""
@@ -77,7 +123,34 @@ def after_request(response):
 
 # 初始化爬虫和存储
 crawler = FootballCrawler()
-ai_analysis_service = AIAnalysisService()
+ai_analysis_service = FootballAIEngine()
+fae_review_engine = FAEReviewEngine()
+fae_draw_review_engine = FAEDrawReviewEngine()
+fae_daily_ai_review_engine = FAEDailyAIReviewEngine()
+fae_ai_review_analyzer = FAEAIReviewAnalyzer(ArkNarrativeClient(
+    timeout=max(90, int(os.getenv('FAE_AI_REVIEW_TIMEOUT', '180'))),
+    stream=True,
+    max_tokens=max(
+        1000, int(os.getenv('FAE_AI_REVIEW_MAX_TOKENS', '4096'))
+    ),
+    thinking=os.getenv('FAE_AI_REVIEW_THINKING', 'disabled'),
+    json_mode=True,
+))
+fae_ai_review_analyzer.client.max_retries = max(
+    0, int(os.getenv('FAE_AI_REVIEW_MAX_RETRIES', '0'))
+)
+fae_daily_ai_analyzer = FAEDailyAIAnalyzer(ArkNarrativeClient(
+    timeout=max(90, int(os.getenv('FAE_DAILY_AI_TIMEOUT', '180'))),
+    stream=True,
+    max_tokens=max(1000, int(os.getenv('FAE_DAILY_AI_MAX_TOKENS', '4096'))),
+    thinking=os.getenv('FAE_DAILY_AI_THINKING', 'disabled'),
+    json_mode=True,
+))
+fae_daily_ai_analyzer.client.max_retries = max(
+    0, int(os.getenv('FAE_DAILY_AI_MAX_RETRIES', '0'))
+)
+fae_daily_ai_lock = threading.Lock()
+fae_ai_review_lock = threading.Lock()
 
 
 # 初始化MongoDB存储（优先使用MongoDB，如果连接失败则使用文件存储）
@@ -802,9 +875,250 @@ def get_500_match_analysis(match_id):
         return jsonify({'success': False, 'message': '500 数据解析失败'}), 502
 
 
+def _generate_fae_for_match(match, use_ai=True):
+    """组装数据并运行 FAE；核心计算不依赖大模型。"""
+    match_id = str(match.get('match_id') or '')
+    source_analysis = {}
+    try:
+        source_analysis = crawler.crawl_match_analysis(match_id)
+    except (requests.RequestException, ValueError, AttributeError, IndexError) as exc:
+        app.logger.warning('FAE source unavailable for %s: %s', match_id, exc)
+    predictions = mongo_storage.get_predictions(
+        filters={'match_id': match_id}, limit=1
+    ) if mongo_storage else []
+    context = ai_analysis_service.build_context(
+        match=match,
+        source_analysis=source_analysis,
+        prediction=predictions[0] if predictions else None,
+    )
+    return ai_analysis_service.generate_from_context(
+        context,
+        rule_weights=mongo_storage.get_fae_rule_weights() if mongo_storage else None,
+        use_ai=use_ai,
+        active_skills=mongo_storage.get_active_fae_skills() if mongo_storage else None,
+    )
+
+
+def _build_daily_ai_inputs(matches):
+    """Build current deterministic FAE snapshots without making per-match LLM calls."""
+    rule_weights = (
+        mongo_storage.get_fae_rule_weights() if mongo_storage else None
+    )
+    active_skills = (
+        mongo_storage.get_active_fae_skills() if mongo_storage else None
+    )
+    rows = []
+    for match in sorted(
+        matches,
+        key=lambda item: (
+            str(item.get('match_time') or ''),
+            str(item.get('match_number') or ''),
+        ),
+    ):
+        context = ai_analysis_service.build_context(match=match)
+        core_result = ai_analysis_service.generate_from_context(
+            context,
+            rule_weights=rule_weights,
+            use_ai=False,
+            active_skills=active_skills,
+        )
+        rows.append(build_daily_match_input(match, core_result))
+    return rows
+
+
+def _run_fae_daily_ai(owner_date, force=False):
+    """Send the whole day's current market snapshot to Ark and persist per match."""
+    if not mongo_storage:
+        raise FAEError('MongoDB不可用')
+    date_str = str(owner_date or '')[:10]
+    if not re.fullmatch(r'\d{4}-\d{2}-\d{2}', date_str):
+        raise FAEError('日期格式应为 YYYY-MM-DD')
+    matches = mongo_storage.get_matches(
+        filters={'owner_date': date_str, 'status': 0},
+        sort_by='match_time',
+        sort_order=1,
+    )
+    if not matches:
+        raise FAEError('当天没有未开赛比赛，未调用火山方舟')
+    match_inputs = _build_daily_ai_inputs(matches)
+    review_memory = mongo_storage.get_fae_review_memory(date_str)
+    input_hash = fae_daily_ai_analyzer.input_hash(
+        date_str,
+        match_inputs,
+        review_memory=review_memory,
+    )
+    cached = mongo_storage.get_fae_daily_ai_run(
+        date_str, input_hash=input_hash
+    )
+    if cached and not force:
+        cached['cache_hit'] = True
+        return cached
+    batch_size = max(
+        1, min(30, int(os.getenv('FAE_DAILY_AI_BATCH_SIZE', '1')))
+    )
+    with fae_daily_ai_lock:
+        if not force:
+            cached = mongo_storage.get_fae_daily_ai_run(
+                date_str, input_hash=input_hash
+            )
+            if cached:
+                cached['cache_hit'] = True
+                return cached
+        result = fae_daily_ai_analyzer.analyze(
+            date_str,
+            match_inputs,
+            batch_size=batch_size,
+            batch_cache_get=mongo_storage.get_fae_daily_ai_batch,
+            batch_cache_save=mongo_storage.save_fae_daily_ai_batch,
+            review_memory=review_memory,
+        )
+        if not mongo_storage.save_fae_daily_ai_run(result):
+            raise FAEError('全日研判已生成，但写入MongoDB失败')
+        result['cache_hit'] = False
+        return result
+
+
+def _review_finished_fae_matches(matches=None):
+    """复盘所有已完场且尚未复盘的 FAE 分析。"""
+    if not mongo_storage:
+        return {'reviewed': 0, 'adjustments': 0, 'items': []}
+    candidates = matches or mongo_storage.get_matches(filters={'status': 2})
+    reviewed = []
+    adjustment_count = 0
+    for match in candidates:
+        if match.get('status') != 2:
+            continue
+        analysis = mongo_storage.get_ai_analysis(match.get('match_id'))
+        if not analysis or not analysis.get('engine'):
+            continue
+        review = fae_review_engine.review(analysis, match)
+        if not review:
+            continue
+        saved = mongo_storage.save_fae_review(review)
+        if saved.get('new'):
+            adjustment_count += len(saved.get('adjustments') or [])
+            reviewed.append(saved.get('review'))
+    return {
+        'reviewed': len(reviewed),
+        'adjustments': adjustment_count,
+        'items': reviewed,
+    }
+
+
+def _snapshot_fae_draw_plan(owner_date):
+    """保存用户实际看到的当日平/让平方案，内容相同则自动去重。"""
+    if not mongo_storage:
+        return None, None
+    plan = mongo_storage.get_fae_draw_parlays(owner_date)
+    snapshot = mongo_storage.save_fae_draw_snapshot(plan)
+    return plan, snapshot
+
+
+def _review_fae_draw_plan(owner_date):
+    """按当天最后一份全赛前快照进行专项复盘。"""
+    if not mongo_storage:
+        return None
+    snapshot = mongo_storage.get_fae_draw_snapshot(owner_date)
+    if not snapshot:
+        return None
+    matches = {
+        str(pick.get('match_id')): (
+            mongo_storage.get_match_by_id(pick.get('match_id')) or {}
+        )
+        for pick in snapshot.get('match_recommendations') or []
+        if pick.get('match_id')
+    }
+    review = fae_draw_review_engine.review(snapshot, matches)
+    saved = mongo_storage.save_fae_draw_review(review)
+    return saved.get('review') if saved.get('saved') else None
+
+
+def _review_fae_daily_ai(owner_date, force_ai=False):
+    """Settle the immutable Ark run and cache an AI post-match diagnosis."""
+    if not mongo_storage:
+        return None
+    snapshot = mongo_storage.get_fae_daily_ai_snapshot(owner_date)
+    if not snapshot:
+        return None
+    matches = {
+        str(item.get('match_id')): (
+            mongo_storage.get_match_by_id(item.get('match_id')) or {}
+        )
+        for item in snapshot.get('matches') or []
+        if item.get('match_id')
+    }
+    review = fae_daily_ai_review_engine.review(snapshot, matches)
+    ai_review_enabled = os.getenv(
+        'FAE_AI_REVIEW_ENABLED', 'true'
+    ).lower() in ('1', 'true', 'yes', 'on')
+    settled_count = int(
+        ((review.get('summary') or {}).get('singles') or {}).get(
+            'settled', 0
+        )
+    )
+    existing = mongo_storage.get_fae_daily_ai_review(owner_date) or {}
+    if ai_review_enabled and fae_ai_review_analyzer.configured and settled_count:
+        desired_hash = fae_ai_review_analyzer.input_hash(snapshot, review)
+        cached = existing.get('ai_deep_review') or {}
+        if not force_ai and cached.get('input_hash') == desired_hash:
+            review['ai_deep_review'] = cached
+            review['ai_deep_review_cache_hit'] = True
+        else:
+            try:
+                # A manual request and the 15-minute scheduler can overlap.
+                # Re-check inside the lock before spending another Ark call.
+                with fae_ai_review_lock:
+                    latest = (
+                        mongo_storage.get_fae_daily_ai_review(owner_date)
+                        or {}
+                    )
+                    latest_ai = latest.get('ai_deep_review') or {}
+                    if (
+                        not force_ai
+                        and latest_ai.get('input_hash') == desired_hash
+                    ):
+                        review['ai_deep_review'] = latest_ai
+                        review['ai_deep_review_cache_hit'] = True
+                    else:
+                        review['ai_deep_review'] = (
+                            fae_ai_review_analyzer.analyze(snapshot, review)
+                        )
+                        review['ai_deep_review_cache_hit'] = False
+            except FAEError as exc:
+                # Deterministic settlement must remain available even when Ark
+                # is temporarily unavailable. Preserve the last diagnosis.
+                if cached:
+                    review['ai_deep_review'] = cached
+                    review['ai_deep_review_stale'] = True
+                review['ai_deep_review_error'] = str(exc)
+                app.logger.warning(
+                    'FAE AI deep review failed for %s: %s',
+                    owner_date,
+                    exc,
+                )
+            except Exception as exc:
+                if cached:
+                    review['ai_deep_review'] = cached
+                    review['ai_deep_review_stale'] = True
+                review['ai_deep_review_error'] = f'AI 深度复盘失败: {exc}'
+                app.logger.exception(
+                    'Unexpected FAE AI deep review error for %s',
+                    owner_date,
+                )
+    elif settled_count:
+        review['ai_deep_review_unavailable'] = (
+            'AI 深度复盘未启用'
+            if not ai_review_enabled
+            else '火山方舟尚未配置'
+        )
+    saved = mongo_storage.save_fae_daily_ai_review(review)
+    return saved.get('review') if saved.get('saved') else None
+
+
+@app.route('/api/match/<match_id>/fae-analysis', methods=['GET'])
 @app.route('/api/match/<match_id>/ai-analysis', methods=['GET'])
 def get_match_ai_analysis(match_id):
-    """读取缓存的 Skill 驱动 AI 分析，不触发模型调用。"""
+    """读取缓存的 FAE 分析，不触发模型调用。"""
     if not mongo_storage:
         return jsonify({'success': False, 'message': 'MongoDB不可用'}), 500
     match = mongo_storage.get_match_by_id(match_id)
@@ -814,15 +1128,20 @@ def get_match_ai_analysis(match_id):
     return jsonify({
         'success': True,
         'data': cached,
-        'configured': ai_analysis_service.configured,
+        'configured': True,
+        'narrative_configured': ai_analysis_service.configured,
+        'engine': 'FAE',
+        'engine_version': ENGINE_VERSION,
+        'legacy': bool(cached and not cached.get('engine')),
         'model': ai_analysis_service.client.model if ai_analysis_service.configured else None,
     })
 
 
+@app.route('/api/match/<match_id>/fae-analysis', methods=['POST'])
 @app.route('/api/match/<match_id>/ai-analysis', methods=['POST'])
 @login_required
 def generate_match_ai_analysis(match_id):
-    """选择并加载项目 Skills，调用火山方舟生成单场分析。"""
+    """运行 FAE 核心计算，并可选调用方舟生成说明层。"""
     if not mongo_storage:
         return jsonify({'success': False, 'message': 'MongoDB不可用'}), 500
     match = mongo_storage.get_match_by_id(match_id)
@@ -831,8 +1150,9 @@ def generate_match_ai_analysis(match_id):
 
     payload = request.get_json(silent=True) or {}
     force = bool(payload.get('force'))
+    use_ai = payload.get('narrative', True) is not False
     cached = mongo_storage.get_ai_analysis(match_id)
-    if cached and not force:
+    if cached and cached.get('engine') and not force:
         return jsonify({
             'success': True,
             'data': cached,
@@ -857,39 +1177,368 @@ def generate_match_ai_analysis(match_id):
             pass
 
     try:
-        source_analysis = {}
-        try:
-            source_analysis = crawler.crawl_match_analysis(match_id)
-        except (requests.RequestException, ValueError, AttributeError, IndexError) as exc:
-            app.logger.warning('AI analysis source unavailable for %s: %s', match_id, exc)
-
-        predictions = mongo_storage.get_predictions(
-            filters={'match_id': str(match_id)},
-            limit=1,
-        )
-        prediction = predictions[0] if predictions else None
-        context = ai_analysis_service.build_context(
-            match=match,
-            source_analysis=source_analysis,
-            prediction=prediction,
-        )
-        analysis = ai_analysis_service.generate_from_context(context)
+        analysis = _generate_fae_for_match(match, use_ai=use_ai)
         if not mongo_storage.save_ai_analysis(analysis):
-            return jsonify({'success': False, 'message': 'AI分析保存失败'}), 500
+            return jsonify({'success': False, 'message': 'FAE分析保存失败'}), 500
         return jsonify({
             'success': True,
             'data': analysis,
             'cache_hit': False,
         })
-    except AIConfigurationError as exc:
-        app.logger.warning('AI analysis configuration error: %s', exc)
-        return jsonify({'success': False, 'message': str(exc)}), 503
-    except AIAnalysisError as exc:
-        app.logger.warning('AI analysis failed for %s: %s', match_id, exc)
+    except FAEError as exc:
+        app.logger.warning('FAE analysis failed for %s: %s', match_id, exc)
         return jsonify({'success': False, 'message': str(exc)}), 502
     except Exception as exc:
-        app.logger.exception('Unexpected AI analysis error for %s', match_id)
-        return jsonify({'success': False, 'message': f'AI分析生成失败: {exc}'}), 500
+        app.logger.exception('Unexpected FAE analysis error for %s', match_id)
+        return jsonify({'success': False, 'message': f'FAE分析生成失败: {exc}'}), 500
+
+
+@app.route('/api/match/<match_id>/fae-review', methods=['GET'])
+def get_match_fae_review(match_id):
+    if not mongo_storage:
+        return jsonify({'success': False, 'message': 'MongoDB不可用'}), 500
+    return jsonify({
+        'success': True,
+        'data': mongo_storage.get_fae_review(match_id),
+    })
+
+
+@app.route('/api/fae/rankings', methods=['GET'])
+def get_fae_rankings():
+    if not mongo_storage:
+        return jsonify({'success': False, 'message': 'MongoDB不可用'}), 500
+    date_str = request.args.get('date') or datetime.now().strftime('%Y-%m-%d')
+    return jsonify({
+        'success': True,
+        'data': mongo_storage.get_fae_rankings(date_str),
+    })
+
+
+@app.route('/api/fae/daily-ai', methods=['GET'])
+def get_fae_daily_ai():
+    if not mongo_storage:
+        return jsonify({'success': False, 'message': 'MongoDB不可用'}), 500
+    date_str = str(
+        request.args.get('date') or datetime.now().strftime('%Y-%m-%d')
+    )[:10]
+    data = mongo_storage.get_fae_daily_ai_run(date_str)
+    if data:
+        data['matches'] = fae_daily_ai_analyzer.calibrate_daily_matches(
+            data.get('matches') or []
+        )
+        data['matches'] = (
+            fae_daily_ai_analyzer.normalize_match_memory_governance(
+                data.get('matches') or [],
+                data.get('review_memory') or {},
+            )
+        )
+        data['daily_summary'] = (
+            fae_daily_ai_analyzer.normalize_summary_pool_semantics(
+                data.get('daily_summary') or {},
+                data.get('matches') or [],
+            )
+        )
+        data['daily_summary'] = fae_daily_ai_analyzer._apply_no_bet_summary(
+            data.get('daily_summary') or {},
+            data.get('matches') or [],
+        )
+        data['daily_summary'] = fae_daily_ai_analyzer.align_summary_ratings(
+            data.get('daily_summary') or {},
+            data.get('matches') or [],
+        )
+        data['daily_summary'] = (
+            fae_daily_ai_analyzer.normalize_summary_memory_governance(
+                data.get('daily_summary') or {},
+                data.get('review_memory') or {},
+            )
+        )
+        data['daily_summary'] = (
+            fae_daily_ai_analyzer._humanize_summary_match_ids(
+                data.get('daily_summary') or {},
+                data.get('matches') or [],
+            )
+        )
+    return jsonify({
+        'success': True,
+        'data': data,
+        'configured': fae_daily_ai_analyzer.configured,
+        'can_manage': bool(_fae_admin_user()),
+    })
+
+
+@app.route('/api/fae/daily-ai', methods=['POST'])
+@fae_admin_required
+def run_fae_daily_ai():
+    if not mongo_storage:
+        return jsonify({'success': False, 'message': 'MongoDB不可用'}), 500
+    payload = request.get_json(silent=True) or {}
+    date_str = str(
+        payload.get('date') or datetime.now().strftime('%Y-%m-%d')
+    )[:10]
+    try:
+        data = _run_fae_daily_ai(date_str, force=bool(payload.get('force')))
+        return jsonify({
+            'success': True,
+            'data': data,
+            'cache_hit': bool(data.get('cache_hit')),
+            'message': (
+                '赔率数据未变化，已返回上次全日研判'
+                if data.get('cache_hit')
+                else f"已完成 {data.get('match_count', 0)} 场全日研判并逐场入库"
+            ),
+        })
+    except FAEError as exc:
+        app.logger.warning('FAE daily AI failed for %s: %s', date_str, exc)
+        return jsonify({'success': False, 'message': str(exc)}), 502
+    except Exception as exc:
+        app.logger.exception('Unexpected FAE daily AI error for %s', date_str)
+        return jsonify({
+            'success': False,
+            'message': f'全日研判运行失败: {exc}',
+        }), 500
+
+
+@app.route('/api/fae/daily-ai/match/<match_id>', methods=['GET'])
+def get_fae_daily_ai_match(match_id):
+    if not mongo_storage:
+        return jsonify({'success': False, 'message': 'MongoDB不可用'}), 500
+    date_str = request.args.get('date')
+    data = mongo_storage.get_fae_daily_ai_match(match_id, date_str)
+    if data:
+        rows = fae_daily_ai_analyzer.calibrate_daily_matches([data])
+        data = rows[0] if rows else data
+        owner_date = str(
+            date_str or data.get('owner_date') or ''
+        )[:10]
+        data = (
+            fae_daily_ai_analyzer.normalize_match_memory_governance(
+                [data],
+                mongo_storage.get_fae_review_memory(owner_date)
+                if owner_date else {},
+            )[0]
+        )
+    return jsonify({'success': True, 'data': data})
+
+
+@app.route('/api/fae/daily-ai/review', methods=['GET'])
+def get_fae_daily_ai_review():
+    if not mongo_storage:
+        return jsonify({'success': False, 'message': 'MongoDB不可用'}), 500
+    date_str = request.args.get('date') or datetime.now().strftime('%Y-%m-%d')
+    return jsonify({
+        'success': True,
+        'data': mongo_storage.get_fae_daily_ai_review(date_str),
+        'primary_source': 'fae-daily-ai',
+        'ai_review_enabled': os.getenv(
+            'FAE_AI_REVIEW_ENABLED', 'true'
+        ).lower() in ('1', 'true', 'yes', 'on'),
+        'ai_review_configured': fae_ai_review_analyzer.configured,
+    })
+
+
+@app.route('/api/fae/daily-ai/review/stats', methods=['GET'])
+def get_fae_daily_ai_review_stats():
+    if not mongo_storage:
+        return jsonify({'success': False, 'message': 'MongoDB不可用'}), 500
+    return jsonify({
+        'success': True,
+        'data': mongo_storage.get_fae_daily_ai_review_stats(),
+    })
+
+
+@app.route('/api/fae/daily-ai/review', methods=['POST'])
+@login_required
+def run_fae_daily_ai_review():
+    if not mongo_storage:
+        return jsonify({'success': False, 'message': 'MongoDB不可用'}), 500
+    payload = request.get_json(silent=True) or {}
+    date_str = str(
+        payload.get('date') or datetime.now().strftime('%Y-%m-%d')
+    )[:10]
+    force_ai = bool(payload.get('force_ai') or payload.get('force'))
+    review = _review_fae_daily_ai(date_str, force_ai=force_ai)
+    return jsonify({
+        'success': bool(review),
+        'data': review,
+        'message': (
+            (
+                '复盘已完成，AI 深度诊断已写入数据库'
+                if review and review.get('ai_deep_review')
+                else '确定性复盘已完成，暂无可用的 AI 深度诊断'
+            ) if review
+            else '当天没有全场均未开赛时生成的 AI 研判快照'
+        ),
+    }), 200 if review else 404
+
+
+@app.route('/api/fae/draw-parlays', methods=['GET'])
+def get_fae_draw_parlays():
+    if not mongo_storage:
+        return jsonify({'success': False, 'message': 'MongoDB不可用'}), 500
+    date_str = request.args.get('date') or datetime.now().strftime('%Y-%m-%d')
+    plan, snapshot = _snapshot_fae_draw_plan(date_str)
+    data = dict(plan or {})
+    data['snapshot_saved'] = bool(snapshot)
+    data['snapshot_at'] = (snapshot or {}).get('generated_at')
+    return jsonify({
+        'success': True,
+        'data': data,
+    })
+
+
+@app.route('/api/fae/draw-review', methods=['GET'])
+def get_fae_draw_review():
+    if not mongo_storage:
+        return jsonify({'success': False, 'message': 'MongoDB不可用'}), 500
+    date_str = request.args.get('date') or datetime.now().strftime('%Y-%m-%d')
+    return jsonify({
+        'success': True,
+        'data': mongo_storage.get_fae_draw_review(date_str),
+    })
+
+
+@app.route('/api/fae/draw-review/stats', methods=['GET'])
+def get_fae_draw_review_stats():
+    if not mongo_storage:
+        return jsonify({'success': False, 'message': 'MongoDB不可用'}), 500
+    return jsonify({
+        'success': True,
+        'data': mongo_storage.get_fae_draw_review_stats(),
+    })
+
+
+@app.route('/api/fae/draw-review', methods=['POST'])
+@login_required
+def run_fae_draw_review():
+    if not mongo_storage:
+        return jsonify({'success': False, 'message': 'MongoDB不可用'}), 500
+    payload = request.get_json(silent=True) or {}
+    date_str = str(
+        payload.get('date') or datetime.now().strftime('%Y-%m-%d')
+    )[:10]
+    review = _review_fae_draw_plan(date_str)
+    return jsonify({
+        'success': bool(review),
+        'data': review,
+        'message': None if review else '当天没有可复盘的赛前快照',
+    }), 200 if review else 404
+
+
+@app.route('/api/fae/version', methods=['GET'])
+def get_fae_version():
+    if not mongo_storage:
+        return jsonify({'success': False, 'message': 'MongoDB不可用'}), 500
+    return jsonify({
+        'success': True,
+        'data': mongo_storage.get_fae_version_info(),
+    })
+
+
+@app.route('/api/fae/skills', methods=['GET'])
+def get_fae_skills():
+    if not mongo_storage:
+        return jsonify({'success': False, 'message': 'MongoDB不可用'}), 500
+    data = mongo_storage.get_fae_skill_center()
+    data['can_manage'] = bool(_fae_admin_user())
+    data['definitions'] = [
+        {
+            'skill_id': skill_id,
+            'label': definition.get('label'),
+            'description': definition.get('description'),
+        }
+        for skill_id, definition in SKILL_DEFINITIONS.items()
+    ]
+    return jsonify({'success': True, 'data': data})
+
+
+@app.route('/api/fae/skills/candidates', methods=['POST'])
+@fae_admin_required
+def generate_fae_skill_candidates():
+    if not mongo_storage:
+        return jsonify({'success': False, 'message': 'MongoDB不可用'}), 500
+    candidates = mongo_storage.generate_fae_skill_candidates()
+    return jsonify({
+        'success': True,
+        'data': mongo_storage.get_fae_skill_center(),
+        'generated': len(candidates),
+        'message': (
+            f'已生成或更新 {len(candidates)} 个候选版本'
+            if candidates else '当前没有满足样本与验证条件的新候选'
+        ),
+    })
+
+
+@app.route('/api/fae/skills/<skill_id>/promote', methods=['POST'])
+@fae_admin_required
+def promote_fae_skill(skill_id):
+    if not mongo_storage:
+        return jsonify({'success': False, 'message': 'MongoDB不可用'}), 500
+    if skill_id not in SKILL_DEFINITIONS:
+        return jsonify({'success': False, 'message': '未知的 Skill'}), 404
+    payload = request.get_json(silent=True) or {}
+    candidate_id = str(payload.get('candidate_id') or '')
+    if not candidate_id:
+        return jsonify({'success': False, 'message': '缺少候选版本ID'}), 400
+    user = _fae_admin_user()
+    result = mongo_storage.promote_fae_skill_candidate(
+        skill_id, candidate_id, actor=(user or {}).get('username')
+    )
+    return jsonify(result), 200 if result.get('success') else 409
+
+
+@app.route('/api/fae/skills/<skill_id>/rollback', methods=['POST'])
+@fae_admin_required
+def rollback_fae_skill(skill_id):
+    if not mongo_storage:
+        return jsonify({'success': False, 'message': 'MongoDB不可用'}), 500
+    if skill_id not in SKILL_DEFINITIONS:
+        return jsonify({'success': False, 'message': '未知的 Skill'}), 404
+    user = _fae_admin_user()
+    result = mongo_storage.rollback_fae_skill(
+        skill_id, actor=(user or {}).get('username')
+    )
+    return jsonify(result), 200 if result.get('success') else 409
+
+
+@app.route('/api/fae/analyze-daily', methods=['POST'])
+@login_required
+def run_daily_fae_analysis():
+    """手动运行指定日期；定时任务默认运行无模型费用的 FAE 核心。"""
+    if not mongo_storage:
+        return jsonify({'success': False, 'message': 'MongoDB不可用'}), 500
+    payload = request.get_json(silent=True) or {}
+    date_str = str(payload.get('date') or datetime.now().strftime('%Y-%m-%d'))[:10]
+    force = bool(payload.get('force'))
+    use_ai = payload.get('narrative', True) is not False
+    matches = mongo_storage.get_matches(filters={'owner_date': date_str, 'status': 0})
+    results = []
+    for match in matches:
+        cached = mongo_storage.get_ai_analysis(match.get('match_id'))
+        if cached and cached.get('engine') and not force:
+            results.append({'match_id': match.get('match_id'), 'cache_hit': True})
+            continue
+        analysis = _generate_fae_for_match(match, use_ai=use_ai)
+        mongo_storage.save_ai_analysis(analysis)
+        results.append({
+            'match_id': match.get('match_id'),
+            'cache_hit': False,
+            'recommendation': (analysis.get('analysis') or {}).get('recommendation'),
+        })
+    _snapshot_fae_draw_plan(date_str)
+    return jsonify({
+        'success': True,
+        'date': date_str,
+        'count': len(results),
+        'data': results,
+    })
+
+
+@app.route('/api/fae/review', methods=['POST'])
+@login_required
+def run_fae_review():
+    if not mongo_storage:
+        return jsonify({'success': False, 'message': 'MongoDB不可用'}), 500
+    return jsonify({'success': True, 'data': _review_finished_fae_matches()})
 
 
 @app.route('/api/leagues')
@@ -1190,7 +1839,12 @@ def get_calculator_matches():
             'Referer': 'https://www.sporttery.cn/'
         }
 
-        resp = requests.get(url, params=params, headers=headers, timeout=15)
+        resp = sporttery_calculator_session.get(
+            url,
+            params=params,
+            headers=headers,
+            timeout=15,
+        )
 
         if resp.status_code == 200:
             try:
@@ -1215,6 +1869,9 @@ def get_predictions():
         
         # 获取筛选参数
         filters = {}
+        match_id = request.args.get('match_id')
+        if match_id:
+            filters['match_id'] = str(match_id)
         
         # 获取数量限制
         limit = request.args.get('limit', '50')
@@ -1238,6 +1895,24 @@ def get_predictions():
         }), 500
 
 scheduler = None
+
+
+def _run_scheduled_fae_daily_ai():
+    """Daily paid Ark job, kept separate from the 15-minute deterministic crawl."""
+    if os.getenv('FAE_DAILY_AI_ENABLED', 'true').lower() not in (
+        '1', 'true', 'yes', 'on'
+    ):
+        return
+    date_str = datetime.now().strftime('%Y-%m-%d')
+    try:
+        result = _run_fae_daily_ai(date_str)
+        print(
+            f"✅ FAE 火山全日研判: {date_str}，"
+            f"{result.get('match_count', 0)} 场，"
+            f"{'缓存命中' if result.get('cache_hit') else '已生成并逐场入库'}"
+        )
+    except Exception as exc:
+        print(f"❌ FAE 火山全日研判失败 {date_str}: {str(exc)}")
 
 def _crawl_latest():
     try:
@@ -1305,7 +1980,75 @@ def _crawl_latest():
         
         print(f"✅ 定时任务: 已更新 {odds_count} 场比赛赔率")
 
-        # 4. 微信推送逻辑
+        # 4. FAE 自动分析与赛后复盘。
+        # 默认只运行无模型费用的确定性核心；说明层可通过环境变量单独开启。
+        if mongo_storage and os.getenv('FAE_AUTO_ANALYZE', 'true').lower() in ('1', 'true', 'yes', 'on'):
+            use_ai_narrative = os.getenv('FAE_AUTO_NARRATIVE', 'false').lower() in ('1', 'true', 'yes', 'on')
+            refresh_minutes = max(15, int(os.getenv('FAE_AUTO_REFRESH_MINUTES', '60')))
+            fae_count = 0
+            for listed_match in matches:
+                if listed_match.get('status') != 0:
+                    continue
+                match_id = str(listed_match.get('match_id') or '')
+                fresh_match = mongo_storage.get_match_by_id(match_id) or listed_match
+                cached = mongo_storage.get_ai_analysis(match_id)
+                if cached and cached.get('engine'):
+                    try:
+                        generated = datetime.fromisoformat(
+                            str(cached.get('generated_at') or '').replace('Z', '+00:00')
+                        )
+                        now_for_cache = datetime.now(generated.tzinfo) if generated.tzinfo else datetime.now()
+                        if (now_for_cache - generated).total_seconds() < refresh_minutes * 60:
+                            continue
+                    except (TypeError, ValueError):
+                        pass
+                try:
+                    fae_analysis = _generate_fae_for_match(
+                        fresh_match, use_ai=use_ai_narrative
+                    )
+                    if mongo_storage.save_ai_analysis(fae_analysis):
+                        fae_count += 1
+                except Exception as exc:
+                    print(f"❌ FAE 自动分析失败 {match_id}: {str(exc)}")
+            print(f"✅ FAE 自动分析: 更新 {fae_count} 场")
+
+        review_result = _review_finished_fae_matches(
+            [mongo_storage.get_match_by_id(m.get('match_id')) or m for m in matches]
+            if mongo_storage else []
+        )
+        if review_result.get('reviewed'):
+            print(
+                f"✅ FAE 自动复盘: {review_result['reviewed']} 场，"
+                f"权重调整 {review_result['adjustments']} 项"
+            )
+
+        if mongo_storage:
+            owner_date = datetime.now().strftime('%Y-%m-%d')
+            try:
+                ai_review_count = 0
+                for snapshot_date in (
+                    mongo_storage.get_fae_daily_ai_snapshot_dates(14)
+                ):
+                    if _review_fae_daily_ai(snapshot_date):
+                        ai_review_count += 1
+                if ai_review_count:
+                    print(
+                        f"✅ FAE AI主复盘: 更新 {ai_review_count} 天"
+                    )
+            except Exception as exc:
+                print(f"❌ FAE AI主复盘失败: {str(exc)}")
+            try:
+                _snapshot_fae_draw_plan(owner_date)
+                draw_review_count = 0
+                for snapshot_date in mongo_storage.get_fae_draw_snapshot_dates(7):
+                    if _review_fae_draw_plan(snapshot_date):
+                        draw_review_count += 1
+                if draw_review_count:
+                    print(f"✅ FAE 平/让平专项复盘: 更新 {draw_review_count} 天")
+            except Exception as exc:
+                print(f"❌ FAE 平/让平快照或复盘失败: {str(exc)}")
+
+        # 5. 微信推送逻辑
         def to_float(x):
             try:
                 return float(x)
@@ -1386,8 +2129,24 @@ def _start_scheduler():
                     id='settle_calculator_bets_every_5m',
                     replace_existing=True,
                 )
+                daily_hour = max(
+                    0, min(23, int(os.getenv('FAE_DAILY_AI_HOUR', '12')))
+                )
+                daily_minute = max(
+                    0, min(59, int(os.getenv('FAE_DAILY_AI_MINUTE', '10')))
+                )
+                scheduler.add_job(
+                    _run_scheduled_fae_daily_ai,
+                    CronTrigger(hour=daily_hour, minute=daily_minute),
+                    id='fae_daily_ai',
+                    replace_existing=True,
+                )
                 scheduler.start()
-                print("✅ 定时任务调度器已启动 (每15分钟刷新，每5分钟结算投注)")
+                print(
+                    "✅ 定时任务调度器已启动 "
+                    f"(每15分钟刷新，每5分钟结算投注，"
+                    f"每日{daily_hour:02d}:{daily_minute:02d}全日AI研判)"
+                )
         else:
             print("⚠️  无法启动定时任务: APScheduler未安装")
     except Exception as e:
@@ -2710,7 +3469,12 @@ def get_calc_matches():
             'Referer': 'https://www.sporttery.cn/'
         }
 
-        resp = requests.get(url, params=params, headers=headers, timeout=10)
+        resp = sporttery_calculator_session.get(
+            url,
+            params=params,
+            headers=headers,
+            timeout=10,
+        )
         data = resp.json()
 
         if not data.get('success'):
@@ -2788,7 +3552,7 @@ def get_calc_matches():
 
 
 def _parse_had_odds(had):
-    """解析胜平负赔率 (0=无变化, 1=上升, 2=下降)"""
+    """解析胜平负赔率（体彩标志：0=无变化，1=上升，-1=下降）。"""
     if not had:
         return {'win': 0, 'draw': 0, 'lose': 0,
                 'winFlag': 0, 'drawFlag': 0, 'loseFlag': 0}
@@ -2803,7 +3567,7 @@ def _parse_had_odds(had):
 
 
 def _parse_hhad_odds(hhad):
-    """解析让球胜平负赔率 (0=无变化, 1=上升, 2=下降)"""
+    """解析让球胜平负赔率（体彩标志：0=无变化，1=上升，-1=下降）。"""
     if not hhad:
         return {'win': 0, 'draw': 0, 'lose': 0,
                 'winFlag': 0, 'drawFlag': 0, 'loseFlag': 0,

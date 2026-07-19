@@ -268,7 +268,6 @@ const matches = computed(() => {
   const start = (filters.value.page - 1) * filters.value.page_size
   return filteredMatches.value.slice(start, start + filters.value.page_size)
 })
-
 const formatDateParam = (date) => {
   const year = date.getFullYear()
   const month = String(date.getMonth() + 1).padStart(2, '0')
@@ -547,6 +546,428 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+.fae-parlay-board {
+  margin: 0 12px 12px;
+  overflow: hidden;
+  background: #fff;
+  border: 1px solid #eadde0;
+  border-radius: 14px;
+  box-shadow: 0 5px 18px rgb(57 31 37 / 7%);
+}
+
+.fae-parlay-board > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 48px;
+  padding: 0 13px;
+  background: linear-gradient(110deg, #fff7f9, #fff);
+  border-bottom: 1px solid #f4e6e9;
+}
+
+.fae-parlay-board > header > div {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.fae-parlay-board > header strong {
+  color: #333;
+  font-size: 15px;
+}
+
+.fae-parlay-board > header small {
+  color: #e53955;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.fae-parlay-intro {
+  margin: 0;
+  padding: 10px 13px;
+  color: #777;
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.fae-all-picks {
+  margin: 0 11px 11px;
+  border: 1px solid #f0e5e7;
+  border-radius: 10px;
+}
+
+.fae-all-picks summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px;
+  color: #444;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  list-style: none;
+}
+
+.fae-all-picks summary::-webkit-details-marker {
+  display: none;
+}
+
+.fae-all-picks summary b {
+  color: #e53955;
+  font-size: 11px;
+}
+
+.fae-all-picks-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+  padding: 0 8px 8px;
+}
+
+.fae-all-picks-grid button {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px 6px;
+  padding: 8px;
+  text-align: left;
+  background: #fcfafb;
+  border: 1px solid #f2e8ea;
+  border-radius: 8px;
+}
+
+.fae-all-picks-grid button > span {
+  grid-column: 1 / 3;
+  overflow: hidden;
+  color: #777;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fae-all-picks-grid button > span b {
+  margin-right: 4px;
+  color: #444;
+}
+
+.fae-all-picks-grid button > strong {
+  color: #e53955;
+  font-size: 12px;
+}
+
+.fae-all-picks-grid button > em {
+  justify-self: end;
+  color: #555;
+  font-size: 10px;
+  font-style: normal;
+}
+
+.fae-all-picks-grid button > small {
+  grid-column: 1 / 3;
+  color: #aaa;
+  font-size: 9px;
+}
+
+.fae-combo-groups {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px;
+  padding: 0 11px 11px;
+}
+
+.fae-combo-group {
+  min-width: 0;
+}
+
+.fae-combo-group > h3 {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 0 0 7px;
+  color: #333;
+  font-size: 13px;
+}
+
+.fae-combo-group > h3 small {
+  color: #aaa;
+  font-size: 9px;
+  font-weight: 400;
+}
+
+.fae-combo-group article {
+  margin-bottom: 8px;
+  overflow: hidden;
+  background: linear-gradient(145deg, #fff, #fff9fa);
+  border: 1px solid #f0dfe2;
+  border-radius: 9px;
+}
+
+.fae-combo-group article > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 7px 8px;
+  border-bottom: 1px solid #f4e9eb;
+}
+
+.fae-combo-group article > header span {
+  display: flex;
+  align-items: center;
+  color: #555;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.fae-combo-group article > header i {
+  width: 17px;
+  height: 17px;
+  margin-right: 5px;
+  color: #fff;
+  font-size: 9px;
+  font-style: normal;
+  line-height: 17px;
+  text-align: center;
+  background: #e53955;
+  border-radius: 50%;
+}
+
+.fae-combo-group article > header b {
+  color: #e53955;
+  font-size: 11px;
+}
+
+.fae-combo-group article > button {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 6px;
+  width: 100%;
+  padding: 6px 8px;
+  text-align: left;
+  background: none;
+  border: 0;
+  border-bottom: 1px dashed #f0e5e7;
+}
+
+.fae-combo-group article > button span {
+  overflow: hidden;
+  color: #777;
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fae-combo-group article > button strong {
+  color: #e53955;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.fae-combo-group article > button em {
+  color: #555;
+  font-size: 9px;
+  font-style: normal;
+  white-space: nowrap;
+}
+
+.fae-combo-group article > footer {
+  display: flex;
+  justify-content: space-between;
+  padding: 7px 8px;
+  color: #888;
+  font-size: 9px;
+}
+
+.fae-combo-group article > footer b {
+  color: #333;
+}
+
+.fae-parlay-disclaimer {
+  margin: 0;
+  padding: 0 12px 11px;
+  color: #aaa;
+  font-size: 9px;
+  line-height: 1.55;
+}
+
+@media (max-width: 390px) {
+  .fae-all-picks-grid,
+  .fae-combo-groups {
+    grid-template-columns: 1fr;
+  }
+}
+
+.fae-daily-board {
+  margin: 0 12px 12px;
+  overflow: hidden;
+  background: linear-gradient(145deg, #fff 0%, #fff8f9 100%);
+  border: 1px solid #f1d9dd;
+  border-radius: 14px;
+  box-shadow: 0 5px 18px rgb(57 31 37 / 7%);
+}
+
+.fae-daily-board > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 46px;
+  padding: 0 13px;
+  border-bottom: 1px solid #f5e8ea;
+}
+
+.fae-daily-board > header > div {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.fae-daily-board > header strong {
+  color: #333;
+  font-size: 15px;
+}
+
+.fae-daily-board > header small {
+  color: #aaa;
+  font-size: 10px;
+}
+
+.fae-board-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 22px;
+  padding: 0 7px;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .4px;
+  background: #2d3142;
+  border-radius: 5px;
+}
+
+.fae-board-groups {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  padding: 11px;
+}
+
+.fae-board-group {
+  min-width: 0;
+  padding: 9px;
+  background: #fff;
+  border: 1px solid #f2e6e8;
+  border-radius: 10px;
+}
+
+.fae-board-group h3 {
+  margin: 0 0 7px;
+  color: #e53955;
+  font-size: 13px;
+}
+
+.fae-board-group button {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  gap: 0 6px;
+  width: 100%;
+  padding: 7px 0;
+  text-align: left;
+  background: none;
+  border: 0;
+  border-top: 1px solid #f5f0f1;
+}
+
+.fae-board-group button > i {
+  grid-row: 1 / 3;
+  align-self: center;
+  width: 18px;
+  height: 18px;
+  color: #fff;
+  font-size: 10px;
+  font-style: normal;
+  line-height: 18px;
+  text-align: center;
+  background: #e53955;
+  border-radius: 50%;
+}
+
+.fae-board-group button > span {
+  grid-column: 2;
+  min-width: 0;
+  overflow: hidden;
+  color: #777;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fae-board-group button > span b {
+  margin-right: 4px;
+  color: #444;
+}
+
+.fae-board-group button > .fae-board-stars {
+  grid-column: 2;
+  color: #ff9c25;
+  font-size: 9px;
+  font-style: normal;
+  letter-spacing: -1px;
+}
+
+.fae-board-group button > .fae-board-odds {
+  grid-column: 3;
+  grid-row: 1;
+  color: #777;
+  font-size: 9px;
+  font-style: normal;
+  letter-spacing: 0;
+  white-space: nowrap;
+}
+
+.fae-board-group button > strong {
+  grid-column: 3;
+  grid-row: 2;
+  justify-self: end;
+  color: #e53955;
+  font-size: 10px;
+}
+
+.fae-danger-board {
+  margin: 0 11px 11px;
+  padding: 9px 10px;
+  background: #fff7e8;
+  border-radius: 9px;
+}
+
+.fae-danger-board h3 {
+  margin: 0 0 5px;
+  color: #9a6b13;
+  font-size: 12px;
+}
+
+.fae-danger-board button {
+  display: flex;
+  justify-content: space-between;
+  width: 100%;
+  padding: 5px 0;
+  color: #805e21;
+  font-size: 10px;
+  text-align: left;
+  background: none;
+  border: 0;
+}
+
+.fae-danger-board button strong {
+  flex: 0 0 auto;
+  margin-left: 8px;
+  color: #d47b22;
+}
+
+@media (max-width: 390px) {
+  .fae-board-groups {
+    grid-template-columns: 1fr;
+  }
+}
+
 .date-filter {
   display: flex;
   gap: 8px;

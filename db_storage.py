@@ -4,10 +4,28 @@ MongoDB数据存储模块
 from pymongo import MongoClient, ASCENDING, DESCENDING
 from pymongo.errors import ConnectionFailure, DuplicateKeyError
 from datetime import datetime
+from hashlib import sha256
 from utils import setup_logger
 import os
 import certifi
 import re
+import json
+
+from football_ai.version import (
+    DEFAULT_RULE_WEIGHTS,
+    ENGINE_VERSION,
+    VERSION_MANIFEST,
+)
+from football_ai.parlay import build_draw_parlays
+from football_ai.draw_review import aggregate_draw_reviews
+from football_ai.daily_review import aggregate_daily_ai_reviews
+from football_ai.review_memory import build_review_memory
+from football_ai.skills import (
+    SKILL_DEFINITIONS,
+    baseline_skill_documents,
+    build_draw_skill_candidate,
+    build_rule_skill_candidate,
+)
 
 
 def clean_asian_handicap(value):
@@ -52,12 +70,29 @@ class MongoDBStorage:
         self.matches_collection = self.db['matches']
         self.odds_collection = self.db['odds']
         self.predictions_collection = self.db['predictions']
+        # ai_analyses 保留为 V1 只读兼容集合。
         self.ai_analyses_collection = self.db['ai_analyses']
+        self.fae_analyses_collection = self.db['fae_analyses']
+        self.fae_analysis_history_collection = self.db['fae_analysis_history']
+        self.fae_reviews_collection = self.db['fae_reviews']
+        self.fae_rule_weights_collection = self.db['fae_rule_weights']
+        self.fae_versions_collection = self.db['fae_versions']
+        self.fae_draw_snapshots_collection = self.db['fae_draw_snapshots']
+        self.fae_draw_reviews_collection = self.db['fae_draw_reviews']
+        self.fae_draw_strategy_weights_collection = self.db['fae_draw_strategy_weights']
+        self.fae_skill_versions_collection = self.db['fae_skill_versions']
+        self.fae_skill_candidates_collection = self.db['fae_skill_candidates']
+        self.fae_skill_deployments_collection = self.db['fae_skill_deployments']
+        self.fae_daily_ai_runs_collection = self.db['fae_daily_ai_runs']
+        self.fae_daily_ai_matches_collection = self.db['fae_daily_ai_matches']
+        self.fae_daily_ai_batches_collection = self.db['fae_daily_ai_batches']
+        self.fae_daily_ai_reviews_collection = self.db['fae_daily_ai_reviews']
         self.user_picks_collection = self.db['user_picks']
         self.bets_collection = self.db['bets']
         
         # 创建索引
         self._create_indexes()
+        self.ensure_fae_skill_registry()
     
     def _create_indexes(self):
         """创建数据库索引"""
@@ -78,10 +113,99 @@ class MongoDBStorage:
             self.predictions_collection.create_index([('predict_date', DESCENDING)])
             self.predictions_collection.create_index([('is_reviewed', ASCENDING)])
 
-            # Skill 驱动的生成式 AI 分析
+            # V1 生成式 AI 分析（兼容）
             self.ai_analyses_collection.create_index([('match_id', ASCENDING)], unique=True)
             self.ai_analyses_collection.create_index([('generated_at', DESCENDING)])
             self.ai_analyses_collection.create_index([('data_hash', ASCENDING)])
+
+            # Football AI Engine
+            self.fae_analyses_collection.create_index([('match_id', ASCENDING)], unique=True)
+            self.fae_analyses_collection.create_index([('owner_date', ASCENDING)])
+            self.fae_analyses_collection.create_index([('generated_at', DESCENDING)])
+            self.fae_analyses_collection.create_index([('data_hash', ASCENDING)])
+            self.fae_analyses_collection.create_index([('review_status', ASCENDING)])
+            self.fae_analysis_history_collection.create_index([
+                ('match_id', ASCENDING), ('generated_at', DESCENDING)
+            ])
+            self.fae_reviews_collection.create_index([
+                ('match_id', ASCENDING), ('engine_version', ASCENDING)
+            ], unique=True)
+            self.fae_reviews_collection.create_index([('owner_date', DESCENDING)])
+            self.fae_rule_weights_collection.create_index([('rule_id', ASCENDING)], unique=True)
+            self.fae_versions_collection.create_index([('version', ASCENDING)], unique=True)
+            self.fae_draw_snapshots_collection.create_index(
+                [('snapshot_hash', ASCENDING)], unique=True
+            )
+            self.fae_draw_snapshots_collection.create_index([
+                ('owner_date', ASCENDING), ('eligible_for_review', ASCENDING),
+                ('generated_at', DESCENDING)
+            ])
+            self.fae_draw_reviews_collection.create_index([
+                ('owner_date', ASCENDING), ('engine_version', ASCENDING)
+            ], unique=True)
+            self.fae_draw_strategy_weights_collection.create_index(
+                [('selection', ASCENDING)], unique=True
+            )
+            self.fae_skill_versions_collection.create_index([
+                ('skill_id', ASCENDING), ('version', ASCENDING)
+            ], unique=True)
+            self.fae_skill_versions_collection.create_index([
+                ('skill_id', ASCENDING), ('status', ASCENDING)
+            ])
+            self.fae_skill_candidates_collection.create_index([
+                ('candidate_id', ASCENDING)
+            ], unique=True)
+            self.fae_skill_candidates_collection.create_index([
+                ('skill_id', ASCENDING), ('status', ASCENDING),
+                ('updated_at', DESCENDING),
+            ])
+            self.fae_skill_deployments_collection.create_index([
+                ('skill_id', ASCENDING), ('deployed_at', DESCENDING)
+            ])
+            self.fae_daily_ai_runs_collection.create_index(
+                [('run_id', ASCENDING)], unique=True
+            )
+            self.fae_daily_ai_runs_collection.create_index([
+                ('owner_date', ASCENDING), ('generated_at', DESCENDING)
+            ])
+            self.fae_daily_ai_runs_collection.create_index([
+                ('owner_date', ASCENDING), ('input_hash', ASCENDING)
+            ])
+            # V1 used one mutable document per date/match. Daily review needs
+            # the exact pre-match run, so preserve one document per run/match.
+            for name, info in (
+                self.fae_daily_ai_matches_collection.index_information().items()
+            ):
+                keys = tuple(info.get('key') or [])
+                if (
+                    info.get('unique')
+                    and keys == (
+                        ('owner_date', ASCENDING), ('match_id', ASCENDING)
+                    )
+                ):
+                    self.fae_daily_ai_matches_collection.drop_index(name)
+            self.fae_daily_ai_matches_collection.create_index([
+                ('run_id', ASCENDING), ('match_id', ASCENDING)
+            ], unique=True)
+            self.fae_daily_ai_matches_collection.create_index([
+                ('run_id', ASCENDING), ('generated_at', DESCENDING)
+            ])
+            self.fae_daily_ai_matches_collection.create_index([
+                ('owner_date', ASCENDING), ('match_id', ASCENDING),
+                ('generated_at', DESCENDING)
+            ])
+            self.fae_daily_ai_batches_collection.create_index(
+                [('batch_hash', ASCENDING)], unique=True
+            )
+            self.fae_daily_ai_batches_collection.create_index([
+                ('owner_date', ASCENDING), ('generated_at', DESCENDING)
+            ])
+            self.fae_daily_ai_reviews_collection.create_index(
+                [('run_id', ASCENDING)], unique=True
+            )
+            self.fae_daily_ai_reviews_collection.create_index([
+                ('owner_date', ASCENDING), ('reviewed_at', DESCENDING)
+            ])
             
             # 用户选择表索引
             self.user_picks_collection.create_index([('device_id', ASCENDING), ('match_id', ASCENDING)], unique=True)
@@ -624,32 +748,1297 @@ class MongoDBStorage:
             return []
 
     def save_ai_analysis(self, analysis_data):
-        """保存或更新单场比赛的 Skill 驱动 AI 分析。"""
+        """保存 FAE 最新分析，并保留每次生成的版本历史。"""
         try:
             payload = dict(analysis_data)
             payload['match_id'] = str(payload.get('match_id') or '')
             payload['updated_at'] = datetime.utcnow().isoformat() + 'Z'
-            result = self.ai_analyses_collection.update_one(
+            previous = self.fae_analyses_collection.find_one(
+                {'match_id': payload['match_id']},
+                {'_id': 0, 'data_hash': 1}
+            )
+            result = self.fae_analyses_collection.update_one(
                 {'match_id': payload['match_id']},
                 {'$set': payload},
                 upsert=True
             )
-            self.logger.info(f"保存 AI 分析: {payload['match_id']}")
+            if not previous or previous.get('data_hash') != payload.get('data_hash'):
+                self.fae_analysis_history_collection.insert_one(dict(payload))
+            self.ensure_fae_version()
+            self.logger.info(f"保存 FAE 分析: {payload['match_id']}")
             return result
         except Exception as e:
-            self.logger.error(f"保存 AI 分析失败: {str(e)}")
+            self.logger.error(f"保存 FAE 分析失败: {str(e)}")
             return None
 
     def get_ai_analysis(self, match_id):
-        """读取单场比赛最近一次生成式 AI 分析。"""
+        """读取 FAE 最新分析；没有时回退到 V1 历史数据。"""
         try:
-            return self.ai_analyses_collection.find_one(
+            current = self.fae_analyses_collection.find_one(
                 {'match_id': str(match_id)},
                 {'_id': 0}
             )
+            if current:
+                return current
+            return self.ai_analyses_collection.find_one(
+                {'match_id': str(match_id)}, {'_id': 0}
+            )
         except Exception as e:
-            self.logger.error(f"获取 AI 分析失败: {str(e)}")
+            self.logger.error(f"获取 FAE 分析失败: {str(e)}")
             return None
+
+    def get_fae_analyses(self, filters=None, limit=None):
+        """按日期、复盘状态等条件读取 FAE 分析。"""
+        try:
+            cursor = self.fae_analyses_collection.find(filters or {}, {'_id': 0})
+            cursor = cursor.sort('generated_at', DESCENDING)
+            if limit:
+                cursor = cursor.limit(limit)
+            return list(cursor)
+        except Exception as e:
+            self.logger.error(f"获取 FAE 分析列表失败: {str(e)}")
+            return []
+
+    def save_fae_daily_ai_run(self, analysis_run):
+        """Save a daily run and preserve its immutable per-match snapshot."""
+        try:
+            payload = dict(analysis_run or {})
+            run_id = str(payload.get('run_id') or '')
+            owner_date = str(payload.get('owner_date') or '')[:10]
+            matches = [
+                dict(item) for item in (payload.pop('matches', None) or [])
+                if item.get('match_id')
+            ]
+            if not run_id or not owner_date or not matches:
+                raise ValueError('全日研判缺少 run_id、日期或逐场结果')
+            match_ids = [str(item.get('match_id')) for item in matches]
+            statuses = {
+                str(item.get('match_id')): item.get('status')
+                for item in self.matches_collection.find(
+                    {'match_id': {'$in': match_ids}},
+                    {'_id': 0, 'match_id': 1, 'status': 1},
+                )
+            }
+            eligible = bool(match_ids) and all(
+                statuses.get(match_id) in (0, '0')
+                for match_id in match_ids
+            )
+            payload.update({
+                'run_id': run_id,
+                'owner_date': owner_date,
+                'match_ids': match_ids,
+                'eligible_for_review': eligible,
+                'updated_at': datetime.utcnow().isoformat() + 'Z',
+            })
+            self.fae_daily_ai_runs_collection.update_one(
+                {'run_id': run_id},
+                {'$set': payload},
+                upsert=True,
+            )
+            for item in matches:
+                match_payload = {
+                    **item,
+                    'match_id': str(item.get('match_id') or ''),
+                    'run_id': run_id,
+                    'owner_date': owner_date,
+                    'status_at_prediction': statuses.get(
+                        str(item.get('match_id') or '')
+                    ),
+                    'updated_at': datetime.utcnow().isoformat() + 'Z',
+                }
+                self.fae_daily_ai_matches_collection.update_one(
+                    {
+                        'run_id': run_id,
+                        'match_id': match_payload['match_id'],
+                    },
+                    {'$set': match_payload},
+                    upsert=True,
+                )
+            self.logger.info(
+                f"保存 FAE 全日研判: {owner_date}，{len(matches)} 场"
+            )
+            return True
+        except Exception as e:
+            self.logger.error(f"保存 FAE 全日研判失败: {str(e)}")
+            return False
+
+    def get_fae_daily_ai_run(self, owner_date, input_hash=None):
+        """Read a daily run, optionally requiring an exact input cache key."""
+        try:
+            query = {'owner_date': str(owner_date or '')[:10]}
+            if input_hash:
+                query['input_hash'] = str(input_hash)
+            run = self.fae_daily_ai_runs_collection.find_one(
+                query,
+                {'_id': 0},
+                sort=[('generated_at', DESCENDING)],
+            )
+            if not run:
+                return None
+            matches = list(self.fae_daily_ai_matches_collection.find(
+                {'run_id': run.get('run_id')},
+                {'_id': 0},
+            ).sort([('match_time', ASCENDING), ('match_number', ASCENDING)]))
+            run['matches'] = matches
+            return run
+        except Exception as e:
+            self.logger.error(f"读取 FAE 全日研判失败: {str(e)}")
+            return None
+
+    def get_fae_daily_ai_snapshot(self, owner_date):
+        """Return the latest daily AI run created while every match was pre-game."""
+        try:
+            run = self.fae_daily_ai_runs_collection.find_one(
+                {
+                    'owner_date': str(owner_date or '')[:10],
+                    'eligible_for_review': True,
+                },
+                {'_id': 0},
+                sort=[('generated_at', DESCENDING)],
+            )
+            if not run:
+                return None
+            run['matches'] = list(
+                self.fae_daily_ai_matches_collection.find(
+                    {'run_id': run.get('run_id')},
+                    {'_id': 0},
+                ).sort([
+                    ('match_time', ASCENDING),
+                    ('match_number', ASCENDING),
+                ])
+            )
+            return run if run['matches'] else None
+        except Exception as e:
+            self.logger.error(f"读取 FAE 全日AI赛前快照失败: {str(e)}")
+            return None
+
+    def get_fae_daily_ai_snapshot_dates(self, limit=14):
+        try:
+            dates = sorted(
+                value
+                for value in self.fae_daily_ai_runs_collection.distinct(
+                    'owner_date', {'eligible_for_review': True}
+                )
+                if value
+            )
+            return dates[-max(1, int(limit)):]
+        except Exception as e:
+            self.logger.error(f"读取 FAE 全日AI快照日期失败: {str(e)}")
+            return []
+
+    def save_fae_daily_ai_review(self, review):
+        """Persist AI-primary settlement and feed staged Skill learning."""
+        try:
+            run_id = str(review.get('run_id') or '')
+            owner_date = str(review.get('owner_date') or '')[:10]
+            if not run_id or not owner_date:
+                raise ValueError('AI复盘缺少 run_id 或日期')
+            payload = {
+                **review,
+                'run_id': run_id,
+                'owner_date': owner_date,
+            }
+            self.fae_daily_ai_reviews_collection.update_one(
+                {'run_id': run_id}, {'$set': payload}, upsert=True
+            )
+            weights = self._recalculate_fae_draw_strategy_weights(apply=False)
+            candidates = self.generate_fae_skill_candidates()
+            return {
+                'saved': True,
+                'review': payload,
+                'strategy_weights': weights,
+                'candidates': candidates,
+            }
+        except Exception as e:
+            self.logger.error(f"保存 FAE 全日AI复盘失败: {str(e)}")
+            return {'saved': False, 'message': str(e)}
+
+    def get_fae_daily_ai_review(self, owner_date):
+        try:
+            return self.fae_daily_ai_reviews_collection.find_one(
+                {'owner_date': str(owner_date or '')[:10]},
+                {'_id': 0},
+                sort=[('reviewed_at', DESCENDING)],
+            )
+        except Exception as e:
+            self.logger.error(f"读取 FAE 全日AI复盘失败: {str(e)}")
+            return None
+
+    def get_fae_daily_ai_review_stats(self):
+        reviews = list(
+            self.fae_daily_ai_reviews_collection.find({}, {'_id': 0})
+        )
+        weight_docs = list(self.fae_draw_strategy_weights_collection.find(
+            {}, {'_id': 0}
+        ))
+        active_weights = self.get_fae_draw_strategy_weights()
+        weights = {
+            item.get('selection'): {
+                **item,
+                'weight': active_weights.get(item.get('selection'), 1.0),
+            }
+            for item in weight_docs if item.get('selection')
+        }
+        for selection, weight in active_weights.items():
+            weights.setdefault(selection, {
+                'selection': selection,
+                'weight': weight,
+                'action': 'hold',
+            })
+        return aggregate_daily_ai_reviews(reviews, weights)
+
+    def get_fae_review_memory(self, before_date):
+        """Return compact review memory using only strictly earlier match days."""
+        try:
+            window_days = max(
+                2, min(30, int(os.getenv('FAE_REVIEW_MEMORY_DAYS', '7')))
+            )
+            observation_days = max(
+                1,
+                min(
+                    window_days,
+                    int(os.getenv(
+                        'FAE_REVIEW_MEMORY_OBSERVATION_DAYS', '3'
+                    )),
+                ),
+            )
+            minimum_pattern_days = max(
+                2,
+                int(os.getenv(
+                    'FAE_REVIEW_MEMORY_MIN_PATTERN_DAYS', '2'
+                )),
+            )
+            minimum_evidence = max(
+                10,
+                int(os.getenv(
+                    'FAE_REVIEW_MEMORY_MIN_EVIDENCE', '10'
+                )),
+            )
+            reviews = list(
+                self.fae_daily_ai_reviews_collection.find(
+                    {
+                        'owner_date': {
+                            '$lt': str(before_date or '')[:10]
+                        },
+                        'ai_deep_review.status': 'completed',
+                    },
+                    {'_id': 0},
+                ).sort('owner_date', DESCENDING).limit(window_days)
+            )
+            return build_review_memory(
+                reviews,
+                str(before_date or '')[:10],
+                window_days=window_days,
+                observation_days=observation_days,
+                minimum_pattern_days=minimum_pattern_days,
+                minimum_evidence=minimum_evidence,
+            )
+        except Exception as e:
+            self.logger.error(f"读取 FAE 复盘记忆失败: {str(e)}")
+            return build_review_memory([], str(before_date or '')[:10])
+
+    def get_fae_daily_ai_match(self, match_id, owner_date=None):
+        """Read the latest saved Ark judgement for one match."""
+        try:
+            query = {'match_id': str(match_id or '')}
+            if owner_date:
+                query['owner_date'] = str(owner_date)[:10]
+            return self.fae_daily_ai_matches_collection.find_one(
+                query,
+                {'_id': 0},
+                sort=[('generated_at', DESCENDING)],
+            )
+        except Exception as e:
+            self.logger.error(f"读取 FAE 逐场全日研判失败: {str(e)}")
+            return None
+
+    def save_fae_daily_ai_batch(self, batch):
+        """Persist a paid Ark batch checkpoint so retries resume safely."""
+        try:
+            payload = dict(batch or {})
+            batch_hash = str(payload.get('batch_hash') or '')
+            if not batch_hash or not isinstance(payload.get('output'), dict):
+                return False
+            self.fae_daily_ai_batches_collection.update_one(
+                {'batch_hash': batch_hash},
+                {'$set': payload},
+                upsert=True,
+            )
+            return True
+        except Exception as e:
+            self.logger.error(f"保存 FAE 全日批次检查点失败: {str(e)}")
+            return False
+
+    def get_fae_daily_ai_batch(self, batch_hash):
+        try:
+            return self.fae_daily_ai_batches_collection.find_one(
+                {'batch_hash': str(batch_hash or '')},
+                {'_id': 0},
+            )
+        except Exception as e:
+            self.logger.error(f"读取 FAE 全日批次检查点失败: {str(e)}")
+            return None
+
+    def ensure_fae_version(self):
+        """登记当前引擎版本与能力清单。"""
+        try:
+            payload = dict(VERSION_MANIFEST)
+            payload['updated_at'] = datetime.utcnow().isoformat() + 'Z'
+            self.fae_versions_collection.update_one(
+                {'version': ENGINE_VERSION},
+                {'$set': payload, '$setOnInsert': {
+                    'created_at': datetime.utcnow().isoformat() + 'Z'
+                }},
+                upsert=True
+            )
+            return True
+        except Exception as e:
+            self.logger.error(f"登记 FAE 版本失败: {str(e)}")
+            return False
+
+    def _legacy_fae_rule_weights(self):
+        """Read the pre-Skill weight collection for migration and fallback."""
+        weights = dict(DEFAULT_RULE_WEIGHTS)
+        for item in self.fae_rule_weights_collection.find({}, {'_id': 0}):
+            try:
+                weights[str(item.get('rule_id'))] = float(item.get('weight'))
+            except (TypeError, ValueError):
+                continue
+        return weights
+
+    def _legacy_fae_draw_strategy_weights(self):
+        weights = {'平局': 1.0, '让平': 1.0}
+        for item in self.fae_draw_strategy_weights_collection.find(
+            {}, {'_id': 0}
+        ):
+            if item.get('selection') in weights:
+                try:
+                    weights[item['selection']] = float(item.get('weight') or 1)
+                except (TypeError, ValueError):
+                    continue
+        return weights
+
+    def ensure_fae_skill_registry(self):
+        """Seed one active version for every built-in FAE Skill."""
+        try:
+            baseline = baseline_skill_documents(
+                self._legacy_fae_rule_weights(),
+                self._legacy_fae_draw_strategy_weights(),
+            )
+            now = datetime.utcnow().isoformat() + 'Z'
+            for document in baseline:
+                skill_id = document['skill_id']
+                active = self.fae_skill_versions_collection.find_one({
+                    'skill_id': skill_id, 'status': 'active'
+                })
+                if active:
+                    continue
+                existing = self.fae_skill_versions_collection.find_one(
+                    {'skill_id': skill_id},
+                    sort=[('activated_at', DESCENDING), ('created_at', DESCENDING)],
+                )
+                if existing:
+                    self.fae_skill_versions_collection.update_one(
+                        {'_id': existing['_id']},
+                        {'$set': {'status': 'active', 'activated_at': now}},
+                    )
+                    continue
+                payload = {
+                    **document,
+                    'created_at': now,
+                    'activated_at': now,
+                }
+                self.fae_skill_versions_collection.insert_one(payload)
+            return True
+        except Exception as e:
+            self.logger.error(f"初始化 FAE Skill 注册表失败: {str(e)}")
+            return False
+
+    def get_active_fae_skills(self):
+        """Return active Skill documents without Mongo-specific fields."""
+        try:
+            self.ensure_fae_skill_registry()
+            rows = list(self.fae_skill_versions_collection.find(
+                {'status': 'active'}, {'_id': 0}
+            ))
+            rows.sort(key=lambda item: str(item.get('skill_id') or ''))
+            return rows
+        except Exception as e:
+            self.logger.error(f"读取 FAE Skill 失败: {str(e)}")
+            return []
+
+    def get_active_fae_skill_versions(self):
+        return {
+            str(item.get('skill_id')): str(item.get('version'))
+            for item in self.get_active_fae_skills()
+            if item.get('skill_id') and item.get('version')
+        }
+
+    def get_fae_rule_weights(self):
+        """Return weights from active Skill versions, with legacy fallback."""
+        weights = dict(DEFAULT_RULE_WEIGHTS)
+        try:
+            active_skills = self.get_active_fae_skills()
+            found_versioned_weights = False
+            for skill in active_skills:
+                configured = (
+                    (skill.get('parameters') or {}).get('rule_weights') or {}
+                )
+                for rule_id, value in configured.items():
+                    weights[str(rule_id)] = float(value)
+                    found_versioned_weights = True
+            if not found_versioned_weights:
+                weights.update(self._legacy_fae_rule_weights())
+        except Exception as e:
+            self.logger.error(f"读取 FAE 规则权重失败: {str(e)}")
+        return weights
+
+    def get_fae_skill_center(self):
+        """Return active versions, validated candidates and deployment history."""
+        try:
+            active = self.get_active_fae_skills()
+            version_counts = {
+                item['_id']: item['count']
+                for item in self.fae_skill_versions_collection.aggregate([
+                    {'$group': {'_id': '$skill_id', 'count': {'$sum': 1}}},
+                ])
+            }
+            for item in active:
+                latest_deployment = self.fae_skill_deployments_collection.find_one(
+                    {
+                        'skill_id': item.get('skill_id'),
+                        'version': item.get('version'),
+                    },
+                    {'_id': 0, 'action': 1},
+                    sort=[('deployed_at', DESCENDING)],
+                )
+                item['can_rollback'] = (
+                    version_counts.get(item.get('skill_id'), 0) > 1
+                    and (latest_deployment or {}).get('action') == 'promote'
+                )
+            candidates = list(self.fae_skill_candidates_collection.find(
+                {'status': {'$in': ['validated', 'needs_review']}},
+                {'_id': 0},
+            ).sort('updated_at', DESCENDING).limit(30))
+            deployments = list(self.fae_skill_deployments_collection.find(
+                {}, {'_id': 0}
+            ).sort('deployed_at', DESCENDING).limit(30))
+            return {
+                'engine_version': ENGINE_VERSION,
+                'mode': 'staged',
+                'active': active,
+                'candidates': candidates,
+                'deployments': deployments,
+                'minimum_samples': max(
+                    3, int(os.getenv('FAE_LEARNING_MIN_SAMPLES', '10'))
+                ),
+                'minimum_new_samples': max(
+                    1, int(os.getenv('FAE_SKILL_MIN_NEW_SAMPLES', '10'))
+                ),
+            }
+        except Exception as e:
+            self.logger.error(f"读取 FAE Skill 中心失败: {str(e)}")
+            return {
+                'engine_version': ENGINE_VERSION,
+                'mode': 'staged',
+                'active': [],
+                'candidates': [],
+                'deployments': [],
+                'error': str(e),
+            }
+
+    def generate_fae_skill_candidates(self):
+        """Build validated Skill candidates from accumulated review evidence."""
+        try:
+            active_skills = self.get_active_fae_skills()
+            rule_stats = list(self.fae_rule_weights_collection.find(
+                {}, {'_id': 0}
+            ))
+            ai_reviews = list(
+                self.fae_daily_ai_reviews_collection.find({}, {'_id': 0})
+            )
+            if ai_reviews:
+                draw_stats = aggregate_daily_ai_reviews(ai_reviews)
+            else:
+                reviews = list(
+                    self.fae_draw_reviews_collection.find({}, {'_id': 0})
+                )
+                draw_stats = aggregate_draw_reviews(reviews)
+            ai_scope_skills = {
+                'euro': {'euro-odds'},
+                'asian': {'asian-handicap'},
+                'sporttery': {'draw-strategy'},
+                'total': {'over-under'},
+                'consistency': {'euro-odds', 'risk-control'},
+                'risk': {'risk-control'},
+                'guardrail': {'risk-control'},
+                'combination': {'draw-strategy'},
+            }
+            ai_advisories = []
+            for ai_review in ai_reviews:
+                deep_review = ai_review.get('ai_deep_review') or {}
+                for advisory in deep_review.get(
+                    'learning_candidates'
+                ) or []:
+                    scope = str(advisory.get('scope') or '')
+                    for skill_id in ai_scope_skills.get(scope, set()):
+                        ai_advisories.append({
+                            **advisory,
+                            'skill_id': skill_id,
+                            'owner_date': ai_review.get('owner_date'),
+                            'review_run_id': ai_review.get('run_id'),
+                            'review_model': deep_review.get('model'),
+                        })
+            minimum_samples = max(
+                3, int(os.getenv('FAE_LEARNING_MIN_SAMPLES', '10'))
+            )
+            minimum_new_samples = max(
+                1, int(os.getenv('FAE_SKILL_MIN_NEW_SAMPLES', '10'))
+            )
+            generated = []
+            now = datetime.utcnow().isoformat() + 'Z'
+            for active in active_skills:
+                if active.get('skill_id') == 'draw-strategy':
+                    candidate = build_draw_skill_candidate(
+                        active,
+                        draw_stats.get('by_selection') or {},
+                        minimum_samples=minimum_samples,
+                        minimum_new_samples=minimum_new_samples,
+                    )
+                else:
+                    candidate = build_rule_skill_candidate(
+                        active,
+                        rule_stats,
+                        minimum_samples=minimum_samples,
+                        minimum_new_samples=minimum_new_samples,
+                    )
+                if not candidate or candidate.get('status') != 'validated':
+                    continue
+                # Ark proposals are attached for audit/explanation only. The
+                # candidate parameters above still come exclusively from
+                # minimum-sample historical replay.
+                matching_advisories = [
+                    item for item in ai_advisories
+                    if item.get('skill_id') == candidate.get('skill_id')
+                ][-20:]
+                candidate['ai_review_evidence'] = matching_advisories
+                candidate['evaluation']['ai_advisory_count'] = len(
+                    matching_advisories
+                )
+                open_candidate = self.fae_skill_candidates_collection.find_one({
+                    'skill_id': candidate['skill_id'],
+                    'parent_version': candidate['parent_version'],
+                    'status': {'$in': ['validated', 'needs_review']},
+                })
+                if open_candidate:
+                    candidate_id = open_candidate['candidate_id']
+                    created_at = open_candidate.get('created_at') or now
+                else:
+                    fingerprint = json.dumps(
+                        {
+                            'skill_id': candidate['skill_id'],
+                            'parent_version': candidate['parent_version'],
+                            'parameters': candidate['parameters'],
+                            'learning_snapshot': candidate['learning_snapshot'],
+                        },
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(',', ':'),
+                    ).encode('utf-8')
+                    candidate_id = sha256(fingerprint).hexdigest()[:24]
+                    created_at = now
+                payload = {
+                    **candidate,
+                    'candidate_id': candidate_id,
+                    'created_at': created_at,
+                    'updated_at': now,
+                }
+                self.fae_skill_candidates_collection.update_one(
+                    {'candidate_id': candidate_id},
+                    {'$set': payload},
+                    upsert=True,
+                )
+                generated.append(payload)
+            return generated
+        except Exception as e:
+            self.logger.error(f"生成 FAE Skill 候选失败: {str(e)}")
+            return []
+
+    def _apply_fae_skill_parameters(self, skill):
+        now = datetime.utcnow().isoformat() + 'Z'
+        parameters = skill.get('parameters') or {}
+        for rule_id, weight in (parameters.get('rule_weights') or {}).items():
+            self.fae_rule_weights_collection.update_one(
+                {'rule_id': str(rule_id)},
+                {'$set': {
+                    'rule_id': str(rule_id),
+                    'weight': round(float(weight), 3),
+                    'engine_version': ENGINE_VERSION,
+                    'skill_id': skill.get('skill_id'),
+                    'skill_version': skill.get('version'),
+                    'updated_at': now,
+                }},
+                upsert=True,
+            )
+        for selection, weight in (
+            parameters.get('strategy_weights') or {}
+        ).items():
+            self.fae_draw_strategy_weights_collection.update_one(
+                {'selection': str(selection)},
+                {'$set': {
+                    'selection': str(selection),
+                    'weight': round(float(weight), 3),
+                    'engine_version': ENGINE_VERSION,
+                    'skill_id': skill.get('skill_id'),
+                    'skill_version': skill.get('version'),
+                    'updated_at': now,
+                }},
+                upsert=True,
+            )
+
+    def promote_fae_skill_candidate(self, skill_id, candidate_id, actor=None):
+        """Promote a validated candidate and apply its parameters atomically enough for local Mongo."""
+        try:
+            candidate = self.fae_skill_candidates_collection.find_one({
+                'candidate_id': str(candidate_id),
+                'skill_id': str(skill_id),
+                'status': 'validated',
+            }, {'_id': 0})
+            if not candidate:
+                return {'success': False, 'message': '候选版本不存在或尚未通过验证'}
+            active = self.fae_skill_versions_collection.find_one({
+                'skill_id': str(skill_id), 'status': 'active'
+            }, {'_id': 0})
+            if not active or active.get('version') != candidate.get('parent_version'):
+                return {'success': False, 'message': '线上版本已经变化，请重新生成候选'}
+            now = datetime.utcnow().isoformat() + 'Z'
+            self.fae_skill_versions_collection.update_many(
+                {'skill_id': str(skill_id), 'status': 'active'},
+                {'$set': {'status': 'superseded', 'superseded_at': now}},
+            )
+            version_payload = {
+                'skill_id': str(skill_id),
+                'label': candidate.get('label') or active.get('label'),
+                'description': active.get('description'),
+                'guidance': candidate.get('guidance') or active.get('guidance'),
+                'schema_version': active.get('schema_version'),
+                'engine_version': ENGINE_VERSION,
+                'version': candidate.get('proposed_version'),
+                'parent_version': active.get('version'),
+                'status': 'active',
+                'parameters': candidate.get('parameters') or {},
+                'learning_snapshot': candidate.get('learning_snapshot') or {},
+                'evaluation': candidate.get('evaluation') or {},
+                'changes': candidate.get('changes') or [],
+                'source': 'promoted-candidate',
+                'candidate_id': candidate.get('candidate_id'),
+                'created_at': now,
+                'activated_at': now,
+                'activated_by': actor,
+            }
+            self.fae_skill_versions_collection.update_one(
+                {
+                    'skill_id': str(skill_id),
+                    'version': version_payload['version'],
+                },
+                {'$set': version_payload},
+                upsert=True,
+            )
+            self._apply_fae_skill_parameters(version_payload)
+            self.fae_skill_candidates_collection.update_one(
+                {'candidate_id': str(candidate_id)},
+                {'$set': {
+                    'status': 'promoted',
+                    'promoted_at': now,
+                    'promoted_by': actor,
+                }},
+            )
+            deployment = {
+                'deployment_id': sha256(
+                    f"{skill_id}:{version_payload['version']}:{now}".encode()
+                ).hexdigest()[:24],
+                'skill_id': str(skill_id),
+                'label': version_payload.get('label'),
+                'action': 'promote',
+                'previous_version': active.get('version'),
+                'version': version_payload['version'],
+                'candidate_id': str(candidate_id),
+                'deployed_at': now,
+                'deployed_by': actor,
+            }
+            self.fae_skill_deployments_collection.insert_one(deployment)
+            return {'success': True, 'data': version_payload}
+        except Exception as e:
+            self.logger.error(f"发布 FAE Skill 失败: {str(e)}")
+            return {'success': False, 'message': str(e)}
+
+    def rollback_fae_skill(self, skill_id, actor=None):
+        """Rollback an active Skill to the version it replaced."""
+        try:
+            active = self.fae_skill_versions_collection.find_one({
+                'skill_id': str(skill_id), 'status': 'active'
+            }, {'_id': 0})
+            if not active:
+                return {'success': False, 'message': '没有找到当前线上版本'}
+            deployment = self.fae_skill_deployments_collection.find_one(
+                {
+                    'skill_id': str(skill_id),
+                    'version': active.get('version'),
+                    'previous_version': {'$exists': True},
+                },
+                {'_id': 0},
+                sort=[('deployed_at', DESCENDING)],
+            )
+            if not deployment or deployment.get('action') != 'promote':
+                return {'success': False, 'message': '当前版本没有可执行的回滚点'}
+            previous_version = (
+                deployment.get('previous_version') if deployment else None
+            )
+            target = (
+                self.fae_skill_versions_collection.find_one({
+                    'skill_id': str(skill_id),
+                    'version': previous_version,
+                }, {'_id': 0})
+                if previous_version else None
+            )
+            if not target:
+                return {'success': False, 'message': '没有可回滚的历史版本'}
+            now = datetime.utcnow().isoformat() + 'Z'
+            self.fae_skill_versions_collection.update_one(
+                {
+                    'skill_id': str(skill_id),
+                    'version': active.get('version'),
+                },
+                {'$set': {'status': 'rolled_back', 'rolled_back_at': now}},
+            )
+            self.fae_skill_versions_collection.update_one(
+                {
+                    'skill_id': str(skill_id),
+                    'version': target.get('version'),
+                },
+                {'$set': {
+                    'status': 'active',
+                    'activated_at': now,
+                    'activated_by': actor,
+                }},
+            )
+            target['status'] = 'active'
+            target['activated_at'] = now
+            self._apply_fae_skill_parameters(target)
+            self.fae_skill_deployments_collection.insert_one({
+                'deployment_id': sha256(
+                    f"{skill_id}:rollback:{target.get('version')}:{now}".encode()
+                ).hexdigest()[:24],
+                'skill_id': str(skill_id),
+                'label': target.get('label'),
+                'action': 'rollback',
+                'previous_version': active.get('version'),
+                'version': target.get('version'),
+                'deployed_at': now,
+                'deployed_by': actor,
+            })
+            return {'success': True, 'data': target}
+        except Exception as e:
+            self.logger.error(f"回滚 FAE Skill 失败: {str(e)}")
+            return {'success': False, 'message': str(e)}
+
+    def save_fae_review(self, review_data):
+        """保存复盘、累计证据，并生成待发布的 Skill 候选。"""
+        try:
+            match_id = str(review_data.get('match_id') or '')
+            version = str(review_data.get('engine_version') or ENGINE_VERSION)
+            key = {'match_id': match_id, 'engine_version': version}
+            existing = self.fae_reviews_collection.find_one(key, {'_id': 0})
+            if existing:
+                return {'saved': True, 'new': False, 'review': existing, 'adjustments': []}
+
+            adjustments = []
+            learning_signals = []
+            minimum_samples = max(3, int(os.getenv('FAE_LEARNING_MIN_SAMPLES', '10')))
+            active_weights = self.get_fae_rule_weights()
+            for result in review_data.get('rule_results') or []:
+                if result.get('hit') not in (True, False) or not result.get('rule_id'):
+                    continue
+                rule_id = str(result['rule_id'])
+                current = self.fae_rule_weights_collection.find_one(
+                    {'rule_id': rule_id}, {'_id': 0}
+                ) or {}
+                samples = int(current.get('samples') or 0) + 1
+                hits = int(current.get('hits') or 0) + (1 if result['hit'] else 0)
+                accuracy = hits / samples
+                previous_weight = float(active_weights.get(
+                    rule_id, DEFAULT_RULE_WEIGHTS.get(rule_id, 1.0)
+                ))
+                suggested_weight = previous_weight
+                action = 'hold'
+                if samples >= minimum_samples:
+                    if accuracy >= 0.80:
+                        suggested_weight = min(1.30, previous_weight + 0.05)
+                        action = 'increase'
+                    elif accuracy < 0.60:
+                        suggested_weight = max(0.70, previous_weight - 0.05)
+                        action = 'decrease'
+                self.fae_rule_weights_collection.update_one(
+                    {'rule_id': rule_id},
+                    {'$set': {
+                        'rule_id': rule_id,
+                        'engine_version': version,
+                        'weight': round(previous_weight, 3),
+                        'suggested_weight': round(suggested_weight, 3),
+                        'suggested_action': action,
+                        'samples': samples,
+                        'hits': hits,
+                        'accuracy': round(accuracy, 4),
+                        'updated_at': datetime.utcnow().isoformat() + 'Z',
+                    }},
+                    upsert=True
+                )
+                if suggested_weight != previous_weight:
+                    learning_signals.append({
+                        'rule_id': rule_id,
+                        'previous_weight': round(previous_weight, 3),
+                        'suggested_weight': round(suggested_weight, 3),
+                        'samples': samples,
+                        'accuracy': round(accuracy, 4),
+                        'action': action,
+                    })
+
+            payload = dict(review_data)
+            payload['learning_adjustments'] = adjustments
+            payload['learning_signals'] = learning_signals
+            payload['learning_mode'] = 'staged-skill-version'
+            self.fae_reviews_collection.insert_one(dict(payload))
+            self.fae_analyses_collection.update_one(
+                {'match_id': match_id},
+                {'$set': {
+                    'review_status': 'completed',
+                    'reviewed_at': payload.get('reviewed_at'),
+                    'review_summary': payload.get('prediction'),
+                }}
+            )
+            candidates = self.generate_fae_skill_candidates()
+            return {
+                'saved': True,
+                'new': True,
+                'review': payload,
+                'adjustments': adjustments,
+                'candidates': candidates,
+            }
+        except Exception as e:
+            self.logger.error(f"保存 FAE 复盘失败: {str(e)}")
+            return {'saved': False, 'new': False, 'message': str(e), 'adjustments': []}
+
+    def get_fae_review(self, match_id, engine_version=None):
+        """读取指定比赛的赛后复盘。"""
+        try:
+            query = {'match_id': str(match_id)}
+            if engine_version:
+                query['engine_version'] = str(engine_version)
+            return self.fae_reviews_collection.find_one(query, {'_id': 0})
+        except Exception as e:
+            self.logger.error(f"读取 FAE 复盘失败: {str(e)}")
+            return None
+
+    def get_fae_rankings(self, owner_date):
+        """每个玩法独立评分，输出每日榜单与危险盘口。"""
+        analyses = list(self.fae_analyses_collection.find(
+            {'owner_date': str(owner_date)[:10]}, {'_id': 0}
+        ))
+        match_ids = [
+            str(item.get('match_id')) for item in analyses if item.get('match_id')
+        ]
+        match_by_id = {
+            str(item.get('match_id')): item
+            for item in self.matches_collection.find(
+                {'match_id': {'$in': match_ids}},
+                {
+                    '_id': 0,
+                    'match_id': 1,
+                    'league': 1, 'match_time': 1, 'handicap': 1, 'status': 1,
+                    'euro_current_win': 1, 'euro_initial_win': 1,
+                    'euro_current_draw': 1, 'euro_initial_draw': 1,
+                    'euro_current_lose': 1, 'euro_initial_lose': 1,
+                    'hi_current_home_odds': 1, 'hi_initial_home_odds': 1,
+                    'hi_current_draw_odds': 1, 'hi_initial_draw_odds': 1,
+                    'hi_current_away_odds': 1, 'hi_initial_away_odds': 1,
+                    'ou_current_over_odds': 1, 'ou_initial_over_odds': 1,
+                    'ou_current_under_odds': 1, 'ou_initial_under_odds': 1,
+                }
+            )
+        }
+        groups = {}
+        dangerous = []
+        ranking_labels = {'主胜', '平局', '客胜', '让胜', '让平', '让负'}
+
+        odds_fields = {
+            '主胜': ('euro_current_win', 'euro_initial_win'),
+            '平局': ('euro_current_draw', 'euro_initial_draw'),
+            '客胜': ('euro_current_lose', 'euro_initial_lose'),
+            '让胜': ('hi_current_home_odds', 'hi_initial_home_odds'),
+            '让平': ('hi_current_draw_odds', 'hi_initial_draw_odds'),
+            '让负': ('hi_current_away_odds', 'hi_initial_away_odds'),
+            '大球': ('ou_current_over_odds', 'ou_initial_over_odds'),
+            '小球': ('ou_current_under_odds', 'ou_initial_under_odds'),
+        }
+
+        def category_odds(match, label):
+            fields = odds_fields.get(label)
+            if not fields:
+                return None, None
+            current, initial = match.get(fields[0]), match.get(fields[1])
+            if current not in (None, ''):
+                return current, '即时'
+            if initial not in (None, ''):
+                return initial, '初盘'
+            return None, None
+
+        def candidate(label, probability, baseline, overall, risk_score, market):
+            edge = max(0, probability - baseline)
+            score = max(0, min(
+                99,
+                round(48 + edge * 0.75 + overall * 0.25 - risk_score * 0.16)
+            ))
+            confidence = min(88, max(35, round((score + probability) / 2)))
+            stars = max(1.0, min(5.0, round((score / 20) * 2) / 2))
+            full_stars = max(0, min(5, round(stars)))
+            return {
+                'label': label,
+                'probability': probability,
+                'score': score,
+                'confidence': confidence,
+                'stars': stars,
+                'star_text': '★' * full_stars + '☆' * (5 - full_stars),
+                'market': market,
+            }
+
+        for item in analyses:
+            analysis = item.get('analysis') or {}
+            recommendation = analysis.get('recommendation') or {}
+            risk = analysis.get('risk') or {}
+            match = match_by_id.get(str(item.get('match_id')), {})
+            probabilities = analysis.get('probabilities') or {}
+            categories = recommendation.get('category_scores') or []
+            if not categories:
+                overall = int(analysis.get('overall_score') or 0)
+                risk_score = int(risk.get('score') or 0)
+                outcome_fields = (
+                    ('主胜', probabilities.get('home_win'), 34, '胜平负'),
+                    ('平局', probabilities.get('draw'), 34, '胜平负'),
+                    ('客胜', probabilities.get('away_win'), 34, '胜平负'),
+                )
+                for label, probability, baseline, market in outcome_fields:
+                    if probability is not None:
+                        categories.append(candidate(
+                            label, int(probability), baseline, overall, risk_score, market
+                        ))
+                hhad = probabilities.get('hhad') or {}
+                for key, label in (('win', '让胜'), ('draw', '让平'), ('lose', '让负')):
+                    if hhad.get(key) is not None:
+                        categories.append(candidate(
+                            label, int(hhad[key]), 34, overall, risk_score, '竞彩让球'
+                        ))
+                totals = probabilities.get('over_under') or {}
+                for key, label in (('over', '大球'), ('under', '小球')):
+                    if totals.get(key) is not None:
+                        categories.append(candidate(
+                            label, int(totals[key]), 50, overall, risk_score, '大小球'
+                        ))
+
+            base_row = {
+                'match_id': item.get('match_id'),
+                'match_number': item.get('match_number'),
+                'home_team': item.get('home_team'),
+                'away_team': item.get('away_team'),
+                'league': match.get('league'),
+                'match_time': match.get('match_time'),
+                'status': match.get('status'),
+                'risk': risk,
+                'engine_version': (item.get('engine') or {}).get('version'),
+            }
+            for category in categories:
+                label = category.get('label')
+                if not label or label not in ranking_labels:
+                    continue
+                if category.get('no_bet'):
+                    continue
+                odds, odds_source = category_odds(match, label)
+                row = {
+                    **base_row,
+                    'recommendation': label,
+                    'market': category.get('market'),
+                    'handicap': (
+                        probabilities.get('sporttery_handicap')
+                        if str(label).startswith('让') else None
+                    ),
+                    'odds': odds,
+                    'odds_source': odds_source,
+                    'probability': category.get('probability', 0),
+                    'score': category.get('score', 0),
+                    'prediction_score': category.get('prediction_score'),
+                    'bet_score': category.get(
+                        'bet_score', category.get('score', 0)
+                    ),
+                    'value_score': category.get('value_score'),
+                    'market_implied_probability': category.get(
+                        'market_implied_probability'
+                    ),
+                    'expected_return': category.get('expected_return'),
+                    'confidence': category.get('confidence', 0),
+                    'stars': category.get('stars', 0),
+                    'star_text': category.get('star_text'),
+                    'is_primary': label == recommendation.get('primary'),
+                }
+                groups.setdefault(label, []).append(row)
+            if (
+                risk.get('dangerous')
+                or risk.get('score', 0) >= 65
+                or recommendation.get('no_bet')
+            ):
+                primary_odds, primary_odds_source = category_odds(
+                    match, recommendation.get('primary')
+                )
+                dangerous.append({
+                    **base_row,
+                    'recommendation': recommendation.get('primary'),
+                    'odds': primary_odds,
+                    'odds_source': primary_odds_source,
+                    'score': recommendation.get('score', 0),
+                    'bet_score': recommendation.get(
+                        'bet_score', recommendation.get('score', 0)
+                    ),
+                    'value_score': recommendation.get('value_score'),
+                    'market_confidence': recommendation.get(
+                        'market_confidence'
+                    ),
+                    'no_bet': recommendation.get('no_bet', False),
+                    'no_bet_reasons': recommendation.get(
+                        'no_bet_reasons', []
+                    ),
+                    'confidence': recommendation.get('confidence', 0),
+                    'stars': recommendation.get('stars', 0),
+                    'star_text': recommendation.get('star_text'),
+                })
+        for rows in groups.values():
+            rows.sort(key=lambda row: (row['score'], row['confidence']), reverse=True)
+        dangerous.sort(key=lambda row: row['risk'].get('score', 0), reverse=True)
+        return {
+            'date': str(owner_date)[:10],
+            'engine_version': ENGINE_VERSION,
+            'groups': groups,
+            'dangerous': dangerous,
+            'count': len(analyses),
+        }
+
+    def get_fae_draw_parlays(self, owner_date):
+        """生成当天每场平/让平方向及2串1、3串1组合。"""
+        return build_draw_parlays(
+            self.get_fae_rankings(owner_date),
+            strategy_weights=self.get_fae_draw_strategy_weights(),
+        )
+
+    def get_fae_draw_strategy_weights(self):
+        """读取线上 draw-strategy Skill 权重。"""
+        weights = {'平局': 1.0, '让平': 1.0}
+        try:
+            active = self.fae_skill_versions_collection.find_one({
+                'skill_id': 'draw-strategy', 'status': 'active'
+            }, {'_id': 0})
+            configured = (
+                ((active or {}).get('parameters') or {}).get('strategy_weights')
+                or {}
+            )
+            if configured:
+                for selection in weights:
+                    weights[selection] = float(configured.get(selection) or 1)
+            else:
+                weights.update(self._legacy_fae_draw_strategy_weights())
+        except Exception as e:
+            self.logger.error(f"读取平/让平策略权重失败: {str(e)}")
+        return weights
+
+    def save_fae_draw_snapshot(self, plan):
+        """保存不可变推荐快照；相同内容不会重复写入。"""
+        try:
+            if not plan or not plan.get('match_recommendations'):
+                return None
+            content = {
+                key: plan.get(key)
+                for key in (
+                    'date', 'engine_version', 'focus', 'strategy_weights',
+                    'match_count', 'match_recommendations', 'two_leg',
+                    'three_leg', 'method', 'disclaimer',
+                )
+            }
+            encoded = json.dumps(
+                content, ensure_ascii=False, sort_keys=True,
+                separators=(',', ':'), default=str
+            ).encode('utf-8')
+            snapshot_hash = sha256(encoded).hexdigest()
+            existing = self.fae_draw_snapshots_collection.find_one(
+                {'snapshot_hash': snapshot_hash}, {'_id': 0}
+            )
+            if existing:
+                return existing
+            picks = content.get('match_recommendations') or []
+            eligible = bool(picks) and all(
+                pick.get('status') in (0, '0') for pick in picks
+            )
+            payload = {
+                **content,
+                'owner_date': str(content.get('date') or '')[:10],
+                'snapshot_hash': snapshot_hash,
+                'eligible_for_review': eligible,
+                'generated_at': datetime.utcnow().isoformat() + 'Z',
+            }
+            self.fae_draw_snapshots_collection.insert_one(dict(payload))
+            return payload
+        except Exception as e:
+            self.logger.error(f"保存平/让平推荐快照失败: {str(e)}")
+            return None
+
+    def get_fae_draw_snapshot(self, owner_date):
+        """返回当天最后一份所有比赛均未开赛的可复盘快照。"""
+        try:
+            query = {
+                'owner_date': str(owner_date)[:10],
+                'eligible_for_review': True,
+            }
+            return self.fae_draw_snapshots_collection.find_one(
+                query, {'_id': 0}, sort=[('generated_at', DESCENDING)]
+            )
+        except Exception as e:
+            self.logger.error(f"读取平/让平推荐快照失败: {str(e)}")
+            return None
+
+    def get_fae_draw_snapshot_dates(self, limit=7):
+        try:
+            dates = sorted(
+                value for value in self.fae_draw_snapshots_collection.distinct(
+                    'owner_date'
+                ) if value
+            )
+            return dates[-max(1, int(limit)):]
+        except Exception as e:
+            self.logger.error(f"读取平/让平快照日期失败: {str(e)}")
+            return []
+
+    def save_fae_draw_review(self, review):
+        """保存专项复盘、更新统计，并生成待发布的 Skill 候选。"""
+        try:
+            key = {
+                'owner_date': str(review.get('owner_date') or '')[:10],
+                'engine_version': str(
+                    review.get('engine_version') or ENGINE_VERSION
+                ),
+            }
+            payload = {**review, **key}
+            self.fae_draw_reviews_collection.update_one(
+                key, {'$set': payload}, upsert=True
+            )
+            weights = self._recalculate_fae_draw_strategy_weights(apply=False)
+            candidates = self.generate_fae_skill_candidates()
+            return {
+                'saved': True,
+                'review': payload,
+                'strategy_weights': weights,
+                'candidates': candidates,
+            }
+        except Exception as e:
+            self.logger.error(f"保存平/让平专项复盘失败: {str(e)}")
+            return {'saved': False, 'message': str(e)}
+
+    def _recalculate_fae_draw_strategy_weights(self, apply=False):
+        ai_reviews = list(
+            self.fae_daily_ai_reviews_collection.find({}, {'_id': 0})
+        )
+        if ai_reviews:
+            stats = aggregate_daily_ai_reviews(ai_reviews)
+        else:
+            reviews = list(
+                self.fae_draw_reviews_collection.find({}, {'_id': 0})
+            )
+            stats = aggregate_draw_reviews(reviews)
+        minimum_samples = max(
+            3, int(os.getenv('FAE_LEARNING_MIN_SAMPLES', '10'))
+        )
+        active_weights = self.get_fae_draw_strategy_weights()
+        weights = {}
+        for selection in ('平局', '让平'):
+            summary = (stats.get('by_selection') or {}).get(selection) or {}
+            samples = int(summary.get('settled') or 0)
+            roi = float(summary.get('roi') or 0)
+            weight = float(active_weights.get(selection) or 1.0)
+            suggested_weight = weight
+            action = 'hold'
+            if samples >= minimum_samples and abs(roi) >= 5:
+                steps = min(6, max(1, int(abs(roi) / 10)))
+                if roi > 0:
+                    suggested_weight = min(1.30, 1 + steps * 0.05)
+                    action = 'increase'
+                else:
+                    suggested_weight = max(0.70, 1 - steps * 0.05)
+                    action = 'decrease'
+            stored_weight = suggested_weight if apply else weight
+            payload = {
+                'selection': selection,
+                'engine_version': ENGINE_VERSION,
+                'weight': round(stored_weight, 3),
+                'suggested_weight': round(suggested_weight, 3),
+                'suggested_action': action,
+                'samples': samples,
+                'hits': int(summary.get('hits') or 0),
+                'hit_rate': float(summary.get('hit_rate') or 0),
+                'roi': roi,
+                'action': action if apply else 'hold',
+                'updated_at': datetime.utcnow().isoformat() + 'Z',
+            }
+            self.fae_draw_strategy_weights_collection.update_one(
+                {'selection': selection}, {'$set': payload}, upsert=True
+            )
+            weights[selection] = payload
+        return weights
+
+    def get_fae_draw_review(self, owner_date):
+        try:
+            return self.fae_draw_reviews_collection.find_one(
+                {'owner_date': str(owner_date)[:10]}, {'_id': 0},
+                sort=[('reviewed_at', DESCENDING)]
+            )
+        except Exception as e:
+            self.logger.error(f"读取平/让平专项复盘失败: {str(e)}")
+            return None
+
+    def get_fae_draw_review_stats(self):
+        reviews = list(self.fae_draw_reviews_collection.find({}, {'_id': 0}))
+        weight_docs = list(self.fae_draw_strategy_weights_collection.find(
+            {}, {'_id': 0}
+        ))
+        active_weights = self.get_fae_draw_strategy_weights()
+        weights = {
+            item.get('selection'): {
+                **item,
+                'weight': active_weights.get(item.get('selection'), 1.0),
+            } for item in weight_docs
+            if item.get('selection')
+        }
+        for selection, weight in active_weights.items():
+            weights.setdefault(selection, {
+                'selection': selection,
+                'weight': weight,
+                'action': 'hold',
+            })
+        return aggregate_draw_reviews(reviews, weights)
+
+    def get_fae_version_info(self):
+        """返回版本能力与实时规则命中率。"""
+        self.ensure_fae_version()
+        version = self.fae_versions_collection.find_one(
+            {'version': ENGINE_VERSION}, {'_id': 0}
+        ) or dict(VERSION_MANIFEST)
+        version['rules'] = list(self.fae_rule_weights_collection.find(
+            {}, {'_id': 0}
+        ).sort('accuracy', DESCENDING))
+        return version
     
     def update_prediction_review(self, match_id, review_data):
         """

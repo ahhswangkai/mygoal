@@ -3694,6 +3694,195 @@ a { text-decoration: none; color: inherit; }
   white-space: nowrap;
 }
 
+/* 我的 */
+.mine-content {
+  width: 100%;
+  max-width: 600px;
+  margin: 0 auto;
+  padding: 14px 12px 24px;
+}
+
+.mine-account-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 18px 16px;
+  color: #fff;
+  background: linear-gradient(135deg, #ff5b63 0%, #ef3043 100%);
+  border-radius: 13px;
+  box-shadow: 0 8px 22px rgba(239, 48, 67, 0.17);
+}
+
+.mine-avatar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  flex: 0 0 48px;
+  color: #ef3544;
+  font-size: 20px;
+  font-weight: 600;
+  background: #fff;
+  border: 3px solid rgba(255, 255, 255, 0.42);
+  border-radius: 50%;
+}
+
+.mine-account-info {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+  gap: 5px;
+}
+
+.mine-account-info strong {
+  overflow: hidden;
+  font-size: 17px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mine-account-info span {
+  overflow: hidden;
+  color: rgba(255, 255, 255, 0.78);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mine-account-card button {
+  height: 31px;
+  padding: 0 11px;
+  flex: 0 0 auto;
+  color: #fff;
+  font-size: 11px;
+  background: rgba(255, 255, 255, 0.16);
+  border: 1px solid rgba(255, 255, 255, 0.46);
+  border-radius: 16px;
+}
+
+.mine-services {
+  margin-top: 20px;
+}
+
+.mine-services h2 {
+  margin: 0 2px 10px;
+  color: #333;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.mine-service-card {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  min-height: 76px;
+  padding: 13px 14px;
+  background: #fff;
+}
+
+.mine-service-card:first-of-type {
+  border-radius: 11px 11px 0 0;
+}
+
+.mine-service-card:last-of-type {
+  border-radius: 0 0 11px 11px;
+}
+
+.mine-service-card + .mine-service-card {
+  position: relative;
+}
+
+.mine-service-card + .mine-service-card::before {
+  position: absolute;
+  top: 0;
+  right: 14px;
+  left: 72px;
+  height: 1px;
+  background: #f0f0f0;
+  content: "";
+}
+
+.mine-service-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 45px;
+  height: 45px;
+  flex: 0 0 45px;
+  border-radius: 12px;
+}
+
+.mine-service-icon svg {
+  width: 25px;
+  height: 25px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.7;
+}
+
+.mine-service-icon--records {
+  color: #f04451;
+  background: #fff0f1;
+}
+
+.mine-service-icon--stats {
+  color: #e9952e;
+  background: #fff6e9;
+}
+
+.mine-service-copy {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+  gap: 5px;
+}
+
+.mine-service-copy strong {
+  color: #333;
+  font-size: 15px;
+  font-weight: 500;
+}
+
+.mine-service-copy small {
+  overflow: hidden;
+  color: #999;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mine-service-arrow {
+  color: #c8c8c8;
+  font-size: 26px;
+  font-weight: 200;
+}
+
+.mine-privacy-note {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  margin-top: 18px;
+  color: #a2a2a2;
+  font-size: 10px;
+}
+
+.mine-privacy-note span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  color: #fff;
+  font-size: 8px;
+  background: #b9bdc3;
+  border-radius: 50%;
+}
+
 .auth-overlay {
   position: fixed;
   inset: 0;

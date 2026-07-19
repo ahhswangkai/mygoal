@@ -36,8 +36,12 @@ def crawl_single_match_odds(match, index, total, logger):
     crawler = FootballCrawler()
     
     try:
-        status = match.get('status', '').strip()
-        status_label = "未开始" if not status or '未' in status else ("已结束" if '完' in status or '结束' in status else "进行中")
+        status = match.get('status', '')
+        if isinstance(status, int):
+            status_label = {0: "未开始", 1: "进行中", 2: "已结束"}.get(status, "未知")
+        else:
+            status = str(status).strip()
+            status_label = "未开始" if not status or '未' in status else ("已结束" if '完' in status or '结束' in status else "进行中")
         
         with log_lock:
             logger.info(f"[{index}/{total}] 爬取比赛 {match_id} ({match.get('home_team', '')} vs {match.get('away_team', '')}) [{status_label}] 的赔率")

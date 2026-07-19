@@ -7,7 +7,11 @@ import os
 import secrets
 import sqlite3
 from datetime import datetime, timezone
-from zoneinfo import ZoneInfo
+
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:  # Python 3.8
+    from backports.zoneinfo import ZoneInfo
 
 
 PASSWORD_ITERATIONS = 260000
