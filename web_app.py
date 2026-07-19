@@ -3461,6 +3461,16 @@ def get_calc_matches():
             headers=headers,
             timeout=10,
         )
+        if resp.status_code != 200:
+            app.logger.warning(
+                'Sporttery calculator API rejected server request: %s',
+                resp.status_code,
+            )
+            return jsonify({
+                'success': False,
+                'message': '体彩接口暂时拒绝服务器访问',
+                'status': resp.status_code,
+            }), 502
         data = resp.json()
 
         if not data.get('success'):

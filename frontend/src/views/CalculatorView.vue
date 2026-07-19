@@ -22,6 +22,11 @@
       </div>
     </div>
 
+    <div v-if="calculatorDataMessage" class="calculator-data-message" :class="{ error: calculatorDataError }">
+      {{ calculatorDataMessage }}
+      <button v-if="calculatorDataError" type="button" @click="fetchMatches">重试</button>
+    </div>
+
     <div class="match-list">
       <div v-for="(group, gIdx) in groupedMatches" :key="gIdx">
         <div class="date-header">
@@ -555,9 +560,12 @@ import AccountButton from '../components/AccountButton.vue'
 import { apiRequest, authState, openAuth } from '../auth'
 import { calculateMaxBonus } from '../utils/betMath'
 import { oddsTrend, oddsTrendArrow } from '../utils/oddsTrend'
+import { normalizeSportteryCalculatorPayload } from '../utils/sportteryCalculator'
 
 const currentTab = ref(0)
 const matches = ref([])
+const calculatorDataMessage = ref('正在加载比赛数据…')
+const calculatorDataError = ref(false)
 const selectedItems = ref([])
 const hiddenGroups = ref({})
 const collapsedMatches = ref({})
@@ -711,32 +719,97 @@ const formatOdds = (obj) => {
   return r
 }
 
-const fetchMatches = async () => {
+const SPORTTERY_CALCULATOR_URL = 'https://webapi.sporttery.cn/gateway/uniform/football/getMatchCalculatorV1.qry?poolCode=had%2Chhad%2Ccrs%2Cttg%2Chafu'
+const CALCULATOR_CACHE_KEY = 'mygoal-calculator-matches-v1'
+
+const prepareMatches = sourceMatches => sourceMatches.map(source => {
+  const match = { ...source }
+  match.shortTime = (match.time || '00:00').split(':').slice(0, 2).join(':')
+  match.shortDate = match.date ? match.date.slice(5) : ''
+  match.had = formatOdds(match.had)
+  match.hhad = formatOdds(match.hhad)
+  match.score = formatOdds(match.score)
+  match.goals = formatOdds(match.goals)
+  match.hafu = formatOdds(match.hafu)
+  return match
+})
+
+const readCachedMatches = () => {
   try {
-    const resp = await fetch('/api/calc/matches')
-    const data = await resp.json()
-    if (data.success) {
-      matches.value = data.data.map(m => {
-        m.shortTime = (m.time || '00:00').split(':').slice(0, 2).join(':')
-        m.shortDate = m.date ? m.date.slice(5) : ''
-        m.had = formatOdds(m.had)
-        m.hhad = formatOdds(m.hhad)
-        m.score = formatOdds(m.score)
-        m.goals = formatOdds(m.goals)
-        m.hafu = formatOdds(m.hafu)
-        return m
-      })
-      if (!expandedScoreMatchId.value && matches.value.length > 0) {
-        expandedScoreMatchId.value = matches.value[0].id
-      }
-      if (!expandedGoalsMatchId.value && matches.value.length > 0) {
-        expandedGoalsMatchId.value = matches.value[0].id
-      }
-      if (!expandedHafuMatchId.value && matches.value.length > 0) {
-        expandedHafuMatchId.value = matches.value[0].id
-      }
+    const cached = JSON.parse(window.localStorage.getItem(CALCULATOR_CACHE_KEY) || 'null')
+    return Array.isArray(cached?.matches) && cached.matches.length > 0 ? cached : null
+  } catch {
+    return null
+  }
+}
+
+const cacheMatches = sourceMatches => {
+  try {
+    window.localStorage.setItem(CALCULATOR_CACHE_KEY, JSON.stringify({
+      updatedAt: new Date().toISOString(),
+      matches: sourceMatches
+    }))
+  } catch {
+    // Safari private mode or a full storage quota must not break the calculator.
+  }
+}
+
+const fetchOfficialMatches = async () => {
+  const response = await fetch(SPORTTERY_CALCULATOR_URL, {
+    credentials: 'omit',
+    cache: 'no-store'
+  })
+  if (!response.ok) throw new Error(`体彩接口返回 ${response.status}`)
+  return normalizeSportteryCalculatorPayload(await response.json())
+}
+
+const fetchBackendMatches = async () => {
+  const response = await fetch('/api/calc/matches')
+  const payload = await response.json().catch(() => ({}))
+  if (!response.ok || !payload.success || !Array.isArray(payload.data)) {
+    throw new Error(payload.message || `服务器接口返回 ${response.status}`)
+  }
+  return payload.data
+}
+
+const fetchMatches = async () => {
+  calculatorDataMessage.value = '正在加载比赛数据…'
+  calculatorDataError.value = false
+  try {
+    let sourceMatches
+    try {
+      sourceMatches = await fetchOfficialMatches()
+    } catch (officialError) {
+      console.warn('体彩浏览器直连失败，回退服务器接口', officialError)
+      sourceMatches = await fetchBackendMatches()
     }
-  } catch (e) { console.error(e) }
+
+    if (!sourceMatches.length) throw new Error('当前没有可售比赛')
+    cacheMatches(sourceMatches)
+    matches.value = prepareMatches(sourceMatches)
+    calculatorDataMessage.value = ''
+
+    if (!expandedScoreMatchId.value && matches.value.length > 0) {
+      expandedScoreMatchId.value = matches.value[0].id
+    }
+    if (!expandedGoalsMatchId.value && matches.value.length > 0) {
+      expandedGoalsMatchId.value = matches.value[0].id
+    }
+    if (!expandedHafuMatchId.value && matches.value.length > 0) {
+      expandedHafuMatchId.value = matches.value[0].id
+    }
+  } catch (error) {
+    console.error(error)
+    const cached = readCachedMatches()
+    if (cached) {
+      matches.value = prepareMatches(cached.matches)
+      calculatorDataMessage.value = `官方接口暂时不可用，当前显示缓存数据（${new Date(cached.updatedAt).toLocaleString('zh-CN', { hour12: false })}）`
+      return
+    }
+    matches.value = []
+    calculatorDataError.value = true
+    calculatorDataMessage.value = '比赛数据加载失败，请稍后重试'
+  }
 }
 
 const isCollapsed = (matchId) => {
@@ -1135,6 +1208,39 @@ onMounted(() => { fetchMatches() })
 </script>
 
 <style scoped>
+.calculator-data-message {
+  display: flex;
+  min-height: 40px;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin: 10px 14px 0;
+  padding: 9px 12px;
+  color: #9a6b19;
+  background: #fff8e8;
+  border: 1px solid #f3dfae;
+  border-radius: 9px;
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: center;
+}
+
+.calculator-data-message.error {
+  color: #d9363e;
+  background: #fff1f2;
+  border-color: #ffc9cd;
+}
+
+.calculator-data-message button {
+  flex: 0 0 auto;
+  padding: 5px 12px;
+  color: #fff;
+  background: #f33b48;
+  border: 0;
+  border-radius: 999px;
+  font-size: 12px;
+}
+
 .play-conflict-overlay {
   z-index: 1200;
   align-items: center;
