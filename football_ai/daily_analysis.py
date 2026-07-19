@@ -14,7 +14,7 @@ from .provider import ArkNarrativeClient, FAEError, FAEOutputError
 from .version import ENGINE_VERSION
 
 
-DAILY_PROMPT_VERSION = "five-market-daily-v6-value-betting"
+DAILY_PROMPT_VERSION = "five-market-daily-v7-league-profile"
 
 HANDICAP_VALUES = {
     "平手": 0.0, "平/半": 0.25, "平手/半球": 0.25,
@@ -43,6 +43,7 @@ def _clean_handicap(value: Any) -> str:
 def build_daily_match_input(
     match: Dict[str, Any],
     fae_result: Optional[Dict[str, Any]] = None,
+    league_profile: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Create a compact, auditable input for the daily Ark request."""
     analysis = (fae_result or {}).get("analysis") or {}
@@ -152,6 +153,13 @@ def build_daily_match_input(
             "score_candidates": analysis.get("score_candidates"),
             "market_types": analysis.get("market_types"),
             "rule_signals": core.get("rule_signals"),
+        },
+        "league_history_profile": league_profile or {
+            "league": match.get("league"),
+            "sample_size": 0,
+            "confidence": "样本不足",
+            "eligible_for_adjustment": False,
+            "hidden_signals": ["暂无可用联赛历史画像"],
         },
         "data_warnings": list(dict.fromkeys(warnings)),
         "missing_fundamentals": [
@@ -626,6 +634,9 @@ class FAEDailyAIAnalyzer:
             "大小球跳动达到0.75或以上时优先标记数据异常，不得据此强推方向。",
             "不得伪造近期状态、伤停、首发、天气、战意和赛程；输入缺失必须明确说明。",
             "历史复盘记忆只用于提醒曾经出现的误判和风险，不是当前比赛事实，不得据此直接推荐。",
+            "联赛历史画像来自当前比赛日期之前的完场数据并带时间衰减；只允许把eligible_for_adjustment=true且分段样本充足的内容作为低到中权重基线。",
+            "联赛画像中的命中率、让平率、进球率是历史条件频率，不是真实胜率；不得单独据此推荐，必须与当天五项市场证据一致。",
+            "若联赛画像与当天盘口冲突，以当天盘口、数据质量和阵容事实为准，并在风险中说明冲突。",
             "单日观察项属于低权重提醒；只有validated_patterns中的跨日模式可以作为辅助校正，且必须让位于当天盘口。",
             "当validated_pattern_count为0时，代表没有经过跨日和足量样本验证的规则；禁止使用历史0%命中区间、严禁纳入、全部排除或类似绝对结论。",
             "单日某玩法0/N或N/N只说明当天小样本结果，不得外推到赔率区间或当天其他比赛；是否入选必须由当日五项市场证据独立决定。",
@@ -691,6 +702,8 @@ class FAEDailyAIAnalyzer:
             "让平必须结合让球数解释；大小球跳动达到0.75优先标异常。",
             "不得编造近期状态、伤停、首发、天气、战意或赛程。",
             "历史复盘记忆只是低权重风险提醒，不是当前比赛事实；不得机械套用昨天结论。",
+            "联赛历史画像只在eligible_for_adjustment=true时作为低到中权重基线；赔率分段样本不足时不得使用。",
+            "历史联赛频率不是真实概率，必须让位于本场欧赔、亚盘、竞彩、大小球和市场一致性。",
             "仅validated_patterns可作为跨日辅助校正，近期观察项不能单独改变推荐。",
             "单日0/N或N/N属于小样本，不得据此将当前比赛定义为严禁、必选、高危赔率区间或全部排除。",
             "存在欧亚背离、极端水位或大小球跳档时自动降级，最高3.5星；缺少多项基本面时不得给五星。",

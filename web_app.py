@@ -880,7 +880,7 @@ def _generate_fae_for_match(match, use_ai=True):
     )
 
 
-def _build_daily_ai_inputs(matches):
+def _build_daily_ai_inputs(matches, league_profiles=None):
     """Build current deterministic FAE snapshots without making per-match LLM calls."""
     rule_weights = (
         mongo_storage.get_fae_rule_weights() if mongo_storage else None
@@ -903,7 +903,13 @@ def _build_daily_ai_inputs(matches):
             use_ai=False,
             active_skills=active_skills,
         )
-        rows.append(build_daily_match_input(match, core_result))
+        rows.append(build_daily_match_input(
+            match,
+            core_result,
+            league_profile=(league_profiles or {}).get(
+                str(match.get('league') or '').strip()
+            ),
+        ))
     return rows
 
 
@@ -921,7 +927,14 @@ def _run_fae_daily_ai(owner_date, force=False):
     )
     if not matches:
         raise FAEError('当天没有未开赛比赛，未调用火山方舟')
-    match_inputs = _build_daily_ai_inputs(matches)
+    league_profiles = mongo_storage.get_fae_league_profiles(
+        date_str,
+        [match.get('league') for match in matches],
+    )
+    match_inputs = _build_daily_ai_inputs(
+        matches,
+        league_profiles=league_profiles,
+    )
     review_memory = mongo_storage.get_fae_review_memory(date_str)
     input_hash = fae_daily_ai_analyzer.input_hash(
         date_str,

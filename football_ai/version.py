@@ -2,7 +2,7 @@
 
 ENGINE_NAME = "Football AI Engine"
 ENGINE_CODE = "FAE"
-ENGINE_VERSION = "2.3.0"
+ENGINE_VERSION = "2.4.0"
 SCHEMA_VERSION = "2.2"
 
 DIMENSION_WEIGHTS = {
@@ -58,6 +58,7 @@ VERSION_MANIFEST = {
         "主选/防选分层与未校准概率口径标识",
         "玩法级赔率价值指数、投注分与市场去水概率",
         "盘口可信度评分及不下注决策层",
+        "联赛历史画像、时间衰减基线及历史隐性偏移",
     ],
     "learning_policy": {
         "minimum_samples": 10,

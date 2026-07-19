@@ -1,0 +1,116 @@
+import unittest
+
+from football_ai.league_profile import build_league_profiles, league_aliases
+
+
+def historical_match(
+    owner_date,
+    home_score,
+    away_score,
+    *,
+    league="测试联赛",
+    home_odds=1.8,
+    away_odds=4.0,
+    handicap=-1,
+    total_line=2.5,
+):
+    return {
+        "league": league,
+        "owner_date": owner_date,
+        "home_score": home_score,
+        "away_score": away_score,
+        "euro_current_win": home_odds,
+        "euro_current_lose": away_odds,
+        "hi_handicap_value": handicap,
+        "ou_current_total": total_line,
+    }
+
+
+class LeagueProfileTests(unittest.TestCase):
+    def test_known_league_aliases_share_history_pool(self):
+        self.assertEqual(
+            set(league_aliases("瑞典超")),
+            {"瑞典超", "瑞超"},
+        )
+        self.assertEqual(league_aliases("芬超"), ["芬超"])
+
+    def test_excludes_target_day_and_future_results(self):
+        rows = [
+            historical_match("2026-07-18", 1, 1),
+            historical_match("2026-07-19", 2, 0),
+            historical_match("2026-07-20", 3, 0),
+        ]
+        profile = build_league_profiles(
+            {"测试联赛": rows},
+            "2026-07-19",
+            global_matches=rows,
+            minimum_samples=1,
+        )["测试联赛"]
+
+        self.assertEqual(profile["sample_size"], 1)
+        self.assertEqual(profile["baseline"]["draw_rate"], 100.0)
+        self.assertTrue(profile["governance"]["future_matches_excluded"])
+
+    def test_builds_outcome_handicap_and_goal_baselines(self):
+        rows = [
+            historical_match("2026-07-15", 2, 1),
+            historical_match("2026-07-14", 1, 1),
+            historical_match("2026-07-13", 0, 1),
+            historical_match("2026-07-12", 3, 1),
+        ]
+        profile = build_league_profiles(
+            {"测试联赛": rows},
+            "2026-07-19",
+            global_matches=rows,
+            minimum_samples=2,
+        )["测试联赛"]
+
+        self.assertTrue(profile["eligible_for_adjustment"])
+        self.assertAlmostEqual(
+            profile["baseline"]["home_win_rate"], 50.0, delta=1.0
+        )
+        self.assertAlmostEqual(
+            profile["baseline"]["draw_rate"], 25.0, delta=1.0
+        )
+        self.assertAlmostEqual(
+            profile["baseline"]["avg_total_goals"], 2.5, delta=0.1
+        )
+        self.assertGreater(
+            profile["sporttery_handicap"]["sample"], 0
+        )
+        self.assertIn("1.51-1.80", profile["favorite_odds_bands"])
+
+    def test_small_sample_cannot_adjust_analysis(self):
+        rows = [
+            historical_match("2026-07-18", 1, 1),
+            historical_match("2026-07-17", 1, 0),
+        ]
+        profile = build_league_profiles(
+            {"测试联赛": rows},
+            "2026-07-19",
+            global_matches=rows,
+            minimum_samples=30,
+        )["测试联赛"]
+
+        self.assertFalse(profile["eligible_for_adjustment"])
+        self.assertEqual(profile["confidence"], "样本不足")
+        self.assertIn("样本不足", profile["hidden_signals"][0])
+
+    def test_recent_matches_receive_more_weight(self):
+        rows = [
+            historical_match("2026-07-18", 1, 1),
+            historical_match("2025-07-18", 2, 0),
+        ]
+        profile = build_league_profiles(
+            {"测试联赛": rows},
+            "2026-07-19",
+            global_matches=rows,
+            half_life_days=90,
+            minimum_samples=1,
+        )["测试联赛"]
+
+        self.assertGreater(profile["baseline"]["draw_rate"], 90)
+
+
+if __name__ == "__main__":
+    unittest.main()

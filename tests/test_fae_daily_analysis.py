@@ -107,6 +107,21 @@ class DailyAnalysisTests(unittest.TestCase):
         self.assertEqual(row["sporttery_handicap"]["value"], -1)
         self.assertNotIn("竞彩让球数缺失", row["data_warnings"])
 
+    def test_includes_league_history_profile_in_match_input(self):
+        profile = {
+            "league": "测试联赛",
+            "sample_size": 120,
+            "confidence": "高",
+            "eligible_for_adjustment": True,
+            "hidden_signals": ["平局率较全库高4.5个百分点"],
+        }
+        row = build_daily_match_input(
+            match("2"),
+            league_profile=profile,
+        )
+
+        self.assertEqual(row["league_history_profile"], profile)
+
     def test_analyzes_whole_batch_and_falls_back_for_missing_match(self):
         client = FakeDailyArkClient()
         analyzer = FAEDailyAIAnalyzer(client)
@@ -143,6 +158,7 @@ class DailyAnalysisTests(unittest.TestCase):
         self.assertIn("不输出隐藏思维链", client.prompt)
         self.assertIn("热门方向没有真实升深", client.prompt)
         self.assertIn("禁止使用历史0%命中区间", client.prompt)
+        self.assertIn("联赛历史画像", client.prompt)
         self.assertEqual(result["review_memory"]["memory_hash"], "memory-1")
 
     def test_input_hash_is_order_independent(self):

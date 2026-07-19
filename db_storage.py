@@ -3,7 +3,7 @@ MongoDB数据存储模块
 """
 from pymongo import MongoClient, ASCENDING, DESCENDING
 from pymongo.errors import ConnectionFailure, DuplicateKeyError
-from datetime import datetime
+from datetime import datetime, timedelta
 from hashlib import sha256
 from utils import setup_logger
 import os
@@ -20,6 +20,7 @@ from football_ai.parlay import build_draw_parlays
 from football_ai.draw_review import aggregate_draw_reviews
 from football_ai.daily_review import aggregate_daily_ai_reviews
 from football_ai.review_memory import build_review_memory
+from football_ai.league_profile import build_league_profiles, league_aliases
 from football_ai.skills import (
     SKILL_DEFINITIONS,
     baseline_skill_documents,
@@ -101,6 +102,11 @@ class MongoDBStorage:
             self.matches_collection.create_index([('match_id', ASCENDING)], unique=True)
             self.matches_collection.create_index([('league', ASCENDING)])
             self.matches_collection.create_index([('status', ASCENDING)])
+            self.matches_collection.create_index([
+                ('league', ASCENDING),
+                ('status', ASCENDING),
+                ('owner_date', DESCENDING),
+            ])
             self.matches_collection.create_index([('match_time', DESCENDING)])
             self.matches_collection.create_index([('created_at', DESCENDING)])
             
@@ -1036,6 +1042,81 @@ class MongoDBStorage:
         except Exception as e:
             self.logger.error(f"读取 FAE 复盘记忆失败: {str(e)}")
             return build_review_memory([], str(before_date or '')[:10])
+
+    def get_fae_league_profiles(self, before_date, leagues):
+        """Build time-decayed league baselines without using future matches."""
+        try:
+            target_date = str(before_date or '')[:10]
+            names = sorted({
+                str(league or '').strip() for league in leagues
+                if str(league or '').strip()
+            })
+            if not names:
+                return {}
+            lookback_days = max(
+                90, int(os.getenv('FAE_LEAGUE_HISTORY_DAYS', '730'))
+            )
+            half_life_days = max(
+                30, int(os.getenv('FAE_LEAGUE_HALF_LIFE_DAYS', '180'))
+            )
+            minimum_samples = max(
+                10, int(os.getenv('FAE_LEAGUE_MIN_SAMPLES', '30'))
+            )
+            per_league_limit = max(
+                50, int(os.getenv('FAE_LEAGUE_MAX_MATCHES', '500'))
+            )
+            global_limit = max(
+                500, int(os.getenv('FAE_LEAGUE_GLOBAL_MAX_MATCHES', '5000'))
+            )
+            target = datetime.strptime(target_date, '%Y-%m-%d')
+            cutoff = (
+                target - timedelta(days=lookback_days)
+            ).strftime('%Y-%m-%d')
+            base_query = {
+                'status': 2,
+                'owner_date': {'$gte': cutoff, '$lt': target_date},
+                'home_score': {'$nin': [None, '']},
+                'away_score': {'$nin': [None, '']},
+            }
+            projection = {
+                '_id': 0,
+                'league': 1,
+                'owner_date': 1,
+                'home_score': 1,
+                'away_score': 1,
+                'euro_current_win': 1,
+                'euro_current_lose': 1,
+                'hi_handicap_value': 1,
+                'handicap': 1,
+                'ou_current_total': 1,
+                'ou_initial_total': 1,
+            }
+            rows_by_league = {}
+            for league in names:
+                rows_by_league[league] = list(
+                    self.matches_collection.find(
+                        {
+                            **base_query,
+                            'league': {'$in': league_aliases(league)},
+                        },
+                        projection,
+                    ).sort('owner_date', DESCENDING).limit(per_league_limit)
+                )
+            global_rows = list(
+                self.matches_collection.find(
+                    base_query, projection
+                ).sort('owner_date', DESCENDING).limit(global_limit)
+            )
+            return build_league_profiles(
+                rows_by_league,
+                target_date,
+                global_matches=global_rows,
+                half_life_days=half_life_days,
+                minimum_samples=minimum_samples,
+            )
+        except Exception as e:
+            self.logger.error(f"读取 FAE 联赛历史画像失败: {str(e)}")
+            return {}
 
     def get_fae_daily_ai_match(self, match_id, owner_date=None):
         """Read the latest saved Ark judgement for one match."""
