@@ -72,7 +72,7 @@
               <time>{{ formatTime(record.created_at) }}</time>
               <button type="button" class="record-delete" aria-label="删除" @click.stop="removeRecord(record.id)">×</button>
             </div>
-            <div class="record-description">{{ record.description }}</div>
+            <div class="record-description">{{ recordDescription(record) }}</div>
             <div class="record-meta">
               <span>{{ record.match_count }}场</span>
               <span>{{ record.option_count }}个选项</span>
@@ -254,12 +254,21 @@ const ticketNumber = record => String(record?.id || '')
   .slice(0, 20)
   .toUpperCase() || 'MYGOAL'
 
-const ticketPassTitle = record => {
-  const passes = (record?.pass_counts || [])
-    .map(count => Number(count) === 1 ? '单关' : Number(count))
-    .join(',')
-  return `${record?.match_count || 0}场-${passes}${passes === '单关' ? '' : '关'}`
+const passCountText = record => {
+  const passes = (record?.pass_counts || []).map(Number).filter(Number.isFinite)
+  if (passes.length === 0) return ''
+  if (passes.length === 1 && passes[0] === 1) return '单关'
+  if (passes.includes(1)) {
+    return passes.map(count => count === 1 ? '单关' : `${count}关`).join('，')
+  }
+  return `${passes.join('，')}关`
 }
+
+const recordDescription = record =>
+  `${record?.match_count || 0}场 · ${passCountText(record)} · ${record?.multiplier || 1}倍`
+
+const ticketPassTitle = record =>
+  `${record?.match_count || 0}场-${passCountText(record)}`
 
 const passNotesText = record => (record?.pass_counts || [])
   .map(count => {

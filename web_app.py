@@ -3119,7 +3119,15 @@ def _calculator_bet_payload(data):
         pass_counts,
         multiplier,
     )
-    pass_text = '、'.join('单关' if count == 1 else '{}关'.format(count) for count in pass_counts)
+    if pass_counts == [1]:
+        pass_text = '单关'
+    elif 1 in pass_counts:
+        pass_text = '，'.join(
+            '单关' if count == 1 else '{}关'.format(count)
+            for count in pass_counts
+        )
+    else:
+        pass_text = '{}关'.format('，'.join(str(count) for count in pass_counts))
     description = '{}场 · {} · {}倍'.format(match_count, pass_text, multiplier)
     return {
         'id': str(uuid.uuid4()),
