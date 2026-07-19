@@ -17,4 +17,5 @@ pymongo>=4.1.1
 APScheduler>=3.10.4
 certifi>=2023.7.22
 chardet>=5.0.0
-json-repair==0.47.8
+json-repair==0.30.0; python_version < "3.9"
+json-repair==0.47.8; python_version >= "3.9"
