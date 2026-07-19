@@ -480,20 +480,45 @@
           </div>
         </div>
 
+        <div class="plan-image-save-tip">
+          点击“保存到相册”后，在系统面板选择“存储图像”
+        </div>
         <div class="view-modal-footer">
           <button class="footer-btn cancel-btn" @click="showViewModal = false">关闭</button>
           <button
             class="footer-btn share-btn"
-            :disabled="exportingImage || selectedItems.length === 0"
+            :disabled="preparingPlanImage || sharingPlanImage || !planImageBlob"
             @click="savePlanImage"
           >
-            {{ exportingImage ? '生成中…' : '保存图片' }}
+            {{ preparingPlanImage ? '生成中…' : sharingPlanImage ? '保存中…' : '保存到相册' }}
           </button>
           <button class="footer-btn confirm-btn" :disabled="savingBet" @click="confirmBet">
             {{ savingBet ? '保存中…' : '确认投注' }}
           </button>
         </div>
       </div>
+    </div>
+
+    <div
+      v-if="showPlanImagePreview"
+      class="plan-image-preview-overlay"
+      role="dialog"
+      aria-modal="true"
+      aria-label="保存投注方案图片"
+      @click.self="closePlanImagePreview"
+    >
+      <section class="plan-image-preview">
+        <header>
+          <div>
+            <strong>保存到相册</strong>
+            <p>长按下面图片，选择“存储到照片”</p>
+          </div>
+          <button type="button" aria-label="关闭图片预览" @click="closePlanImagePreview">×</button>
+        </header>
+        <div>
+          <img :src="planImagePreviewUrl" alt="投注方案分享图片">
+        </div>
+      </section>
     </div>
 
     <!-- 同一比赛切换玩法确认弹窗 -->
@@ -525,7 +550,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue'
+import { nextTick, ref, computed, onMounted, watch } from 'vue'
 import AccountButton from '../components/AccountButton.vue'
 import { apiRequest, authState, openAuth } from '../auth'
 import { calculateMaxBonus } from '../utils/betMath'
@@ -547,7 +572,11 @@ const tempMultiplier = ref(1)
 const multiplier = ref(1)
 const showViewModal = ref(false)
 const savingBet = ref(false)
-const exportingImage = ref(false)
+const preparingPlanImage = ref(false)
+const sharingPlanImage = ref(false)
+const planImageBlob = ref(null)
+const planImagePreviewUrl = ref('')
+const showPlanImagePreview = ref(false)
 const shareCardRef = ref(null)
 const saveNotice = ref('')
 const pendingPlayConflict = ref(null)
@@ -555,6 +584,7 @@ const pendingPlayConflict = ref(null)
 let hasInputtedMultiplier = false
 let hasManuallySelectedPass = false
 let saveNoticeTimer = null
+let planImageToken = 0
 
 const showSaveNotice = (message) => {
   saveNotice.value = message
@@ -955,23 +985,28 @@ const imageFileName = () => {
   return `mygoal-投注方案-${stamp}.png`
 }
 
-const downloadImageBlob = (blob, fileName) => {
-  const url = URL.createObjectURL(blob)
-  const link = document.createElement('a')
-  link.href = url
-  link.download = fileName
-  document.body.appendChild(link)
-  link.click()
-  link.remove()
-  window.setTimeout(() => URL.revokeObjectURL(url), 1000)
+const closePlanImagePreview = () => {
+  showPlanImagePreview.value = false
+  if (planImagePreviewUrl.value) {
+    URL.revokeObjectURL(planImagePreviewUrl.value)
+    planImagePreviewUrl.value = ''
+  }
 }
 
-const savePlanImage = async () => {
-  if (!shareCardRef.value || exportingImage.value || selectedItems.value.length === 0) return
+const openPlanImagePreview = () => {
+  if (!planImageBlob.value) return
+  closePlanImagePreview()
+  planImagePreviewUrl.value = URL.createObjectURL(planImageBlob.value)
+  showPlanImagePreview.value = true
+}
 
-  exportingImage.value = true
+const preparePlanImage = async (token) => {
+  preparingPlanImage.value = true
   let renderHost = null
   try {
+    await nextTick()
+    if (token !== planImageToken || !shareCardRef.value) return
+
     const { default: html2canvas } = await import('html2canvas')
     const clonedCard = shareCardRef.value.cloneNode(true)
     clonedCard.classList.add('bet-share-card--export')
@@ -994,15 +1029,47 @@ const savePlanImage = async () => {
         'image/png'
       )
     })
-    const fileName = imageFileName()
-    downloadImageBlob(blob, fileName)
-    showSaveNotice('方案图片已下载')
+    if (token === planImageToken) planImageBlob.value = blob
   } catch (error) {
-    showSaveNotice(error?.message || '生成图片失败，请稍后重试')
+    if (token === planImageToken) {
+      showSaveNotice(error?.message || '生成图片失败，请稍后重试')
+    }
   } finally {
     renderHost?.remove()
-    exportingImage.value = false
+    if (token === planImageToken) preparingPlanImage.value = false
   }
+}
+
+const savePlanImage = () => {
+  if (!planImageBlob.value || sharingPlanImage.value) return
+
+  const fileName = imageFileName()
+  const imageFile = typeof File === 'function'
+    ? new File([planImageBlob.value], fileName, { type: 'image/png' })
+    : null
+  const canShareImage = !!(
+    imageFile &&
+    typeof navigator.share === 'function' &&
+    typeof navigator.canShare === 'function' &&
+    navigator.canShare({ files: [imageFile] })
+  )
+
+  if (!canShareImage) {
+    openPlanImagePreview()
+    return
+  }
+
+  sharingPlanImage.value = true
+  navigator.share({
+    files: [imageFile],
+    title: '足球投注方案'
+  }).then(() => {
+    showSaveNotice('图片已保存或分享')
+  }).catch(error => {
+    if (error?.name !== 'AbortError') openPlanImagePreview()
+  }).finally(() => {
+    sharingPlanImage.value = false
+  })
 }
 
 const confirmBet = async () => {
@@ -1056,6 +1123,15 @@ const confirmBet = async () => {
     savingBet.value = false
   }
 }
+
+watch(showViewModal, visible => {
+  planImageToken += 1
+  planImageBlob.value = null
+  preparingPlanImage.value = false
+  sharingPlanImage.value = false
+  closePlanImagePreview()
+  if (visible) preparePlanImage(planImageToken)
+})
 
 onMounted(() => { fetchMatches() })
 </script>

@@ -1274,6 +1274,17 @@ body {
   flex-shrink: 0;
 }
 
+.plan-image-save-tip {
+  padding: 7px 18px 0;
+  color: #a07d44;
+  font-size: 10px;
+  line-height: 1.4;
+  text-align: center;
+  background: #fffaf0;
+  border-top: 1px solid #f2e4c9;
+  flex-shrink: 0;
+}
+
 .footer-btn {
   flex: 1;
   padding: 10px;
@@ -1303,6 +1314,73 @@ body {
 .footer-btn:disabled {
   cursor: not-allowed;
   opacity: .55;
+}
+
+.plan-image-preview-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 950;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 18px 14px max(18px, env(safe-area-inset-bottom));
+  background: rgb(0 0 0 / 72%);
+}
+
+.plan-image-preview {
+  display: flex;
+  flex-direction: column;
+  width: min(100%, 620px);
+  max-height: 90vh;
+  overflow: hidden;
+  background: #f2f2f2;
+  border-radius: 12px;
+  box-shadow: 0 16px 48px rgb(0 0 0 / 32%);
+}
+
+.plan-image-preview > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 13px 16px;
+  background: #fff;
+  border-bottom: 1px solid #e5e5e5;
+}
+
+.plan-image-preview > header strong {
+  color: #333;
+  font-size: 16px;
+}
+
+.plan-image-preview > header p {
+  margin-top: 3px;
+  color: #888;
+  font-size: 11px;
+}
+
+.plan-image-preview > header button {
+  width: 32px;
+  height: 32px;
+  color: #777;
+  font-size: 25px;
+  background: transparent;
+  border: 0;
+}
+
+.plan-image-preview > div {
+  padding: 10px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.plan-image-preview img {
+  display: block;
+  width: 100%;
+  height: auto;
+  background: #fff;
+  -webkit-touch-callout: default;
+  user-select: auto;
 }
 
 .bet-share-render-host {
