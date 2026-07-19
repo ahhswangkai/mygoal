@@ -405,11 +405,25 @@
     </div>
 
     <!-- 查看方案弹窗 -->
-    <div class="modal-overlay" v-show="showViewModal" @click.self="showViewModal = false">
+    <div
+      class="modal-overlay bet-plan-overlay"
+      v-show="showViewModal"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="bet-plan-title"
+      @click.self="showViewModal = false"
+    >
       <div class="view-modal">
         <div class="view-modal-header">
-          <div class="view-modal-title">投注方案</div>
-          <div class="view-modal-close" @click="showViewModal = false">×</div>
+          <div id="bet-plan-title" class="view-modal-title">
+            过关方式：<strong>{{ passCounts.map(passLabel).join('、') }}</strong>
+          </div>
+          <button
+            type="button"
+            class="view-modal-close"
+            aria-label="关闭投注方案"
+            @click="showViewModal = false"
+          >×</button>
         </div>
 
         <div class="view-modal-body">
@@ -420,46 +434,23 @@
           </div>
 
           <div v-else>
-            <div class="view-summary">
-              <div class="summary-item">
-                <div class="summary-label">投注项</div>
-                <div class="summary-value">{{ selectedItems.length }} 项</div>
-              </div>
-              <div class="summary-item">
-                <div class="summary-label">比赛</div>
-                <div class="summary-value">{{ selectedMatchCount }} 场</div>
-              </div>
-              <div class="summary-item">
-                <div class="summary-label">过关</div>
-                <div class="summary-value">{{ passCounts.map(passSummaryLabel).join(' + ') }}</div>
-              </div>
-              <div class="summary-item">
-                <div class="summary-label">倍数</div>
-                <div class="summary-value">{{ multiplier }} 倍</div>
-              </div>
-            </div>
-
             <div class="view-list">
-              <div class="view-list-title">投注明细</div>
               <div
                 v-for="(group, gIdx) in groupedSelected"
                 :key="gIdx"
                 class="view-match-group"
               >
                 <div class="view-match-header">
-                  <span class="view-match-num">{{ gIdx + 1 }}</span>
                   <span class="view-match-name">{{ getMatchName(group.matchId) }}</span>
                 </div>
                 <div class="view-match-picks">
-                  <div
+                  <span
                     v-for="(item, idx) in group.items"
                     :key="idx"
                     class="view-pick-tag"
                   >
-                    <span class="pick-pool">{{ poolName(item.pool) }}</span>
-                    <span class="pick-opt">{{ item.label }}</span>
-                    <span class="pick-odds">{{ formatNum(item.odd) }}</span>
-                  </div>
+                    {{ viewPickLabel(item) }}({{ formatNum(item.odd) }})
+                  </span>
                 </div>
               </div>
             </div>
@@ -467,7 +458,7 @@
             <div class="view-stats">
               <div class="stat-row">
                 <span class="stat-label">总赔率</span>
-                <span class="stat-value">{{ totalOdds }}</span>
+                <span class="stat-value">{{ totalOdds }} · {{ multiplier }}倍</span>
               </div>
               <div class="stat-row">
                 <span class="stat-label">投注金额</span>
@@ -572,7 +563,6 @@ const maxPassCount = computed(() => {
 
 const passOptions = [1, 2, 3, 4, 5, 6, 7, 8]
 const passLabel = (n) => n === 1 ? '单关' : `${n}关`
-const passSummaryLabel = (n) => n === 1 ? '单关' : `${n}串1`
 
 const tabs = [['胜平负', '让球胜平负'], '比分', '总进球数', '半全场', '混合过关']
 const goalNums = ['0','1','2','3','4','5','6','7+']
@@ -900,6 +890,12 @@ const deleteDigit = () => {
 const poolName = (pool) => {
   const map = { 'had': '胜平负', 'hhad': '让球胜平负', 'score': '比分', 'goals': '总进球', 'hafu': '半全场' }
   return map[pool] || pool
+}
+
+const viewPickLabel = (item) => {
+  if (item.pool === 'hhad') return `让球${item.label}`
+  if (item.pool === 'had') return item.label
+  return `${poolName(item.pool)}${item.label}`
 }
 
 const getMatchName = (matchId) => {
