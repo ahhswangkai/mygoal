@@ -522,6 +522,7 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import AccountButton from '../components/AccountButton.vue'
 import { apiRequest, authState, openAuth } from '../auth'
+import { calculateMaxBonus } from '../utils/betMath'
 import { oddsTrend, oddsTrendArrow } from '../utils/oddsTrend'
 
 const currentTab = ref(0)
@@ -652,7 +653,11 @@ const totalOdds = computed(() => {
   return odds.toFixed(2)
 })
 
-const maxBonus = computed(() => (totalOdds.value * totalNotes.value * 2 * multiplier.value).toFixed(2))
+const maxBonus = computed(() => calculateMaxBonus(
+  selectedItems.value,
+  passCounts.value,
+  multiplier.value
+).toFixed(2))
 
 const fmt = (v) => {
   const n = parseFloat(v)

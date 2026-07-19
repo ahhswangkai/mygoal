@@ -8,6 +8,8 @@ import secrets
 import sqlite3
 from datetime import datetime, timezone
 
+from calculator_math import calculate_max_bonus
+
 try:
     from zoneinfo import ZoneInfo
 except ImportError:  # Python 3.8
@@ -122,6 +124,31 @@ class UserStorage:
             for column, statement in migrations.items():
                 if column not in columns:
                     conn.execute(statement)
+            self._repair_max_bonuses(conn)
+
+    @staticmethod
+    def _repair_max_bonuses(conn):
+        """修正旧版本按“总赔率×总注数”写入的错误理论奖金。"""
+        rows = conn.execute(
+            """
+            SELECT id, multiplier, pass_counts_json, selected_items_json, max_bonus
+            FROM calculator_bets
+            """
+        ).fetchall()
+        for row in rows:
+            try:
+                max_bonus = calculate_max_bonus(
+                    json.loads(row['selected_items_json']),
+                    json.loads(row['pass_counts_json']),
+                    row['multiplier'],
+                )
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continue
+            if abs(max_bonus - float(row['max_bonus'])) > 0.004:
+                conn.execute(
+                    'UPDATE calculator_bets SET max_bonus = ? WHERE id = ?',
+                    (max_bonus, row['id']),
+                )
 
     @staticmethod
     def _public_user(row):
@@ -203,6 +230,11 @@ class UserStorage:
         }
 
     def create_bet(self, user_id, bet):
+        max_bonus = calculate_max_bonus(
+            bet.get('selected_items'),
+            bet.get('pass_counts'),
+            bet.get('multiplier'),
+        )
         with self._connect() as conn:
             conn.execute(
                 """
@@ -217,7 +249,7 @@ class UserStorage:
                     json.dumps(bet['pass_counts'], ensure_ascii=False),
                     json.dumps(bet['selected_items'], ensure_ascii=False),
                     bet['match_count'], bet['option_count'], bet['notes'],
-                    bet['stake'], bet['total_odds'], bet['max_bonus'],
+                    bet['stake'], bet['total_odds'], max_bonus,
                     bet['description'], bet['created_at'],
                 ),
             )

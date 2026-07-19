@@ -2,6 +2,7 @@ import os
 import tempfile
 import unittest
 
+from calculator_math import calculate_max_bonus, calculate_notes
 from bet_settlement import (
     candidate_result_dates,
     grade_item,
@@ -92,6 +93,24 @@ class ItemGradingTests(unittest.TestCase):
 
 
 class BetSettlementTests(unittest.TestCase):
+    def test_two_and_three_pass_bonus_sums_each_ticket(self):
+        selected = [
+            item('1', 'hhad', 'draw', 2.98),
+            item('2', 'hhad', 'draw', 3.40),
+            item('3', 'hhad', 'draw', 3.65),
+        ]
+        self.assertEqual(calculate_notes(selected, [2, 3]), 4)
+        self.assertEqual(calculate_max_bonus(selected, [2, 3], 1), 140.79)
+
+    def test_max_bonus_uses_best_mutually_exclusive_option_per_match(self):
+        selected = [
+            item('1', 'had', 'win', 2.0),
+            item('1', 'had', 'draw', 3.0),
+            item('2', 'had', 'lose', 4.0),
+        ]
+        self.assertEqual(calculate_notes(selected, [2]), 2)
+        self.assertEqual(calculate_max_bonus(selected, [2], 1), 24.0)
+
     def test_rescheduled_match_uses_odds_one(self):
         bet = {
             'selected_items': [
@@ -206,6 +225,42 @@ class BetSettlementTests(unittest.TestCase):
 
 
 class UserStorageSettlementTests(unittest.TestCase):
+    def test_storage_repairs_legacy_inflated_max_bonus(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = os.path.join(directory, 'users.db')
+            storage = UserStorage(database_path)
+            user = storage.create_user('legacy', '旧记录', 'secret123')
+            selected = [
+                item('1', 'hhad', 'draw', 2.98),
+                item('2', 'hhad', 'draw', 3.40),
+                item('3', 'hhad', 'draw', 3.65),
+            ]
+            bet = {
+                'id': 'legacy-bet',
+                'status': 'pending',
+                'multiplier': 1,
+                'pass_counts': [2, 3],
+                'selected_items': selected,
+                'match_count': 3,
+                'option_count': 3,
+                'notes': 4,
+                'stake': 8,
+                'total_odds': 36.99,
+                'max_bonus': 295.85,
+                'description': '3场 · 2关、3关 · 1倍',
+                'created_at': '2026-07-19T10:26:00Z',
+            }
+            saved = storage.create_bet(user['id'], bet)
+            self.assertEqual(saved['max_bonus'], 140.79)
+
+            with storage._connect() as conn:
+                conn.execute(
+                    'UPDATE calculator_bets SET max_bonus = 295.85 WHERE id = ?',
+                    ('legacy-bet',),
+                )
+            repaired = UserStorage(database_path).list_bets(user['id'])[0]
+            self.assertEqual(repaired['max_bonus'], 140.79)
+
     def test_settlement_is_persisted_and_included_in_stats(self):
         with tempfile.TemporaryDirectory() as directory:
             storage = UserStorage(os.path.join(directory, 'users.db'))

@@ -7,13 +7,13 @@ from flask import Flask, render_template, jsonify, request, Response, stream_wit
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import wraps
-from itertools import combinations
 from bet_settlement import (
     SportteryResultClient,
     candidate_result_dates,
     merge_rescheduled_void_results,
     settle_bet,
 )
+from calculator_math import calculate_max_bonus, calculate_notes
 from crawler import FootballCrawler
 from user_storage import UserStorage
 from football_ai import (
@@ -3109,19 +3109,16 @@ def _calculator_bet_payload(data):
     if any(count < 1 or count > match_count or count > 8 for count in pass_counts):
         raise ValueError('过关方式与已选比赛场数不匹配')
 
-    counts = list(option_counts.values())
-    notes = 0
-    for pass_count in pass_counts:
-        for combo in combinations(counts, pass_count):
-            combo_notes = 1
-            for count in combo:
-                combo_notes *= count
-            notes += combo_notes
+    notes = calculate_notes(sanitized_items, pass_counts)
     if notes < 1:
         raise ValueError('无法计算投注注数')
 
     stake = round(notes * 2 * multiplier, 2)
-    max_bonus = round(total_odds * notes * 2 * multiplier, 2)
+    max_bonus = calculate_max_bonus(
+        sanitized_items,
+        pass_counts,
+        multiplier,
+    )
     pass_text = '、'.join('单关' if count == 1 else '{}关'.format(count) for count in pass_counts)
     description = '{}场 · {} · {}倍'.format(match_count, pass_text, multiplier)
     return {
