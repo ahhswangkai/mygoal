@@ -1077,6 +1077,16 @@ body {
   box-shadow: 0 5px 18px rgb(0 0 0 / 36%);
 }
 
+.bet-share-card {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  background: #fff;
+  border-radius: 4px 4px 0 0;
+}
+
 .view-modal-header {
   position: relative;
   display: flex;
@@ -1205,6 +1215,26 @@ body {
   border-top: 1px solid #dedede;
 }
 
+.bet-share-signature {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 8px 20px 9px;
+  color: #a0a0a0;
+  font-size: 10px;
+  letter-spacing: .2px;
+  background: #fff;
+  border-top: 1px solid #ededed;
+  flex-shrink: 0;
+}
+
+.bet-share-signature strong {
+  color: #e53b43;
+  font-size: 11px;
+  letter-spacing: .8px;
+}
+
 .stat-row {
   display: flex;
   align-items: center;
@@ -1262,6 +1292,92 @@ body {
 .confirm-btn {
   color: #fff;
   background: #f04448;
+}
+
+.share-btn {
+  color: #e33a42;
+  background: #fff;
+  border: 1px solid #ef9da1;
+}
+
+.footer-btn:disabled {
+  cursor: not-allowed;
+  opacity: .55;
+}
+
+.bet-share-render-host {
+  position: fixed;
+  top: 0;
+  left: -10000px;
+  z-index: -1;
+  width: 640px;
+  pointer-events: none;
+}
+
+.bet-share-card--export {
+  display: block;
+  width: 640px;
+  overflow: visible;
+  color: #2d2d2d;
+  background: #fff;
+  border: 1px solid #d6d6d6;
+  border-radius: 0;
+}
+
+.bet-share-card--export .view-modal-header {
+  min-height: 72px;
+  padding: 18px 26px;
+}
+
+.bet-share-card--export .view-modal-title {
+  font-size: 23px;
+}
+
+.bet-share-card--export .view-modal-body {
+  overflow: visible;
+}
+
+.bet-share-card--export .view-list {
+  padding-inline: 28px;
+}
+
+.bet-share-card--export .view-match-group {
+  padding-block: 13px 12px;
+}
+
+.bet-share-card--export .view-match-header {
+  font-size: 20px;
+}
+
+.bet-share-card--export .view-pick-tag {
+  font-size: 18px;
+}
+
+.bet-share-card--export .view-stats {
+  margin-inline: 28px;
+  padding-block: 12px;
+}
+
+.bet-share-card--export .stat-row {
+  padding: 7px 13px;
+}
+
+.bet-share-card--export .stat-label,
+.bet-share-card--export .stat-value {
+  font-size: 17px;
+}
+
+.bet-share-card--export .stat-value.highlight {
+  font-size: 20px;
+}
+
+.bet-share-card--export .bet-share-signature {
+  padding-block: 13px 15px;
+  font-size: 13px;
+}
+
+.bet-share-card--export .bet-share-signature strong {
+  font-size: 14px;
 }
 
 @media (max-width: 420px) {

@@ -414,66 +414,81 @@
       @click.self="showViewModal = false"
     >
       <div class="view-modal">
-        <div class="view-modal-header">
-          <div id="bet-plan-title" class="view-modal-title">
-            过关方式：<strong>{{ passCounts.map(passLabel).join('、') }}</strong>
-          </div>
-          <button
-            type="button"
-            class="view-modal-close"
-            aria-label="关闭投注方案"
-            @click="showViewModal = false"
-          >×</button>
-        </div>
-
-        <div class="view-modal-body">
-          <div class="view-empty" v-if="selectedItems.length === 0">
-            <div class="empty-icon">🎫</div>
-            <div class="empty-text">还未选择任何投注项</div>
-            <div class="empty-hint">点击比赛赔率开始选号</div>
+        <div ref="shareCardRef" class="bet-share-card" data-bet-share-card>
+          <div class="view-modal-header">
+            <div id="bet-plan-title" class="view-modal-title">
+              过关方式：<strong>{{ passCounts.map(passLabel).join('、') }}</strong>
+            </div>
+            <button
+              type="button"
+              class="view-modal-close"
+              aria-label="关闭投注方案"
+              data-html2canvas-ignore="true"
+              @click="showViewModal = false"
+            >×</button>
           </div>
 
-          <div v-else>
-            <div class="view-list">
-              <div
-                v-for="(group, gIdx) in groupedSelected"
-                :key="gIdx"
-                class="view-match-group"
-              >
-                <div class="view-match-header">
-                  <span class="view-match-name">{{ getMatchName(group.matchId) }}</span>
+          <div class="view-modal-body">
+            <div class="view-empty" v-if="selectedItems.length === 0">
+              <div class="empty-icon">🎫</div>
+              <div class="empty-text">还未选择任何投注项</div>
+              <div class="empty-hint">点击比赛赔率开始选号</div>
+            </div>
+
+            <div v-else>
+              <div class="view-list">
+                <div
+                  v-for="(group, gIdx) in groupedSelected"
+                  :key="gIdx"
+                  class="view-match-group"
+                >
+                  <div class="view-match-header">
+                    <span class="view-match-name">{{ getMatchName(group.matchId) }}</span>
+                  </div>
+                  <div class="view-match-picks">
+                    <span
+                      v-for="(item, idx) in group.items"
+                      :key="idx"
+                      class="view-pick-tag"
+                    >
+                      {{ viewPickLabel(item) }}({{ formatNum(item.odd) }})
+                    </span>
+                  </div>
                 </div>
-                <div class="view-match-picks">
-                  <span
-                    v-for="(item, idx) in group.items"
-                    :key="idx"
-                    class="view-pick-tag"
-                  >
-                    {{ viewPickLabel(item) }}({{ formatNum(item.odd) }})
-                  </span>
+              </div>
+
+              <div class="view-stats">
+                <div class="stat-row">
+                  <span class="stat-label">总赔率</span>
+                  <span class="stat-value">{{ totalOdds }} · {{ multiplier }}倍</span>
+                </div>
+                <div class="stat-row">
+                  <span class="stat-label">投注金额</span>
+                  <span class="stat-value highlight">{{ totalBet }} 元</span>
+                </div>
+                <div class="stat-row bonus-row">
+                  <span class="stat-label">理论最高奖金</span>
+                  <span class="stat-value highlight">{{ maxBonus }} 元</span>
                 </div>
               </div>
             </div>
+          </div>
 
-            <div class="view-stats">
-              <div class="stat-row">
-                <span class="stat-label">总赔率</span>
-                <span class="stat-value">{{ totalOdds }} · {{ multiplier }}倍</span>
-              </div>
-              <div class="stat-row">
-                <span class="stat-label">投注金额</span>
-                <span class="stat-value highlight">{{ totalBet }} 元</span>
-              </div>
-              <div class="stat-row bonus-row">
-                <span class="stat-label">理论最高奖金</span>
-                <span class="stat-value highlight">{{ maxBonus }} 元</span>
-              </div>
-            </div>
+          <div class="bet-share-signature">
+            <strong>MYGOAL</strong>
+            <span>足球投注方案 · 仅供个人参考，请理性投注</span>
           </div>
         </div>
 
         <div class="view-modal-footer">
           <button class="footer-btn cancel-btn" @click="showViewModal = false">关闭</button>
+          <button
+            class="footer-btn share-btn"
+            :disabled="exportingImage || selectedItems.length === 0"
+            @click="savePlanImage"
+          >
+            {{ exportingImage ? '生成中…' : '保存图片' }}
+          </button>
           <button class="footer-btn confirm-btn" :disabled="savingBet" @click="confirmBet">
             {{ savingBet ? '保存中…' : '确认投注' }}
           </button>
@@ -532,6 +547,8 @@ const tempMultiplier = ref(1)
 const multiplier = ref(1)
 const showViewModal = ref(false)
 const savingBet = ref(false)
+const exportingImage = ref(false)
+const shareCardRef = ref(null)
 const saveNotice = ref('')
 const pendingPlayConflict = ref(null)
 
@@ -922,6 +939,70 @@ const validatePassSelection = () => {
 const openViewModal = () => {
   if (!validatePassSelection()) return
   showViewModal.value = true
+}
+
+const imageFileName = () => {
+  const now = new Date()
+  const pad = (value) => String(value).padStart(2, '0')
+  const stamp = [
+    now.getFullYear(),
+    pad(now.getMonth() + 1),
+    pad(now.getDate()),
+    '-',
+    pad(now.getHours()),
+    pad(now.getMinutes())
+  ].join('')
+  return `mygoal-投注方案-${stamp}.png`
+}
+
+const downloadImageBlob = (blob, fileName) => {
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = fileName
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000)
+}
+
+const savePlanImage = async () => {
+  if (!shareCardRef.value || exportingImage.value || selectedItems.value.length === 0) return
+
+  exportingImage.value = true
+  let renderHost = null
+  try {
+    const { default: html2canvas } = await import('html2canvas')
+    const clonedCard = shareCardRef.value.cloneNode(true)
+    clonedCard.classList.add('bet-share-card--export')
+
+    renderHost = document.createElement('div')
+    renderHost.className = 'bet-share-render-host'
+    renderHost.appendChild(clonedCard)
+    document.body.appendChild(renderHost)
+
+    if (document.fonts?.ready) await document.fonts.ready
+    const canvas = await html2canvas(clonedCard, {
+      backgroundColor: '#ffffff',
+      scale: 2,
+      useCORS: true,
+      logging: false
+    })
+    const blob = await new Promise((resolve, reject) => {
+      canvas.toBlob(
+        (result) => result ? resolve(result) : reject(new Error('图片生成失败')),
+        'image/png'
+      )
+    })
+    const fileName = imageFileName()
+    downloadImageBlob(blob, fileName)
+    showSaveNotice('方案图片已下载')
+  } catch (error) {
+    showSaveNotice(error?.message || '生成图片失败，请稍后重试')
+  } finally {
+    renderHost?.remove()
+    exportingImage.value = false
+  }
 }
 
 const confirmBet = async () => {
