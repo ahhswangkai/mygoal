@@ -939,6 +939,7 @@ const viewPickLabel = (item) => {
   if (item.pool === 'score' || item.pool === 'goals') {
     return String(item.opt || item.label || '').replace(/球$/, '')
   }
+  if (item.pool === 'hafu') return item.opt || item.label
   return `${poolName(item.pool)}${item.label}`
 }
 

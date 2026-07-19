@@ -173,7 +173,7 @@
                     :class="item.result ? 'record-ticket-pick--' + item.result : ''"
                   >
                     <b v-if="item.result">{{ resultIcon(item.result) }}</b>
-                    {{ ticketPickLabel(item) }}@{{ ticketOdds(item.odd) }}
+                    {{ ticketPickText(item) }}
                   </span>
                 </div>
                 <div v-if="group.fullScore || group.resultStatus" class="record-ticket-result">
@@ -282,6 +282,14 @@ const ticketPickLabel = item => {
     return String(item.opt || item.label || '').replace(/球$/, '')
   }
   return item.label || item.opt
+}
+
+const ticketPickText = item => {
+  const label = ticketPickLabel(item)
+  const odds = ticketOdds(item.odd)
+  return item.pool === 'score' || item.pool === 'goals'
+    ? `${label}(${odds})`
+    : `${label}@${odds}`
 }
 
 const showRecordShareNotice = (message) => {
