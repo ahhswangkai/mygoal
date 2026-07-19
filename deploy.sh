@@ -230,7 +230,13 @@ server {
 EOF
 fi
 
+# Debian/Ubuntu 通常加载 sites-enabled，部分阿里云镜像只加载 conf.d/*.conf。
+# 同时维护 sites-enabled，并在主配置未加载它时补充 conf.d 入口。
 $SUDO ln -sfn "$NGINX_FILE" "/etc/nginx/sites-enabled/${APP_NAME}"
+if ! $SUDO grep -Eq 'include[[:space:]]+/etc/nginx/sites-enabled/\*' /etc/nginx/nginx.conf; then
+  log "当前 Nginx 仅加载 conf.d，写入兼容入口"
+  $SUDO ln -sfn "$NGINX_FILE" "/etc/nginx/conf.d/${APP_NAME}.conf"
+fi
 $SUDO nginx -t
 
 log "重启服务"
