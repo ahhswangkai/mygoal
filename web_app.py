@@ -15,6 +15,7 @@ from bet_settlement import (
 )
 from calculator_math import calculate_max_bonus, calculate_notes
 from crawler import FootballCrawler
+from match_time_utils import sort_matches_by_datetime
 from user_storage import UserStorage
 from football_ai import (
     FAEAIReviewAnalyzer,
@@ -669,6 +670,7 @@ def get_matches():
     
     # 支持按状态筛选
     status = request.args.get('status')
+    status_code = None
     if status:
         try:
             status_code = int(status)
@@ -702,32 +704,11 @@ def get_matches():
             if str(match.get('league') or '').strip() in selected_leagues
         ]
     
-    # 排序：未开始的比赛按时间升序（默认或明确传入status=0）
-    try:
-        def parse_match_time(mt):
-            if not mt:
-                return datetime.max
-            s = str(mt).strip()
-            fmts = [
-                "%Y-%m-%d %H:%M:%S",
-                "%Y-%m-%d %H:%M",
-                "%Y/%m/%d %H:%M",
-                "%m-%d %H:%M"
-            ]
-            for fmt in fmts:
-                try:
-                    if fmt == "%m-%d %H:%M":
-                        s2 = f"{datetime.now().year}-{s}"
-                        return datetime.strptime(s2, "%Y-%m-%d %H:%M")
-                    return datetime.strptime(s, fmt)
-                except Exception:
-                    continue
-            return datetime.max
-        need_sort = (not status) or (status and str(status).isdigit() and int(status) == 0)
-        if need_sort:
-            matches.sort(key=lambda m: parse_match_time(m.get('match_time')))
-    except Exception:
-        pass
+    # 分页前使用完整比赛时间排序。赛果倒序，未开赛列表升序。
+    if status_code == 2:
+        matches = sort_matches_by_datetime(matches, descending=True)
+    elif not status or status_code == 0:
+        matches = sort_matches_by_datetime(matches)
     
     # 分页参数
     page = request.args.get('page', '1')

@@ -339,20 +339,6 @@ const formatTime = value => {
   if (Number.isNaN(date.getTime())) return String(value).slice(0, 16).replace('T', ' ')
   return date.toLocaleString('zh-CN', { hour12: false, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
 }
-const matchTimeTimestamp = value => {
-  if (!value) return null
-  const timestamp = new Date(String(value).trim().replace(' ', 'T')).getTime()
-  return Number.isNaN(timestamp) ? null : timestamp
-}
-
-const sortMatchesDescending = items => [...items].sort((a, b) => {
-  const aTime = matchTimeTimestamp(a.match_time)
-  const bTime = matchTimeTimestamp(b.match_time)
-  if (aTime === null) return bTime === null ? 0 : 1
-  if (bTime === null) return -1
-  return bTime - aTime
-})
-
 const fetchMatches = async ({ append = false } = {}) => {
   if (append) loadingMore.value = true
   else loading.value = true
@@ -369,7 +355,7 @@ const fetchMatches = async ({ append = false } = {}) => {
       }
     })
     const newMatches = response.data?.data || []
-    matches.value = sortMatchesDescending(append ? [...matches.value, ...newMatches] : newMatches)
+    matches.value = append ? [...matches.value, ...newMatches] : newMatches
     availableLeagues.value = (response.data?.leagues || []).filter(Boolean)
     totalAvailableMatches.value = Number(response.data?.available_total || 0)
     const totalPages = Number(response.data?.total_pages)
