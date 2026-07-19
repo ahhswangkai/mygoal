@@ -103,10 +103,29 @@
             <h2>投注方案</h2>
             <p>{{ formatTime(selectedRecord.created_at) }}</p>
           </div>
-          <button type="button" @click="selectedRecord = null">×</button>
+          <div class="record-detail-actions">
+            <button
+              type="button"
+              class="record-share-button"
+              :disabled="preparingRecordShare || sharingRecord || !recordShareBlob"
+              :aria-label="preparingRecordShare ? '正在生成分享图片' : '分享投注方案'"
+              @click="shareRecord"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M12 16V3m0 0L7.5 7.5M12 3l4.5 4.5M5 11v8h14v-8" />
+              </svg>
+              <span>{{ preparingRecordShare ? '生成中' : sharingRecord ? '分享中' : '分享' }}</span>
+            </button>
+            <button
+              type="button"
+              class="record-detail-close"
+              aria-label="关闭投注方案"
+              @click="selectedRecord = null"
+            >×</button>
+          </div>
         </header>
         <div class="record-ticket-scroll">
-          <article class="record-ticket">
+          <article ref="recordTicketRef" class="record-ticket">
             <div class="record-ticket-brand">
               <span>中国体育彩票</span>
               <strong>竞彩足球</strong>
@@ -189,13 +208,14 @@
             <small class="record-ticket-disclaimer">模拟记录，仅用于个人投注统计与赛后复盘</small>
           </article>
         </div>
+        <div v-if="recordShareNotice" class="record-share-notice">{{ recordShareNotice }}</div>
       </section>
     </div>
   </div>
 </template>
 
 <script setup>
-import { onMounted, reactive, ref, watch } from 'vue'
+import { nextTick, onMounted, reactive, ref, watch } from 'vue'
 import AccountButton from '../components/AccountButton.vue'
 import { apiRequest, authState, loadCurrentUser, openAuth } from '../auth'
 import { calculatePassNotes } from '../utils/betMath'
@@ -205,6 +225,13 @@ const stats = reactive({ total_bets: 0, total_stake: 0, total_notes: 0, net_prof
 const loading = ref(false)
 const selectedRecord = ref(null)
 const recordFilter = ref('all')
+const recordTicketRef = ref(null)
+const recordShareBlob = ref(null)
+const preparingRecordShare = ref(false)
+const sharingRecord = ref(false)
+const recordShareNotice = ref('')
+let recordShareToken = 0
+let recordShareNoticeTimer = null
 
 const money = (value) => Number(value || 0).toFixed(2)
 const signedMoney = (value) => {
@@ -252,6 +279,95 @@ const handicapText = group => {
 
 const ticketPickLabel = item => {
   return item.label || item.opt
+}
+
+const showRecordShareNotice = (message) => {
+  recordShareNotice.value = message
+  if (recordShareNoticeTimer) window.clearTimeout(recordShareNoticeTimer)
+  recordShareNoticeTimer = window.setTimeout(() => {
+    recordShareNotice.value = ''
+  }, 2800)
+}
+
+const imageBlobFromCanvas = canvas => new Promise((resolve, reject) => {
+  canvas.toBlob(
+    blob => blob ? resolve(blob) : reject(new Error('分享图片生成失败')),
+    'image/png'
+  )
+})
+
+const prepareRecordShare = async (record, token) => {
+  preparingRecordShare.value = true
+  try {
+    await nextTick()
+    if (token !== recordShareToken || !recordTicketRef.value) return
+
+    const { default: html2canvas } = await import('html2canvas')
+    const canvas = await html2canvas(recordTicketRef.value, {
+      backgroundColor: '#f8f3eb',
+      scale: 2,
+      useCORS: true,
+      logging: false
+    })
+    const blob = await imageBlobFromCanvas(canvas)
+    if (token === recordShareToken && selectedRecord.value?.id === record?.id) {
+      recordShareBlob.value = blob
+    }
+  } catch (error) {
+    if (token === recordShareToken) {
+      showRecordShareNotice(error?.message || '分享图片生成失败')
+    }
+  } finally {
+    if (token === recordShareToken) preparingRecordShare.value = false
+  }
+}
+
+const downloadRecordImage = (blob, fileName) => {
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = fileName
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000)
+}
+
+const shareRecord = () => {
+  if (!recordShareBlob.value || sharingRecord.value || !selectedRecord.value) return
+
+  const fileName = `mygoal-投注方案-${ticketNumber(selectedRecord.value)}.png`
+  const shareFile = typeof File === 'function'
+    ? new File([recordShareBlob.value], fileName, { type: 'image/png' })
+    : null
+  const canShareFile = !!(
+    shareFile &&
+    typeof navigator.share === 'function' &&
+    typeof navigator.canShare === 'function' &&
+    navigator.canShare({ files: [shareFile] })
+  )
+
+  if (!canShareFile) {
+    downloadRecordImage(recordShareBlob.value, fileName)
+    showRecordShareNotice('当前浏览器不支持直接分享，图片已下载')
+    return
+  }
+
+  sharingRecord.value = true
+  navigator.share({
+    files: [shareFile],
+    title: '竞彩足球投注方案',
+    text: `${ticketPassTitle(selectedRecord.value)} · 合计${money(selectedRecord.value.stake)}元`
+  }).then(() => {
+    showRecordShareNotice('分享操作已完成')
+  }).catch(error => {
+    if (error?.name !== 'AbortError') {
+      downloadRecordImage(recordShareBlob.value, fileName)
+      showRecordShareNotice('无法直接分享，图片已下载')
+    }
+  }).finally(() => {
+    sharingRecord.value = false
+  })
 }
 
 const formatTime = (value) => {
@@ -330,6 +446,15 @@ watch(() => authState.user?.id, () => {
   recordFilter.value = 'all'
   Object.assign(stats, { total_bets: 0, total_stake: 0, total_notes: 0, net_profit: 0 })
   if (authState.user) fetchRecords()
+})
+
+watch(selectedRecord, record => {
+  recordShareToken += 1
+  recordShareBlob.value = null
+  preparingRecordShare.value = false
+  sharingRecord.value = false
+  recordShareNotice.value = ''
+  if (record) prepareRecordShare(record, recordShareToken)
 })
 
 onMounted(async () => {

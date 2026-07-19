@@ -4458,6 +4458,7 @@ a { text-decoration: none; color: inherit; }
 }
 
 .record-detail-modal {
+  position: relative;
   display: flex;
   flex-direction: column;
   width: 100%;
@@ -4477,6 +4478,12 @@ a { text-decoration: none; color: inherit; }
   border-bottom: 1px solid #eee;
 }
 
+.record-detail-actions {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
 .record-detail-modal h2 {
   font-size: 17px;
 }
@@ -4488,12 +4495,61 @@ a { text-decoration: none; color: inherit; }
 }
 
 .record-detail-modal header button {
-  width: 32px;
   height: 32px;
-  color: #888;
-  font-size: 25px;
   background: transparent;
   border: 0;
+}
+
+.record-detail-modal .record-share-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  width: auto;
+  padding: 0 7px;
+  color: #df3542;
+  font-size: 12px;
+  border: 1px solid #f2c6ca;
+  border-radius: 16px;
+}
+
+.record-share-button svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.record-share-button:disabled {
+  color: #aaa;
+  background: #f5f5f5;
+  border-color: #eee;
+}
+
+.record-detail-modal .record-detail-close {
+  width: 32px;
+  color: #888;
+  font-size: 25px;
+}
+
+.record-share-notice {
+  position: absolute;
+  right: 18px;
+  bottom: calc(22px + env(safe-area-inset-bottom));
+  left: 18px;
+  z-index: 3;
+  max-width: 360px;
+  margin: auto;
+  padding: 9px 14px;
+  color: #fff;
+  font-size: 12px;
+  line-height: 1.45;
+  text-align: center;
+  background: rgb(34 34 34 / 88%);
+  border-radius: 18px;
+  box-shadow: 0 4px 14px rgb(0 0 0 / 18%);
 }
 
 .record-ticket-scroll {
