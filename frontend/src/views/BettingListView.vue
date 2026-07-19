@@ -278,6 +278,9 @@ const handicapText = group => {
 }
 
 const ticketPickLabel = item => {
+  if (item.pool === 'score' || item.pool === 'goals') {
+    return String(item.opt || item.label || '').replace(/球$/, '')
+  }
   return item.label || item.opt
 }
 

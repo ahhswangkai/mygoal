@@ -1197,7 +1197,7 @@ body {
 .view-match-picks {
   display: flex;
   flex-wrap: wrap;
-  gap: 3px 10px;
+  gap: 3px 0;
   justify-content: center;
   min-height: 21px;
 }
@@ -1206,6 +1206,12 @@ body {
   color: #8b8b8b;
   font-size: 15px;
   line-height: 1.4;
+}
+
+.view-pick-tag + .view-pick-tag::before {
+  margin-inline: 2px;
+  content: "、";
+  color: #aaa;
 }
 
 .view-stats {
