@@ -459,8 +459,8 @@
 
               <div class="view-stats">
                 <div class="stat-row">
-                  <span class="stat-label">总赔率</span>
-                  <span class="stat-value">{{ totalOdds }} · {{ multiplier }}倍</span>
+                  <span class="stat-label">倍数</span>
+                  <span class="stat-value">{{ multiplier }}倍</span>
                 </div>
                 <div class="stat-row">
                   <span class="stat-label">投注金额</span>
@@ -683,12 +683,6 @@ const totalNotes = computed(() => {
 })
 
 const totalBet = computed(() => totalNotes.value * 2 * multiplier.value)
-
-const totalOdds = computed(() => {
-  let odds = 1
-  selectedItems.value.forEach(i => { odds *= i.odd })
-  return odds.toFixed(2)
-})
 
 const maxBonus = computed(() => calculateMaxBonus(
   selectedItems.value,
