@@ -11,6 +11,39 @@ const selectedMaxOdds = selectedItems => {
   return [...groups.values()]
 }
 
+const selectedOptionCounts = selectedItems => {
+  const groups = new Map()
+  ;(selectedItems || []).forEach(item => {
+    const matchId = String(item?.matchId ?? item?.match_id ?? '')
+    if (!matchId) return
+    groups.set(matchId, (groups.get(matchId) || 0) + 1)
+  })
+  return [...groups.values()]
+}
+
+const combinationNotes = (counts, size, start = 0, picked = 0, product = 1) => {
+  if (picked === size) return product
+  let total = 0
+  const remaining = size - picked
+  for (let index = start; index <= counts.length - remaining; index += 1) {
+    total += combinationNotes(
+      counts,
+      size,
+      index + 1,
+      picked + 1,
+      product * counts[index]
+    )
+  }
+  return total
+}
+
+export const calculatePassNotes = (selectedItems, passSize) => {
+  const counts = selectedOptionCounts(selectedItems)
+  const size = Number(passSize)
+  if (!Number.isInteger(size) || size < 1 || size > counts.length) return 0
+  return combinationNotes(counts, size)
+}
+
 const combinationPayout = (odds, size, multiplier, start = 0, picked = 0, product = 1) => {
   if (picked === size) return roundMoney(product * 2 * multiplier)
   let total = 0

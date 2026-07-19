@@ -4357,8 +4357,8 @@ a { text-decoration: none; color: inherit; }
   flex-direction: column;
   width: 100%;
   max-width: 600px;
-  max-height: 82vh;
-  background: #f5f6f7;
+  max-height: 90vh;
+  background: #eceff1;
   border-radius: 14px 14px 0 0;
   overflow: hidden;
 }
@@ -4391,154 +4391,302 @@ a { text-decoration: none; color: inherit; }
   border: 0;
 }
 
-.record-detail-summary {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 12px 16px;
-  color: #555;
-  font-size: 13px;
-  background: #fff;
-}
-
-.record-detail-summary div {
-  display: grid;
-  gap: 4px;
-}
-
-.record-detail-summary small {
-  color: #999;
-  font-size: 10px;
-}
-
-.record-detail-summary strong,
-.record-detail-modal > footer strong {
-  color: #ef3544;
-}
-
-.record-detail-list {
-  padding: 10px 12px;
+.record-ticket-scroll {
+  padding: 12px 12px calc(20px + env(safe-area-inset-bottom));
   overflow-y: auto;
 }
 
-.record-match-group {
-  margin-bottom: 9px;
-  padding: 11px 12px;
-  background: #fff;
-  border-radius: 8px;
+.record-ticket {
+  position: relative;
+  min-height: 360px;
+  padding: 20px 36px 22px 18px;
+  color: #303234;
+  background:
+    linear-gradient(rgba(255, 255, 255, .76), rgba(255, 255, 255, .76)),
+    repeating-linear-gradient(0deg, #f6f1e9 0, #f6f1e9 3px, #f2ede5 4px);
+  border: 1px solid #e5ddd3;
+  border-radius: 3px;
+  box-shadow: 0 4px 16px rgba(66, 53, 40, .12);
+  font-family: "SFMono-Regular", "Roboto Mono", "Courier New", "PingFang SC", monospace;
+  overflow: hidden;
 }
 
-.record-match-title {
+.record-ticket::before {
+  position: absolute;
+  inset: 30% 16% auto;
+  content: "竞彩";
+  color: rgba(197, 61, 68, .035);
+  font-size: 92px;
+  font-weight: 900;
+  line-height: 1;
+  transform: rotate(-18deg);
+  pointer-events: none;
+}
+
+.record-ticket::after {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 24px;
   display: flex;
   align-items: center;
-  gap: 10px;
-  color: #888;
-  font-size: 11px;
-}
-
-.record-match-title strong {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  color: #333;
-  font-size: 13px;
-  font-weight: 500;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.record-result-score {
-  flex: 0 0 auto;
-  color: #ef3544;
-  font-size: 16px;
-  font-style: normal;
-  font-weight: 500;
-}
-
-.record-result-score--void {
-  color: #3689d4;
-}
-
-.record-match-result {
-  margin-top: 7px;
-  color: #999;
+  padding-top: 12px;
+  content: "中国体育彩票 · 中国体育彩票";
+  color: rgba(255, 255, 255, .88);
+  font-family: "PingFang SC", sans-serif;
   font-size: 10px;
+  letter-spacing: 3px;
+  line-height: 24px;
+  text-align: center;
+  writing-mode: vertical-rl;
+  background: linear-gradient(180deg, #b84c54, #93353e);
 }
 
-.record-match-result--void {
-  color: #3689d4;
+.record-ticket-brand {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  justify-items: center;
+  padding-bottom: 10px;
+  border-bottom: 1px dashed #8e8b86;
 }
 
-.record-picks {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 9px;
+.record-ticket-brand span {
+  color: #a0444b;
+  font-family: "PingFang SC", sans-serif;
+  font-size: 10px;
+  letter-spacing: 5px;
 }
 
-.record-picks span {
-  padding: 4px 7px;
-  color: #e83e4c;
-  font-size: 11px;
-  background: #fff3f4;
-  border: 1px solid #ffd6d9;
-  border-radius: 4px;
+.record-ticket-brand strong {
+  margin-top: 2px;
+  font-family: "PingFang SC", sans-serif;
+  font-size: 27px;
+  font-style: italic;
+  font-weight: 900;
+  letter-spacing: 2px;
 }
 
-.record-picks em {
-  color: #555;
-  font-style: normal;
+.record-ticket-brand small {
+  margin-top: 1px;
+  color: #77736d;
+  font-size: 9px;
 }
 
-.record-picks b {
-  margin-right: 2px;
-  font-weight: 500;
-}
-
-.record-picks .record-pick--win {
-  color: #e42f40;
-  background: #fff0f2;
-  border-color: #ffcbd0;
-}
-
-.record-picks .record-pick--lose {
-  color: #8d9298;
-  background: #f5f6f7;
-  border-color: #e1e3e5;
-}
-
-.record-picks .record-pick--void {
-  color: #3689d4;
-  background: #eef7ff;
-  border-color: #cfe8ff;
-}
-
-.record-detail-modal > footer {
+.record-ticket-id {
   display: flex;
   justify-content: space-between;
-  padding: 14px 16px calc(14px + env(safe-area-inset-bottom));
-  background: #fff;
-  border-top: 1px solid #eee;
+  gap: 8px;
+  padding: 8px 0 7px;
+  color: #716e69;
+  font-size: 8px;
+  border-bottom: 1px dashed #aaa49b;
 }
 
-.record-detail-modal > .record-detail-footer--settled {
-  gap: 12px;
-}
-
-.record-detail-footer--settled > span {
+.record-ticket-summary {
   display: grid;
-  gap: 3px;
-  color: #888;
-  font-size: 11px;
+  grid-template-columns: 1fr auto 1fr;
+  gap: 8px;
+  align-items: center;
+  padding: 9px 0 2px;
+  font-size: 13px;
 }
 
-.record-detail-footer--settled > span:last-child {
+.record-ticket-summary b {
+  font-size: 14px;
+}
+
+.record-ticket-summary strong:last-child {
   text-align: right;
 }
 
-.record-detail-footer--settled strong {
-  font-size: 16px;
-  font-weight: 500;
+.record-ticket-status {
+  display: flex;
+  justify-content: flex-end;
+  padding-bottom: 7px;
+  border-bottom: 1px dashed #aaa49b;
+}
+
+.record-ticket-status span {
+  padding: 2px 7px;
+  font-family: "PingFang SC", sans-serif;
+  font-size: 9px;
+  border-radius: 10px;
+}
+
+.record-ticket-matches {
+  position: relative;
+  z-index: 1;
+}
+
+.record-ticket-match {
+  padding: 9px 0 8px;
+  border-bottom: 1px dashed #c5bfb6;
+}
+
+.record-ticket-match-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11px;
+}
+
+.record-ticket-match-head strong {
+  font-size: 12px;
+}
+
+.record-ticket-match-head span {
+  color: #595651;
+}
+
+.record-ticket-match-head em {
+  color: #77736d;
+  font-size: 10px;
+  font-style: normal;
+}
+
+.record-ticket-match-head b {
+  margin-left: auto;
+  color: #d23c49;
+  font-size: 13px;
+}
+
+.record-ticket-match-head .record-ticket-void {
+  color: #3689d4;
+}
+
+.record-ticket-teams {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  gap: 5px;
+  align-items: center;
+  margin-top: 5px;
+  font-size: 11px;
+}
+
+.record-ticket-teams span:last-child {
+  text-align: right;
+}
+
+.record-ticket-teams i {
+  color: #8a857e;
+  font-size: 9px;
+  font-style: normal;
+}
+
+.record-ticket-picks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 6px;
+}
+
+.record-ticket-picks span {
+  color: #242424;
+  font-size: 11px;
+}
+
+.record-ticket-picks span + span::before {
+  margin-right: 5px;
+  content: " / ";
+  color: #9d9891;
+}
+
+.record-ticket-picks b {
+  color: inherit;
+}
+
+.record-ticket-picks .record-ticket-pick--win {
+  color: #d42e3e;
+  font-weight: 700;
+}
+
+.record-ticket-picks .record-ticket-pick--lose {
+  color: #96928c;
+  text-decoration: line-through;
+}
+
+.record-ticket-picks .record-ticket-pick--void {
+  color: #3689d4;
+}
+
+.record-ticket-result {
+  margin-top: 5px;
+  color: #77736d;
+  font-size: 9px;
+}
+
+.record-ticket-notice {
+  position: relative;
+  z-index: 1;
+  margin-top: 9px;
+  color: #77736d;
+  font-size: 8px;
+  line-height: 1.5;
+}
+
+.record-ticket-award {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-top: 8px;
+  font-size: 11px;
+}
+
+.record-ticket-award strong {
+  color: #d62f3e;
+  font-size: 17px;
+}
+
+.record-ticket-notes {
+  position: relative;
+  z-index: 1;
+  margin-top: 7px;
+  font-size: 10px;
+  line-height: 1.6;
+}
+
+.record-ticket-settlement {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 8px;
+  padding-top: 8px;
+  font-size: 10px;
+  border-top: 1px dashed #aaa49b;
+}
+
+.record-ticket-settlement strong {
+  color: #d62f3e;
+  font-size: 12px;
+}
+
+.record-ticket-barcode {
+  width: 74%;
+  height: 28px;
+  margin: 14px auto 0;
+  opacity: .64;
+  background: repeating-linear-gradient(
+    90deg,
+    #252525 0 1px,
+    transparent 1px 3px,
+    #252525 3px 5px,
+    transparent 5px 7px
+  );
+}
+
+.record-ticket-disclaimer {
+  display: block;
+  margin-top: 6px;
+  color: #8b867f;
+  font-family: "PingFang SC", sans-serif;
+  font-size: 8px;
+  text-align: center;
 }
 
 /* 个人统计 */

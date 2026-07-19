@@ -105,52 +105,90 @@
           </div>
           <button type="button" @click="selectedRecord = null">×</button>
         </header>
-        <div class="record-detail-summary">
-          <div>
-            <span>{{ selectedRecord.description }}</span>
-            <small>{{ statusText(selectedRecord.status) }}</small>
-          </div>
-          <strong>{{ money(selectedRecord.stake) }}元</strong>
-        </div>
-        <div class="record-detail-list">
-          <section v-for="group in groupedItems(selectedRecord)" :key="group.matchId" class="record-match-group">
-            <div class="record-match-title">
-              <span>{{ group.items[0].match_num || '比赛' }}</span>
-              <strong>{{ group.items[0].home_team }} VS {{ group.items[0].away_team }}</strong>
-              <em v-if="group.fullScore" class="record-result-score">{{ group.fullScore }}</em>
-              <em v-else-if="group.isVoid" class="record-result-score record-result-score--void">退</em>
+        <div class="record-ticket-scroll">
+          <article class="record-ticket">
+            <div class="record-ticket-brand">
+              <span>中国体育彩票</span>
+              <strong>竞彩足球</strong>
+              <small>竞彩足球胜平负 · 让球胜平负</small>
             </div>
-            <div v-if="group.fullScore" class="record-match-result">
-              全场 {{ group.fullScore }}<span v-if="group.halfScore"> · 半场 {{ group.halfScore }}</span>
+
+            <div class="record-ticket-id">
+              <span>方案号 {{ ticketNumber(selectedRecord) }}</span>
+              <span>{{ formatTime(selectedRecord.created_at) }}</span>
             </div>
-            <div v-else-if="group.resultStatus" class="record-match-result record-match-result--void">
-              {{ group.resultStatus }}
+
+            <div class="record-ticket-summary">
+              <strong>{{ ticketPassTitle(selectedRecord) }}</strong>
+              <b>{{ selectedRecord.multiplier }}倍</b>
+              <strong>合计 {{ money(selectedRecord.stake) }}元</strong>
             </div>
-            <div class="record-picks">
-              <span
-                v-for="item in group.items"
-                :key="item.pool + item.opt"
-                :class="item.result ? 'record-pick--' + item.result : ''"
-              >
-                <b v-if="item.result">{{ resultIcon(item.result) }}</b>
-                {{ item.pool_name }} {{ item.label }} <em>{{ money(item.odd) }}</em>
+            <div class="record-ticket-status">
+              <span :class="'record-status--' + selectedRecord.status">
+                {{ statusText(selectedRecord.status) }}
               </span>
             </div>
-          </section>
+
+            <div class="record-ticket-matches">
+              <section
+                v-for="(group, index) in groupedItems(selectedRecord)"
+                :key="group.matchId"
+                class="record-ticket-match"
+              >
+                <div class="record-ticket-match-head">
+                  <strong>第{{ index + 1 }}场</strong>
+                  <span>{{ group.items[0].match_num || '比赛' }}</span>
+                  <em v-if="handicapText(group)">{{ handicapText(group) }}</em>
+                  <b v-if="group.fullScore">{{ group.fullScore }}</b>
+                  <b v-else-if="group.isVoid" class="record-ticket-void">退</b>
+                </div>
+                <div class="record-ticket-teams">
+                  <span>主队：{{ group.items[0].home_team || '-' }}</span>
+                  <i>VS</i>
+                  <span>客队：{{ group.items[0].away_team || '-' }}</span>
+                </div>
+                <div class="record-ticket-picks">
+                  <span
+                    v-for="item in group.items"
+                    :key="item.pool + item.opt"
+                    :class="item.result ? 'record-ticket-pick--' + item.result : ''"
+                  >
+                    <b v-if="item.result">{{ resultIcon(item.result) }}</b>
+                    {{ ticketPickLabel(item) }}@{{ ticketOdds(item.odd) }}
+                  </span>
+                </div>
+                <div v-if="group.fullScore || group.resultStatus" class="record-ticket-result">
+                  <template v-if="group.fullScore">
+                    全场 {{ group.fullScore }}<span v-if="group.halfScore"> · 半场 {{ group.halfScore }}</span>
+                  </template>
+                  <template v-else>{{ group.resultStatus }}</template>
+                </div>
+              </section>
+            </div>
+
+            <p class="record-ticket-notice">（选项固定奖金为每1元投注对应的奖金金额）</p>
+
+            <div class="record-ticket-award">
+              <span>本票最高可能固定奖金</span>
+              <strong>{{ money(selectedRecord.max_bonus) }}元</strong>
+            </div>
+
+            <div class="record-ticket-notes">
+              单倍注数：{{ passNotesText(selectedRecord) }}；共{{ selectedRecord.notes }}注
+            </div>
+
+            <div v-if="selectedRecord.status !== 'pending'" class="record-ticket-settlement">
+              <span>实际返还 <strong>{{ money(selectedRecord.actual_return) }}元</strong></span>
+              <span>
+                {{ profitLabel(selectedRecord.profit) }}
+                <strong :class="profitClass(selectedRecord.profit)">{{ signedMoney(selectedRecord.profit) }}元</strong>
+              </span>
+            </div>
+
+            <div class="record-ticket-barcode" aria-hidden="true"></div>
+            <small class="record-ticket-disclaimer">模拟记录，仅用于个人投注统计与赛后复盘</small>
+          </article>
         </div>
-        <footer :class="{ 'record-detail-footer--settled': selectedRecord.status !== 'pending' }">
-          <template v-if="selectedRecord.status === 'pending'">
-            <span>理论最高奖金</span>
-            <strong>{{ money(selectedRecord.max_bonus) }} 元</strong>
-          </template>
-          <template v-else>
-            <span>实际返还 <strong>{{ money(selectedRecord.actual_return) }} 元</strong></span>
-            <span>
-              {{ profitLabel(selectedRecord.profit) }}
-              <strong :class="profitClass(selectedRecord.profit)">{{ signedMoney(selectedRecord.profit) }} 元</strong>
-            </span>
-          </template>
-        </footer>
       </section>
     </div>
   </div>
@@ -160,6 +198,7 @@
 import { onMounted, reactive, ref, watch } from 'vue'
 import AccountButton from '../components/AccountButton.vue'
 import { apiRequest, authState, loadCurrentUser, openAuth } from '../auth'
+import { calculatePassNotes } from '../utils/betMath'
 
 const records = ref([])
 const stats = reactive({ total_bets: 0, total_stake: 0, total_notes: 0, net_profit: 0 })
@@ -181,6 +220,39 @@ const statusText = (status) => ({
 const profitLabel = (value) => Number(value || 0) > 0 ? '净盈利' : Number(value || 0) < 0 ? '净亏损' : '盈亏'
 const profitClass = (value) => Number(value || 0) > 0 ? 'profit-positive' : Number(value || 0) < 0 ? 'profit-negative' : 'profit-zero'
 const resultIcon = (result) => ({ win: '✓', lose: '×', void: '退' }[result] || '')
+const ticketOdds = value => Number(value || 0).toFixed(3)
+
+const ticketNumber = record => String(record?.id || '')
+  .replace(/-/g, '')
+  .slice(0, 20)
+  .toUpperCase() || 'MYGOAL'
+
+const ticketPassTitle = record => {
+  const passes = (record?.pass_counts || [])
+    .map(count => Number(count) === 1 ? '单关' : Number(count))
+    .join(',')
+  return `${record?.match_count || 0}场-${passes}${passes === '单关' ? '' : '关'}`
+}
+
+const passNotesText = record => (record?.pass_counts || [])
+  .map(count => {
+    const size = Number(count)
+    const label = size === 1 ? '单关' : `${size}串1`
+    return `${label}×${calculatePassNotes(record?.selected_items, size)}注`
+  })
+  .join('，')
+
+const handicapText = group => {
+  const item = group?.items?.find(entry => entry.pool === 'hhad')
+  if (!item) return ''
+  const value = Number(item.handicap)
+  if (!Number.isFinite(value) || value === 0) return '让球0'
+  return value < 0 ? `主队让${Math.abs(value)}球` : `主队受让${value}球`
+}
+
+const ticketPickLabel = item => {
+  return item.label || item.opt
+}
 
 const formatTime = (value) => {
   if (!value) return ''
