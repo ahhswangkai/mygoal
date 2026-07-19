@@ -40,7 +40,17 @@
       <div v-else-if="filteredMatches.length === 0" class="results-state">暂无完赛数据</div>
 
       <section v-else class="results-list">
-        <article v-for="match in filteredMatches" :key="match.match_id" class="result-card">
+        <article
+          v-for="match in filteredMatches"
+          :key="match.match_id"
+          class="result-card"
+          role="link"
+          tabindex="0"
+          :aria-label="`查看${match.home_team}对${match.away_team}比赛详情`"
+          @click="goToDetail(match.match_id)"
+          @keydown.enter="goToDetail(match.match_id)"
+          @keydown.space.prevent="goToDetail(match.match_id)"
+        >
           <header class="result-meta">
             <strong>{{ match.league || '未知联赛' }}</strong>
             <span class="match-number">{{ match.match_number || '—' }}</span>
@@ -125,8 +135,10 @@
 <script setup>
 import axios from 'axios'
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import AccountButton from '../components/AccountButton.vue'
 
+const router = useRouter()
 const matches = ref([])
 const loading = ref(false)
 const loadingMore = ref(false)
@@ -155,6 +167,11 @@ const leagueFilterLabel = computed(() => {
   if (selectedLeagues.value.length === 1) return selectedLeagues.value[0]
   return `已选${selectedLeagues.value.length}个联赛`
 })
+
+const goToDetail = matchId => {
+  if (!matchId) return
+  router.push(`/match/${matchId}`)
+}
 
 const openLeagueFilter = () => {
   draftLeagues.value = [...selectedLeagues.value]
@@ -488,7 +505,10 @@ onUnmounted(() => {
   .league-filter-modal footer button { height: 58px; font-size: 16px; }
 }
 .results-list { display: grid; gap: 10px; }
-.result-card { padding: 13px; background: #fff; border-radius: 10px; box-shadow: 0 1px 4px rgb(0 0 0 / 5%); }
+.result-card { padding: 13px; background: #fff; border-radius: 10px; box-shadow: 0 1px 4px rgb(0 0 0 / 5%); cursor: pointer; transition: transform .16s ease, box-shadow .16s ease; -webkit-tap-highlight-color: transparent; }
+.result-card:hover { box-shadow: 0 4px 14px rgb(0 0 0 / 9%); transform: translateY(-1px); }
+.result-card:active { box-shadow: 0 1px 4px rgb(0 0 0 / 5%); transform: scale(.995); }
+.result-card:focus-visible { outline: 2px solid rgb(243 59 72 / 65%); outline-offset: 2px; }
 .result-meta { display: flex; justify-content: space-between; gap: 12px; color: #999; font-size: 12px; }
 .result-meta strong { color: #f33b48; }
 .result-meta time { margin-left: auto; }
