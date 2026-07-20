@@ -68,6 +68,77 @@ def _favorite_band(odds: float) -> str:
     return "2.20以上"
 
 
+def classify_market_favorite(
+    match: Dict[str, Any],
+) -> Optional[Dict[str, Any]]:
+    """Classify one finished match using the league-profile favorite rules."""
+    home_score = _number(match.get("home_score"))
+    away_score = _number(match.get("away_score"))
+    home_odds = _number(match.get("euro_current_win"))
+    away_odds = _number(match.get("euro_current_lose"))
+    if (
+        home_score is None
+        or away_score is None
+        or home_odds is None
+        or away_odds is None
+        or home_odds <= 0
+        or away_odds <= 0
+    ):
+        return None
+
+    odds_gap = abs(home_odds - away_odds)
+    if odds_gap < 0.20:
+        return None
+    favorite_side, favorite_odds = (
+        ("home", home_odds)
+        if home_odds < away_odds else ("away", away_odds)
+    )
+    difference = home_score - away_score
+    outcome = (
+        "home" if difference > 0
+        else "away" if difference < 0 else "draw"
+    )
+    favorite_won = outcome == favorite_side
+    result_type = (
+        "follow" if favorite_won
+        else "draw" if outcome == "draw" else "upset"
+    )
+
+    handicap = _number(
+        match.get("hi_handicap_value")
+        if match.get("hi_handicap_value") not in (None, "")
+        else match.get("handicap")
+    )
+    hhad_result = None
+    favorite_covered = None
+    if handicap is not None:
+        adjusted = difference + handicap
+        hhad_result = (
+            "home" if adjusted > 0
+            else "away" if adjusted < 0 else "draw"
+        )
+        favorite_covered = hhad_result == favorite_side
+
+    return {
+        "favorite_side": favorite_side,
+        "favorite_odds": favorite_odds,
+        "favorite_odds_gap": odds_gap,
+        "favorite_band": _favorite_band(favorite_odds),
+        "clear_favorite": favorite_odds <= 2.20,
+        "favorite_won": favorite_won,
+        "favorite_failed": not favorite_won,
+        "favorite_drew": result_type == "draw",
+        "underdog_won": result_type == "upset",
+        "result_type": result_type,
+        "hhad_result": hhad_result,
+        "favorite_covered": favorite_covered,
+        "favorite_not_cover": (
+            not favorite_covered
+            if favorite_covered is not None else None
+        ),
+    }
+
+
 def _confidence(sample_size: int, effective_sample: float) -> str:
     if sample_size >= 100 and effective_sample >= 50:
         return "高"
@@ -111,42 +182,12 @@ def _feature_rows(
             adjusted = difference + handicap
             hhad_result = "home" if adjusted > 0 else "away" if adjusted < 0 else "draw"
 
-        home_odds = _number(match.get("euro_current_win"))
-        away_odds = _number(match.get("euro_current_lose"))
-        favorite_side = None
-        favorite_odds = None
-        if home_odds and away_odds:
-            favorite_side, favorite_odds = (
-                ("home", home_odds)
-                if home_odds <= away_odds else ("away", away_odds)
-            )
-        favorite_odds_gap = (
-            abs(home_odds - away_odds)
-            if home_odds is not None and away_odds is not None else None
-        )
-        if favorite_odds_gap is not None and favorite_odds_gap < 0.20:
-            favorite_side = None
-            favorite_odds = None
-        favorite_won = (
-            outcome == favorite_side if favorite_side else None
-        )
+        favorite = classify_market_favorite(match) or {}
+        favorite_odds = favorite.get("favorite_odds")
+        favorite_won = favorite.get("favorite_won")
         favorite_won_by_one = (
             favorite_won and abs(difference) == 1
             if favorite_won is not None else None
-        )
-        favorite_failed = (
-            not favorite_won if favorite_won is not None else None
-        )
-        favorite_drew = (
-            outcome == "draw" if favorite_side else None
-        )
-        underdog_won = (
-            outcome not in (favorite_side, "draw")
-            if favorite_side else None
-        )
-        favorite_covered = (
-            hhad_result == favorite_side
-            if favorite_side and hhad_result else None
         )
 
         line = _total_line(
@@ -175,16 +216,13 @@ def _feature_rows(
                 if favorite_odds is not None else None
             ),
             "favorite_odds": favorite_odds,
-            "favorite_odds_gap": favorite_odds_gap,
+            "favorite_odds_gap": favorite.get("favorite_odds_gap"),
             "favorite_won": favorite_won,
             "favorite_won_by_one": favorite_won_by_one,
-            "favorite_failed": favorite_failed,
-            "favorite_drew": favorite_drew,
-            "underdog_won": underdog_won,
-            "favorite_not_cover": (
-                not favorite_covered
-                if favorite_covered is not None else None
-            ),
+            "favorite_failed": favorite.get("favorite_failed"),
+            "favorite_drew": favorite.get("favorite_drew"),
+            "underdog_won": favorite.get("underdog_won"),
+            "favorite_not_cover": favorite.get("favorite_not_cover"),
             "total_result": total_result,
         })
     return rows

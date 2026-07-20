@@ -20,7 +20,11 @@ from football_ai.parlay import build_draw_parlays
 from football_ai.draw_review import aggregate_draw_reviews
 from football_ai.daily_review import aggregate_daily_ai_reviews
 from football_ai.review_memory import build_review_memory
-from football_ai.league_profile import build_league_profiles, league_aliases
+from football_ai.league_profile import (
+    build_league_profiles,
+    classify_market_favorite,
+    league_aliases,
+)
 from football_ai.skills import (
     SKILL_DEFINITIONS,
     baseline_skill_documents,
@@ -1117,6 +1121,129 @@ class MongoDBStorage:
         except Exception as e:
             self.logger.error(f"读取 FAE 联赛历史画像失败: {str(e)}")
             return {}
+
+    def get_fae_league_profile_matches(
+        self,
+        before_date,
+        league,
+        *,
+        kind='surprise',
+        page=1,
+        page_size=20,
+    ):
+        """Return auditable finished matches behind one league profile metric."""
+        try:
+            target_date = str(before_date or '')[:10]
+            target = datetime.strptime(target_date, '%Y-%m-%d')
+            lookback_days = max(
+                90, int(os.getenv('FAE_LEAGUE_HISTORY_DAYS', '730'))
+            )
+            cutoff = (
+                target - timedelta(days=lookback_days)
+            ).strftime('%Y-%m-%d')
+            rows = list(
+                self.matches_collection.find(
+                    {
+                        'status': 2,
+                        'owner_date': {'$gte': cutoff, '$lt': target_date},
+                        'league': {'$in': league_aliases(league)},
+                        'home_score': {'$nin': [None, '']},
+                        'away_score': {'$nin': [None, '']},
+                    },
+                    {
+                        '_id': 0,
+                        'match_id': 1,
+                        'match_number': 1,
+                        'league': 1,
+                        'owner_date': 1,
+                        'match_time': 1,
+                        'home_team': 1,
+                        'away_team': 1,
+                        'home_score': 1,
+                        'away_score': 1,
+                        'euro_current_win': 1,
+                        'euro_current_draw': 1,
+                        'euro_current_lose': 1,
+                        'hi_handicap_value': 1,
+                        'handicap': 1,
+                    },
+                ).sort([
+                    ('owner_date', DESCENDING),
+                    ('match_time', DESCENDING),
+                ]).limit(max(
+                    50,
+                    int(os.getenv('FAE_LEAGUE_MAX_MATCHES', '500')),
+                ))
+            )
+            allowed_kinds = {
+                'all', 'surprise', 'draw', 'upset', 'follow', 'not_cover',
+            }
+            selected_kind = kind if kind in allowed_kinds else 'surprise'
+            items = []
+            for match in rows:
+                classification = classify_market_favorite(match)
+                if (
+                    not classification
+                    or not classification.get('clear_favorite')
+                ):
+                    continue
+                matches_kind = {
+                    'all': True,
+                    'surprise': classification.get('favorite_failed'),
+                    'draw': classification.get('result_type') == 'draw',
+                    'upset': classification.get('result_type') == 'upset',
+                    'follow': classification.get('result_type') == 'follow',
+                    'not_cover': classification.get('favorite_not_cover'),
+                }[selected_kind]
+                if not matches_kind:
+                    continue
+                favorite_side = classification.get('favorite_side')
+                favorite_team = (
+                    match.get('home_team')
+                    if favorite_side == 'home'
+                    else match.get('away_team')
+                )
+                item = dict(match)
+                item.update({
+                    'favorite_side': favorite_side,
+                    'favorite_team': favorite_team,
+                    'favorite_odds': classification.get('favorite_odds'),
+                    'favorite_band': classification.get('favorite_band'),
+                    'result_type': classification.get('result_type'),
+                    'favorite_not_cover': classification.get(
+                        'favorite_not_cover'
+                    ),
+                    'hhad_result': classification.get('hhad_result'),
+                })
+                items.append(item)
+
+            safe_page = max(1, int(page))
+            safe_size = max(1, min(50, int(page_size)))
+            start = (safe_page - 1) * safe_size
+            return {
+                'before_date': target_date,
+                'league': str(league or '').strip(),
+                'kind': selected_kind,
+                'total': len(items),
+                'page': safe_page,
+                'page_size': safe_size,
+                'total_pages': (
+                    (len(items) + safe_size - 1) // safe_size
+                ),
+                'items': items[start:start + safe_size],
+            }
+        except Exception as e:
+            self.logger.error(f"读取联赛画像样本比赛失败: {str(e)}")
+            return {
+                'before_date': str(before_date or '')[:10],
+                'league': str(league or '').strip(),
+                'kind': kind,
+                'total': 0,
+                'page': 1,
+                'page_size': page_size,
+                'total_pages': 0,
+                'items': [],
+            }
 
     def get_fae_daily_ai_match(self, match_id, owner_date=None):
         """Read the latest saved Ark judgement for one match."""

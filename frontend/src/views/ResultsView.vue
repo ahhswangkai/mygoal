@@ -167,19 +167,27 @@
                 <span>一球分差</span>
                 <strong>{{ percent(item.profile.baseline?.one_goal_margin_rate) }}</strong>
               </div>
-              <div class="surprise-metric">
+              <button
+                type="button"
+                class="surprise-metric"
+                @click="openProfileMatches(item, 'surprise')"
+              >
                 <span>盘口反常率</span>
                 <strong>{{ percent(item.profile.market_surprise?.favorite_fail_rate) }}</strong>
                 <small>
                   热门打平 {{ percent(item.profile.market_surprise?.favorite_draw_rate) }} ·
                   弱方胜 {{ percent(item.profile.market_surprise?.underdog_win_rate) }}
                 </small>
-              </div>
-              <div class="surprise-metric">
+              </button>
+              <button
+                type="button"
+                class="surprise-metric"
+                @click="openProfileMatches(item, 'not_cover')"
+              >
                 <span>热门不穿盘</span>
                 <strong>{{ percent(item.profile.market_surprise?.favorite_not_cover_rate) }}</strong>
                 <small>{{ item.profile.market_surprise?.handicap_sample || 0 }}场明确热门盘</small>
-              </div>
+              </button>
               <div>
                 <span>竞彩让平</span>
                 <strong>{{ percent(item.profile.sporttery_handicap?.let_draw_rate) }}</strong>
@@ -204,6 +212,79 @@
         </section>
       </template>
     </main>
+
+    <div
+      v-if="profileMatchesOpen"
+      class="profile-matches-overlay"
+      @click.self="closeProfileMatches"
+    >
+      <section
+        class="profile-matches-modal"
+        role="dialog"
+        aria-modal="true"
+        :aria-label="`${profileMatchesLeague}画像样本比赛`"
+      >
+        <header class="profile-matches-head">
+          <div>
+            <strong>{{ profileMatchesLeague }}</strong>
+            <span>画像样本比赛 · 截止 {{ profileMatchesBeforeDate }} 之前</span>
+          </div>
+          <button type="button" aria-label="关闭" @click="closeProfileMatches">×</button>
+        </header>
+
+        <nav class="profile-match-kinds" aria-label="样本类型">
+          <button
+            v-for="filter in profileMatchFilters"
+            :key="filter.value"
+            type="button"
+            :class="{ active: profileMatchesKind === filter.value }"
+            @click="changeProfileMatchesKind(filter.value)"
+          >{{ filter.label }}</button>
+        </nav>
+
+        <div v-if="profileMatchesLoading && !profileMatchItems.length" class="profile-matches-state">
+          正在加载样本比赛…
+        </div>
+        <div v-else-if="profileMatchesError" class="profile-matches-state error">
+          <span>{{ profileMatchesError }}</span>
+          <button type="button" @click="fetchProfileMatches">重试</button>
+        </div>
+        <div v-else-if="!profileMatchItems.length" class="profile-matches-state">
+          当前分类暂无样本
+        </div>
+        <div v-else class="profile-match-list">
+          <button
+            v-for="match in profileMatchItems"
+            :key="match.match_id"
+            type="button"
+            class="profile-match-row"
+            @click="openProfileMatchDetail(match.match_id)"
+          >
+            <span class="profile-match-meta">
+              <b>{{ match.match_number || match.owner_date }}</b>
+              <i :class="profileMatchesKind === 'not_cover' ? 'type-not-cover' : `type-${match.result_type}`">{{ profileMatchTypeLabel(match) }}</i>
+            </span>
+            <span class="profile-match-score">
+              <b :class="{ favorite: match.favorite_side === 'home' }">{{ match.home_team }}</b>
+              <strong>{{ match.home_score }} : {{ match.away_score }}</strong>
+              <b :class="{ favorite: match.favorite_side === 'away' }">{{ match.away_team }}</b>
+            </span>
+            <span class="profile-match-detail">
+              热门 {{ match.favorite_team }} @{{ oddsText(match.favorite_odds) }}
+              · 欧赔 {{ oddsText(match.euro_current_win) }}/{{ oddsText(match.euro_current_draw) }}/{{ oddsText(match.euro_current_lose) }}
+              · 让球 {{ signed(match.hi_handicap_value ?? match.handicap) }}
+            </span>
+          </button>
+          <button
+            v-if="profileMatchesPage < profileMatchesTotalPages"
+            type="button"
+            class="profile-matches-more"
+            :disabled="profileMatchesLoading"
+            @click="loadMoreProfileMatches"
+          >{{ profileMatchesLoading ? '加载中…' : '加载更多' }}</button>
+        </div>
+      </section>
+    </div>
 
     <div v-if="showLeagueFilter" class="league-filter-overlay" @click.self="cancelLeagueFilter">
       <section class="league-filter-modal" role="dialog" aria-modal="true" aria-label="联赛筛选">
@@ -270,6 +351,22 @@ const leagueProfileItems = ref([])
 const profilesLoading = ref(false)
 const profilesError = ref('')
 const loadedProfileFilter = ref(null)
+const profileMatchesOpen = ref(false)
+const profileMatchesLeague = ref('')
+const profileMatchesBeforeDate = ref('')
+const profileMatchesKind = ref('surprise')
+const profileMatchItems = ref([])
+const profileMatchesLoading = ref(false)
+const profileMatchesError = ref('')
+const profileMatchesPage = ref(1)
+const profileMatchesTotalPages = ref(0)
+const profileMatchFilters = [
+  { value: 'surprise', label: '反常' },
+  { value: 'draw', label: '热门打平' },
+  { value: 'upset', label: '弱方爆冷' },
+  { value: 'follow', label: '热门赢球' },
+  { value: 'not_cover', label: '不穿盘' }
+]
 let loadMoreObserver = null
 
 const leagues = computed(() => availableLeagues.value)
@@ -310,6 +407,80 @@ const fetchLeagueProfiles = async () => {
   } finally {
     profilesLoading.value = false
   }
+}
+
+const fetchProfileMatches = async ({ append = false } = {}) => {
+  if (!profileMatchesLeague.value || profileMatchesLoading.value) return
+  profileMatchesLoading.value = true
+  profileMatchesError.value = ''
+  try {
+    const response = await axios.get('/api/fae/league-profile-matches', {
+      params: {
+        league: profileMatchesLeague.value,
+        before_date: profileMatchesBeforeDate.value,
+        kind: profileMatchesKind.value,
+        page: profileMatchesPage.value,
+        page_size: 20
+      }
+    })
+    const data = response.data?.data || {}
+    const items = data.items || []
+    profileMatchItems.value = append
+      ? [...profileMatchItems.value, ...items]
+      : items
+    profileMatchesTotalPages.value = Number(data.total_pages || 0)
+  } catch (profileError) {
+    if (!append) profileMatchItems.value = []
+    profileMatchesError.value = profileError.response?.data?.message || '样本比赛加载失败'
+  } finally {
+    profileMatchesLoading.value = false
+  }
+}
+
+const openProfileMatches = (item, kind) => {
+  profileMatchesLeague.value = item.league
+  profileMatchesBeforeDate.value = item.profile?.before_date || formatDateParam(new Date())
+  profileMatchesKind.value = kind
+  profileMatchesPage.value = 1
+  profileMatchesTotalPages.value = 0
+  profileMatchItems.value = []
+  profileMatchesOpen.value = true
+  fetchProfileMatches()
+}
+const closeProfileMatches = () => {
+  profileMatchesOpen.value = false
+}
+const changeProfileMatchesKind = kind => {
+  if (profileMatchesKind.value === kind || profileMatchesLoading.value) return
+  profileMatchesKind.value = kind
+  profileMatchesPage.value = 1
+  profileMatchesTotalPages.value = 0
+  profileMatchItems.value = []
+  fetchProfileMatches()
+}
+const loadMoreProfileMatches = () => {
+  if (
+    profileMatchesLoading.value ||
+    profileMatchesPage.value >= profileMatchesTotalPages.value
+  ) return
+  profileMatchesPage.value += 1
+  fetchProfileMatches({ append: true })
+}
+const openProfileMatchDetail = matchId => {
+  closeProfileMatches()
+  goToDetail(matchId)
+}
+const profileMatchTypeLabel = match => {
+  if (profileMatchesKind.value === 'not_cover') return '热门不穿盘'
+  return {
+    follow: '热门赢球',
+    draw: '热门打平',
+    upset: '弱方爆冷'
+  }[match.result_type] || '样本'
+}
+const oddsText = value => {
+  const number = Number(value)
+  return Number.isFinite(number) ? number.toFixed(2) : '-'
 }
 
 const percent = value => {
@@ -700,11 +871,13 @@ onUnmounted(() => {
 .league-profile-card > header em { padding: 4px 8px; color: #999; font-size: 9px; font-style: normal; white-space: nowrap; background: #eee; border-radius: 10px; }
 .league-profile-card > header em.eligible { color: #b85e69; background: #fae8eb; }
 .league-profile-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
-.league-profile-grid > div { display: grid; min-width: 0; gap: 2px; padding: 8px; background: #fff; border: 1px solid #f0e8e9; border-radius: 6px; }
+.league-profile-grid > div, .league-profile-grid > button { display: grid; min-width: 0; gap: 2px; padding: 8px; background: #fff; border: 1px solid #f0e8e9; border-radius: 6px; font: inherit; text-align: left; }
 .league-profile-grid span, .league-profile-grid small { overflow: hidden; color: #999; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
 .league-profile-grid strong { color: #3f3f43; font-size: 11px; }
-.league-profile-grid > div.surprise-metric { background: #fffaf6; border-color: #f1dfd1; }
-.league-profile-grid > div.surprise-metric strong { color: #d56a28; }
+.league-profile-grid > button.surprise-metric { position: relative; padding-right: 20px; background: #fffaf6; border-color: #f1dfd1; cursor: pointer; }
+.league-profile-grid > button.surprise-metric::after { position: absolute; top: 50%; right: 8px; color: #d9a17d; font-size: 14px; content: "›"; transform: translateY(-50%); }
+.league-profile-grid > button.surprise-metric strong { color: #d56a28; }
+.league-profile-grid > button.surprise-metric:focus-visible { outline: 2px solid rgb(213 106 40 / 35%); outline-offset: 1px; }
 .league-profile-signals { display: grid; gap: 4px; margin: 9px 0 0; padding: 0; list-style: none; }
 .league-profile-signals li { position: relative; padding-left: 12px; color: #815961; font-size: 10px; line-height: 1.45; }
 .league-profile-signals li::before { position: absolute; top: 6px; left: 2px; width: 4px; height: 4px; content: ""; background: #df6d79; border-radius: 50%; }
@@ -717,4 +890,38 @@ onUnmounted(() => {
 .results-load-more button:disabled { background: #ccc; box-shadow: none; cursor: not-allowed; }
 .results-load-more small { color: #aaa; font-size: 12px; }
 .load-more-sentinel { height: 1px; visibility: hidden; }
+.profile-matches-overlay { position: fixed; inset: 0; z-index: 970; display: flex; align-items: center; justify-content: center; padding: 20px; background: rgb(0 0 0 / 48%); }
+.profile-matches-modal { display: flex; width: min(100%, 620px); max-height: min(82vh, 760px); flex-direction: column; background: #f7f7f9; border-radius: 15px; box-shadow: 0 18px 54px rgb(0 0 0 / 25%); overflow: hidden; }
+.profile-matches-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 17px 18px 13px; background: #fff; border-bottom: 1px solid #eeeef1; }
+.profile-matches-head > div { display: grid; min-width: 0; gap: 3px; }
+.profile-matches-head strong { color: #29292e; font-size: 17px; }
+.profile-matches-head span { color: #999; font-size: 10px; }
+.profile-matches-head > button { width: 31px; height: 31px; color: #888; font-size: 24px; line-height: 1; background: #f5f5f6; border: 0; border-radius: 50%; cursor: pointer; }
+.profile-match-kinds { display: flex; flex: 0 0 auto; gap: 7px; padding: 10px 12px; overflow-x: auto; background: #fff; border-bottom: 1px solid #eeeef1; scrollbar-width: none; }
+.profile-match-kinds::-webkit-scrollbar { display: none; }
+.profile-match-kinds button { flex: 0 0 auto; padding: 7px 12px; color: #777; font-size: 11px; white-space: nowrap; background: #f4f4f6; border: 0; border-radius: 15px; cursor: pointer; }
+.profile-match-kinds button.active { color: #fff; background: #f33b48; }
+.profile-matches-state { display: flex; min-height: 230px; flex: 1; align-items: center; justify-content: center; gap: 10px; padding: 20px; color: #999; font-size: 13px; }
+.profile-matches-state.error { flex-direction: column; color: #d55; }
+.profile-matches-state button { padding: 7px 14px; color: #fff; background: #f33b48; border: 0; border-radius: 15px; }
+.profile-match-list { display: grid; gap: 8px; padding: 10px; overflow-y: auto; }
+.profile-match-row { display: grid; gap: 10px; padding: 12px; font: inherit; text-align: left; background: #fff; border: 1px solid #eeeef1; border-radius: 10px; cursor: pointer; }
+.profile-match-meta { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.profile-match-meta b { color: #888; font-size: 11px; }
+.profile-match-meta i { padding: 3px 7px; color: #888; font-size: 9px; font-style: normal; background: #f2f2f3; border-radius: 9px; }
+.profile-match-meta i.type-draw { color: #b4721e; background: #fff3dc; }
+.profile-match-meta i.type-upset { color: #d74352; background: #fff0f2; }
+.profile-match-meta i.type-follow { color: #2b8a62; background: #edf9f4; }
+.profile-match-meta i.type-not-cover { color: #b96421; background: #fff3e8; }
+.profile-match-score { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 9px; text-align: center; }
+.profile-match-score b { overflow: hidden; color: #333; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.profile-match-score b.favorite { color: #f33b48; }
+.profile-match-score strong { color: #222; font-size: 18px; white-space: nowrap; }
+.profile-match-detail { overflow: hidden; color: #999; font-size: 9px; line-height: 1.5; text-overflow: ellipsis; white-space: nowrap; }
+.profile-matches-more { margin: 2px auto 5px; padding: 8px 24px; color: #f33b48; font-size: 11px; background: #fff; border: 1px solid #f3aeb5; border-radius: 18px; }
+@media (max-width: 430px) {
+  .profile-matches-overlay { align-items: flex-end; padding: 0; }
+  .profile-matches-modal { width: 100%; max-height: 86vh; border-radius: 16px 16px 0 0; }
+  .profile-matches-head { padding: 16px 15px 12px; }
+}
 </style>

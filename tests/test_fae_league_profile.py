@@ -1,6 +1,10 @@
 import unittest
 
-from football_ai.league_profile import build_league_profiles, league_aliases
+from football_ai.league_profile import (
+    build_league_profiles,
+    classify_market_favorite,
+    league_aliases,
+)
 
 
 def historical_match(
@@ -138,6 +142,19 @@ class LeagueProfileTests(unittest.TestCase):
         self.assertEqual(surprise["favorite_draw_rate"], 25.0)
         self.assertEqual(surprise["underdog_win_rate"], 50.0)
         self.assertEqual(surprise["favorite_not_cover_rate"], 75.0)
+
+    def test_classification_drives_auditable_match_list(self):
+        upset = classify_market_favorite(historical_match(
+            "2026-07-18", 0, 1, home_odds=1.7, away_odds=4.2,
+        ))
+        balanced = classify_market_favorite(historical_match(
+            "2026-07-18", 1, 1, home_odds=2.1, away_odds=2.2,
+        ))
+
+        self.assertEqual(upset["favorite_side"], "home")
+        self.assertEqual(upset["result_type"], "upset")
+        self.assertTrue(upset["favorite_failed"])
+        self.assertIsNone(balanced)
 
 
 if __name__ == "__main__":

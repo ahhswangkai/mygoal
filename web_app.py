@@ -1318,6 +1318,52 @@ def get_fae_league_profiles():
     })
 
 
+@app.route('/api/fae/league-profile-matches', methods=['GET'])
+def get_fae_league_profile_matches():
+    """Return the finished matches behind a league profile metric."""
+    if not mongo_storage:
+        return jsonify({
+            'success': False,
+            'message': 'MongoDB不可用',
+        }), 503
+    league = str(request.args.get('league') or '').strip()
+    before_date = str(
+        request.args.get('before_date')
+        or datetime.now().strftime('%Y-%m-%d')
+    )[:10]
+    if not league:
+        return jsonify({
+            'success': False,
+            'message': '缺少联赛名称',
+        }), 422
+    if not re.fullmatch(r'\d{4}-\d{2}-\d{2}', before_date):
+        return jsonify({
+            'success': False,
+            'message': '统计日期格式错误',
+        }), 422
+    kind = str(request.args.get('kind') or 'surprise').strip()
+    try:
+        page = max(1, int(request.args.get('page') or 1))
+        page_size = max(
+            1, min(50, int(request.args.get('page_size') or 20))
+        )
+    except (TypeError, ValueError):
+        return jsonify({
+            'success': False,
+            'message': '分页参数错误',
+        }), 422
+    return jsonify({
+        'success': True,
+        'data': mongo_storage.get_fae_league_profile_matches(
+            before_date,
+            league,
+            kind=kind,
+            page=page,
+            page_size=page_size,
+        ),
+    })
+
+
 @app.route('/api/fae/daily-ai', methods=['GET'])
 def get_fae_daily_ai():
     if not mongo_storage:
