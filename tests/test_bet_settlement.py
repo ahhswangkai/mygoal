@@ -4,6 +4,7 @@ import unittest
 
 from calculator_math import calculate_max_bonus, calculate_notes
 from bet_settlement import (
+    available_bet_results,
     candidate_result_dates,
     grade_item,
     merge_database_results,
@@ -94,6 +95,35 @@ class ItemGradingTests(unittest.TestCase):
 
 
 class BetSettlementTests(unittest.TestCase):
+    def test_available_results_mark_only_completed_legs(self):
+        first = item('sporttery-1', 'had', 'win', 2.0)
+        first['date'] = '2026-07-19'
+        first['match_num'] = '周日201'
+        second = item('sporttery-2', 'had', 'draw', 3.2)
+        second['date'] = '2026-07-20'
+        second['match_num'] = '周一201'
+        result_index = {}
+        merge_database_results(result_index, [{
+            'match_id': '500-match-1',
+            'owner_date': first['date'],
+            'match_number': first['match_num'],
+            'status': 2,
+            'home_score': '2',
+            'away_score': '1',
+            'home_half_score': '1',
+            'away_half_score': '0',
+        }])
+
+        available = available_bet_results(
+            {'selected_items': [first, second]},
+            result_index,
+        )
+
+        self.assertEqual(len(available), 1)
+        self.assertEqual(available[0]['match_id'], 'sporttery-1')
+        self.assertEqual(available[0]['full_score'], '2:1')
+        self.assertEqual(available[0]['item_results'][0]['result'], 'win')
+
     def test_database_result_settles_by_date_number_with_half_score(self):
         selected = item('sporttery-1', 'hafu', '平胜', 3.2)
         selected['date'] = '2026-07-19'

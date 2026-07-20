@@ -4498,6 +4498,11 @@ a { text-decoration: none; color: inherit; }
   border-radius: 4px;
 }
 
+.record-meta .record-meta-result {
+  color: #bd6f08;
+  background: #fff3df;
+}
+
 .record-money {
   display: flex;
   justify-content: space-between;
@@ -4789,6 +4794,17 @@ a { text-decoration: none; color: inherit; }
   color: #77736d;
   font-size: 10px;
   font-style: normal;
+}
+
+.record-ticket-match-head .record-ticket-result-ready {
+  padding: 1px 5px;
+  color: #b96b08;
+  font-family: "PingFang SC", sans-serif;
+  font-size: 8px;
+  line-height: 1.5;
+  white-space: nowrap;
+  background: #fff1d8;
+  border-radius: 8px;
 }
 
 .record-ticket-match-head b {

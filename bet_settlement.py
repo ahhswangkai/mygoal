@@ -237,6 +237,41 @@ def _find_result(item, result_index):
     return result_index.get(fallback_key)
 
 
+def available_bet_results(bet, result_index):
+    """Return completed per-match results without settling an incomplete bet."""
+    groups = {}
+    for item in bet.get('selected_items') or []:
+        match_id = str(item.get('match_id') or '')
+        groups.setdefault(match_id, []).append(item)
+
+    available = []
+    for match_id, items in groups.items():
+        result = _find_result(items[0], result_index)
+        if not result or not is_result_complete(result):
+            continue
+        available.append({
+            'match_id': match_id,
+            'match_num': (
+                items[0].get('match_num')
+                or result.get('matchNumStr')
+                or ''
+            ),
+            'full_score': str(result.get('sectionsNo999') or ''),
+            'half_score': str(result.get('sectionsNo1') or ''),
+            'result_status': str(result.get('resultStatus') or ''),
+            'result_source': str(
+                result.get('resultSource') or 'sporttery'
+            ),
+            'is_void': is_void_result(result),
+            'item_results': [{
+                'pool': item.get('pool'),
+                'opt': item.get('opt'),
+                'result': grade_item(item, result),
+            } for item in items],
+        })
+    return available
+
+
 def settle_bet(bet, result_index):
     """按所选关数、选项和倍数计算整单实际返还；赛果不齐时返回 None。"""
     groups = {}

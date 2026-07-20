@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import wraps
 from bet_settlement import (
+    available_bet_results,
     merge_database_results,
     merge_rescheduled_void_results,
     settle_bet,
@@ -3031,6 +3032,46 @@ def _settle_pending_calculator_bets(user_id=None):
         return {'checked': len(pending_bets), 'settled': settled_count}
 
 
+def _attach_pending_database_results(records):
+    """Expose completed legs while the whole ticket is still pending."""
+    pending = [
+        record for record in records
+        if record.get('status') == 'pending'
+    ]
+    if not pending or not mongo_storage:
+        return records
+    dates = {
+        str(item.get('date') or '')[:10]
+        for record in pending
+        for item in record.get('selected_items') or []
+        if item.get('date')
+    }
+    if not dates:
+        return records
+    matches = mongo_storage.get_matches({
+        'owner_date': {'$in': sorted(dates)},
+        'status': {'$in': [2, 6]},
+    })
+    result_index = {}
+    merge_database_results(result_index, matches)
+    merge_rescheduled_void_results(
+        result_index,
+        pending,
+        [
+            match for match in matches
+            if int(match.get('status') or 0) == 6
+        ],
+    )
+    for record in pending:
+        partial_results = available_bet_results(record, result_index)
+        record['partial_results'] = partial_results
+        record['result_progress'] = {
+            'completed': len(partial_results),
+            'total': int(record.get('match_count') or 0),
+        }
+    return records
+
+
 def _calculator_bet_payload(data):
     raw_items = data.get('selected_items') or []
     if not isinstance(raw_items, list) or not raw_items:
@@ -3165,6 +3206,7 @@ def list_user_bets():
         offset=offset,
         status=status or None,
     )
+    _attach_pending_database_results(records)
     return jsonify({'success': True, 'data': records})
 
 

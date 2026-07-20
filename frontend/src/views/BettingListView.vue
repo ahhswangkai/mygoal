@@ -77,6 +77,12 @@
               <span>{{ record.match_count }}场</span>
               <span>{{ record.option_count }}个选项</span>
               <span>{{ record.notes }}注</span>
+              <span
+                v-if="record.status === 'pending' && record.result_progress?.completed"
+                class="record-meta-result"
+              >
+                已有赛果 {{ record.result_progress.completed }}/{{ record.result_progress.total }}
+              </span>
             </div>
             <div class="record-money" :class="{ 'record-money--settled': record.status !== 'pending' }">
               <span>投入 <strong>{{ money(record.stake) }}元</strong></span>
@@ -158,6 +164,7 @@
                   <strong>第{{ index + 1 }}场</strong>
                   <span>{{ group.items[0].match_num || '比赛' }}</span>
                   <em v-if="handicapText(group)">{{ handicapText(group) }}</em>
+                  <small v-if="group.isPartial" class="record-ticket-result-ready">已有赛果</small>
                   <b v-if="group.fullScore">{{ group.fullScore }}</b>
                   <b v-else-if="group.isVoid" class="record-ticket-void">退</b>
                 </div>
@@ -402,16 +409,22 @@ const groupedItems = (record) => {
   const settledMatches = new Map(
     (record.settlement?.matches || []).map(match => [String(match.match_id), match])
   )
+  const partialMatches = new Map(
+    (record.partial_results || []).map(match => [String(match.match_id), match])
+  )
   ;(record.selected_items || []).forEach(item => {
     const matchId = String(item.match_id)
     if (!map.has(matchId)) {
-      const settled = settledMatches.get(matchId) || {}
+      const settledMatch = settledMatches.get(matchId)
+      const partialMatch = partialMatches.get(matchId)
+      const settled = settledMatch || partialMatch || {}
       map.set(matchId, {
         matchId,
         fullScore: settled.full_score || '',
         halfScore: settled.half_score || '',
         resultStatus: settled.result_status || '',
         isVoid: !!settled.is_void,
+        isPartial: !settledMatch && !!partialMatch,
         settled,
         items: []
       })
