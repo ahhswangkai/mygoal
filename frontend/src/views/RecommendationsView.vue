@@ -883,7 +883,11 @@ function selectDate(date) {
 }
 
 function goToDetail(matchId) {
-  router.push(`/match/${matchId}`)
+  router.push({
+    name: 'match-detail',
+    params: { id: matchId },
+    query: { from: 'recommendations' }
+  })
 }
 
 function starText(stars) {

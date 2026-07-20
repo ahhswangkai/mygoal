@@ -1,5 +1,18 @@
 <template>
-  <router-view />
+  <router-view v-slot="{ Component, route: viewRoute }">
+    <KeepAlive>
+      <component
+        :is="Component"
+        v-if="viewRoute.meta.keepAlive"
+        :key="viewRoute.name"
+      />
+    </KeepAlive>
+    <component
+      :is="Component"
+      v-if="!viewRoute.meta.keepAlive"
+      :key="viewRoute.fullPath"
+    />
+  </router-view>
   <BottomNav v-if="showBottomNav" />
   <AuthModal />
 </template>

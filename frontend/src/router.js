@@ -12,7 +12,12 @@ import MineView from './views/MineView.vue'
 const routes = [
   { path: '/', redirect: '/calculator' },
   { path: '/home', name: 'home', component: HomeView, meta: { title: '足彩分析', mainTab: true } },
-  { path: '/recommendations', name: 'recommendations', component: RecommendationsView, meta: { title: 'FAE 推荐', mainTab: true } },
+  {
+    path: '/recommendations',
+    name: 'recommendations',
+    component: RecommendationsView,
+    meta: { title: 'FAE 推荐', mainTab: true, keepAlive: true }
+  },
   { path: '/calculator', name: 'calculator', component: CalculatorView, meta: { title: '足球计算器', mainTab: true } },
   { path: '/mine', name: 'mine', component: MineView, meta: { title: '我的', mainTab: true } },
   { path: '/bets', name: 'bets', component: BettingListView, meta: { title: '投注记录', mainTab: true, navTab: 'mine' } },
@@ -23,7 +28,10 @@ const routes = [
 
 const router = createRouter({
   history: createWebHistory(),
-  routes
+  routes,
+  scrollBehavior(_to, _from, savedPosition) {
+    return savedPosition || { top: 0 }
+  }
 })
 
 router.afterEach((to) => {
