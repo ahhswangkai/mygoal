@@ -273,25 +273,37 @@
               <b :class="{ favorite: match.favorite_side === 'away' }">{{ match.away_team }}</b>
             </span>
             <span class="profile-match-detail">
-              <span>
+              <span class="profile-favorite-summary">
                 热门 {{ match.favorite_team }} @{{ oddsText(match.favorite_odds) }}
-                · 欧赔 {{ oddsText(match.euro_current_win) }}/{{ oddsText(match.euro_current_draw) }}/{{ oddsText(match.euro_current_lose) }}
               </span>
-              <span class="profile-handicap-title">
-                竞彩让球 {{ signed(match.hi_handicap_value ?? match.handicap) }}
-                <i>让胜 / 让平 / 让负</i>
-              </span>
-              <span class="profile-handicap-odds">
-                <b>即时</b>
-                {{ oddsText(match.hi_current_home_odds) }} /
-                {{ oddsText(match.hi_current_draw_odds) }} /
-                {{ oddsText(match.hi_current_away_odds) }}
-              </span>
-              <span class="profile-handicap-odds initial">
-                <b>初盘</b>
-                {{ oddsText(match.hi_initial_home_odds) }} /
-                {{ oddsText(match.hi_initial_draw_odds) }} /
-                {{ oddsText(match.hi_initial_away_odds) }}
+              <span
+                v-for="market in profileMatchMarkets(match)"
+                :key="market.key"
+                class="profile-market-block"
+              >
+                <span class="profile-market-title">
+                  <b>{{ market.label }}</b>
+                  <i>{{ market.columns }}</i>
+                </span>
+                <span class="profile-market-label current">即时</span>
+                <span class="profile-market-values">
+                  <template v-for="(item, index) in market.items" :key="`${market.key}-current-${index}`">
+                    <span
+                      class="profile-odds-value"
+                      :class="profileMovementDirection(item)"
+                    >
+                      <i>{{ profileMovementArrow(item) }}</i>{{ profileMarketValue(item, 'current') }}
+                    </span>
+                    <em v-if="index < market.items.length - 1">/</em>
+                  </template>
+                </span>
+                <span class="profile-market-label">初盘</span>
+                <span class="profile-market-values initial">
+                  <template v-for="(item, index) in market.items" :key="`${market.key}-initial-${index}`">
+                    <span class="profile-odds-value">{{ profileMarketValue(item, 'initial') }}</span>
+                    <em v-if="index < market.items.length - 1">/</em>
+                  </template>
+                </span>
               </span>
             </span>
           </button>
@@ -499,8 +511,90 @@ const profileMatchTypeLabel = match => {
   }[match.result_type] || '样本'
 }
 const oddsText = value => {
+  if (value === null || value === undefined || String(value).trim() === '') return '-'
   const number = Number(value)
   return Number.isFinite(number) ? number.toFixed(2) : '-'
+}
+const cleanAsianHandicap = value => String(value || '')
+  .replace(/\s+/g, '')
+  .replace(/(?:[↑↓]|升|降)+$/g, '')
+const profileMatchMarkets = match => [
+  {
+    key: 'euro',
+    label: '欧赔',
+    columns: '胜 / 平 / 负',
+    items: [
+      { current: match.euro_current_win, initial: match.euro_initial_win },
+      { current: match.euro_current_draw, initial: match.euro_initial_draw },
+      { current: match.euro_current_lose, initial: match.euro_initial_lose }
+    ]
+  },
+  {
+    key: 'handicap',
+    label: `竞彩让球 ${signed(match.hi_handicap_value ?? match.handicap)}`,
+    columns: '让胜 / 让平 / 让负',
+    items: [
+      { current: match.hi_current_home_odds, initial: match.hi_initial_home_odds },
+      { current: match.hi_current_draw_odds, initial: match.hi_initial_draw_odds },
+      { current: match.hi_current_away_odds, initial: match.hi_initial_away_odds }
+    ]
+  },
+  {
+    key: 'asian',
+    label: '亚盘',
+    columns: '主水 / 盘口 / 客水',
+    items: [
+      { current: match.asian_current_home_odds, initial: match.asian_initial_home_odds },
+      {
+        current: match.asian_current_handicap,
+        initial: match.asian_initial_handicap,
+        type: 'handicap'
+      },
+      { current: match.asian_current_away_odds, initial: match.asian_initial_away_odds }
+    ]
+  }
+]
+const profileMarketValue = (item, stage) => item.type === 'handicap'
+  ? (cleanAsianHandicap(item[stage]) || '-')
+  : oddsText(item[stage])
+const asianHandicapStrength = value => {
+  const text = cleanAsianHandicap(value)
+  if (!text) return null
+  const receiving = text.startsWith('受')
+  const clean = text.replace(/^受/, '')
+  const parsed = handicapMap[clean]
+  if (parsed !== undefined) {
+    const strength = Math.abs(parsed)
+    return receiving ? -strength : strength
+  }
+  const found = clean.match(/-?\d+(?:\.\d+)?/)
+  if (!found) return null
+  const strength = Number(found[0])
+  return receiving ? -Math.abs(strength) : strength
+}
+const profileMovementDirection = item => {
+  if (item.type === 'handicap') {
+    const raw = String(item.current || '').trim()
+    if (/(?:↑|升)$/.test(raw)) return 'up'
+    if (/(?:↓|降)$/.test(raw)) return 'down'
+    const current = asianHandicapStrength(item.current)
+    const initial = asianHandicapStrength(item.initial)
+    if (current === null || initial === null || current === initial) return ''
+    return current > initial ? 'up' : 'down'
+  }
+  if (
+    item.current === null || item.current === undefined ||
+    item.initial === null || item.initial === undefined ||
+    String(item.current).trim() === '' || String(item.initial).trim() === ''
+  ) return ''
+  const current = Number(item.current)
+  const initial = Number(item.initial)
+  if (!Number.isFinite(current) || !Number.isFinite(initial) || current === initial) return ''
+  return current > initial ? 'up' : 'down'
+}
+const profileMovementArrow = item => {
+  const direction = profileMovementDirection(item)
+  return direction === 'up' ? '↑' : direction === 'down' ? '↓' : ''
 }
 const profileMatchKickoff = match => {
   const ownerDate = String(match.owner_date || '').slice(0, 10)
@@ -950,14 +1044,21 @@ onUnmounted(() => {
 .profile-match-score b { overflow: hidden; color: #333; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
 .profile-match-score b.favorite { color: #f33b48; }
 .profile-match-score strong { color: #222; font-size: 18px; white-space: nowrap; }
-.profile-match-detail { display: grid; gap: 2px; overflow: hidden; color: #999; font-size: 9px; line-height: 1.5; }
-.profile-match-detail > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.profile-handicap-title { color: #666; font-weight: 600; }
-.profile-handicap-title i { margin-left: 5px; color: #aaa; font-style: normal; font-weight: 400; }
-.profile-handicap-odds { color: #555; }
-.profile-handicap-odds b { display: inline-block; min-width: 27px; color: #f33b48; font-size: inherit; }
-.profile-handicap-odds.initial { color: #999; }
-.profile-handicap-odds.initial b { color: #999; }
+.profile-match-detail { display: grid; gap: 5px; overflow: hidden; color: #999; font-size: 9px; line-height: 1.45; }
+.profile-favorite-summary { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.profile-market-block { display: grid; grid-template-columns: 31px minmax(0, 1fr); gap: 1px 7px; padding: 5px 7px; background: #f8f8fa; border-radius: 6px; }
+.profile-market-title { display: flex; grid-column: 1 / -1; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 1px; }
+.profile-market-title b { overflow: hidden; color: #555; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.profile-market-title i { flex: 0 0 auto; color: #aaa; font-style: normal; }
+.profile-market-label { color: #aaa; }
+.profile-market-label.current { color: #f33b48; font-weight: 600; }
+.profile-market-values { display: flex; min-width: 0; align-items: center; gap: 4px; color: #555; white-space: nowrap; }
+.profile-market-values.initial { color: #999; }
+.profile-market-values em { color: #ccc; font-style: normal; }
+.profile-odds-value { display: inline-flex; min-width: 0; align-items: center; }
+.profile-odds-value i { min-width: 8px; font-style: normal; }
+.profile-odds-value.up { color: #ef3e4a; }
+.profile-odds-value.down { color: #139862; }
 .profile-matches-more { margin: 2px auto 5px; padding: 8px 24px; color: #f33b48; font-size: 11px; background: #fff; border: 1px solid #f3aeb5; border-radius: 18px; }
 @media (max-width: 430px) {
   .profile-matches-overlay { align-items: flex-end; padding: 0; }
