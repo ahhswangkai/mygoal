@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from typing import Any, Dict, Iterable, Optional
 from urllib.parse import parse_qs, urlparse
 
 import requests
+
+BEIJING_TIMEZONE = timezone(timedelta(hours=8))
 
 
 def _clip(value: Any, limit: int) -> str:
@@ -18,6 +20,21 @@ def _clip(value: Any, limit: int) -> str:
 def delivery_key(event_type: str, identity: Any) -> str:
     raw = f"{event_type}:{identity}".encode("utf-8")
     return f"{event_type}:{sha256(raw).hexdigest()[:24]}"
+
+
+def _format_beijing_time(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return "未知"
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=BEIJING_TIMEZONE)
+        return parsed.astimezone(BEIJING_TIMEZONE).strftime(
+            "%Y-%m-%d %H:%M"
+        )
+    except ValueError:
+        return _clip(text, 32)
 
 
 class WeComNotifier:
@@ -102,6 +119,7 @@ class WeComNotifier:
 
 def format_daily_ai_message(result: Dict[str, Any]) -> str:
     owner_date = str(result.get("owner_date") or "")[:10]
+    generated_at = _format_beijing_time(result.get("generated_at"))
     summary = result.get("daily_summary") or {}
     matches = result.get("matches") or []
     candidates = []
@@ -128,7 +146,10 @@ def format_daily_ai_message(result: Dict[str, Any]) -> str:
     )
     lines = [
         f"## FAE 全日研判 · {owner_date}",
-        f"> 共 {int(result.get('match_count') or len(matches))} 场比赛",
+        (
+            f"> 研判时间：{generated_at}（北京时间）"
+            f" · 共 {int(result.get('match_count') or len(matches))} 场比赛"
+        ),
     ]
     conclusion = _clip(summary.get("core_conclusion"), 520)
     if conclusion:

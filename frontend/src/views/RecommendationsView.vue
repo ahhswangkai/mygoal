@@ -59,7 +59,8 @@
               <strong>火山全日 AI 研判</strong>
               <small>
                 {{ faeDailyAi.match_count || 0 }} 场一次性横向比较 ·
-                {{ faeDailyAi.model || 'ark-code-latest' }}
+                {{ faeDailyAi.model || 'ark-code-latest' }} ·
+                研判时间 {{ formatAiTime(faeDailyAi.generated_at) }}
               </small>
             </div>
             <button
@@ -227,7 +228,7 @@
           </section>
 
           <p class="daily-ai-meta">
-            {{ formatAiTime(faeDailyAi.generated_at) }} 生成 ·
+            研判时间 {{ formatAiTime(faeDailyAi.generated_at) }} ·
             每场结果已独立写入数据库 · 不包含隐藏思维链
           </p>
         </section>
@@ -933,6 +934,8 @@ function formatAiTime(value) {
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return String(value)
   return date.toLocaleString('zh-CN', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
     month: '2-digit',
     day: '2-digit',
     hour: '2-digit',

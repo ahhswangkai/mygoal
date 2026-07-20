@@ -50,6 +50,7 @@ class WeComNotifierTests(unittest.TestCase):
     def test_daily_message_uses_match_number_not_raw_id(self):
         message = format_daily_ai_message({
             "owner_date": "2026-07-20",
+            "generated_at": "2026-07-20T11:15:31+00:00",
             "match_count": 1,
             "daily_summary": {"core_conclusion": "测试结论"},
             "matches": [{
@@ -66,6 +67,7 @@ class WeComNotifierTests(unittest.TestCase):
 
         self.assertIn("周一001", message)
         self.assertNotIn("1362704", message)
+        self.assertIn("研判时间：2026-07-20 19:15（北京时间）", message)
         self.assertEqual(
             delivery_key("daily_ai", "run-1"),
             delivery_key("daily_ai", "run-1"),
