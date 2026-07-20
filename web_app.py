@@ -1248,6 +1248,76 @@ def get_fae_league_profile(match_id):
     })
 
 
+@app.route('/api/fae/league-profiles', methods=['GET'])
+def get_fae_league_profiles():
+    """Return league profiles in one request for the standalone results tab."""
+    if not mongo_storage:
+        return jsonify({
+            'success': False,
+            'message': 'MongoDB不可用',
+        }), 503
+
+    before_date = str(
+        request.args.get('before_date')
+        or datetime.now().strftime('%Y-%m-%d')
+    )[:10]
+    if not re.fullmatch(r'\d{4}-\d{2}-\d{2}', before_date):
+        return jsonify({
+            'success': False,
+            'message': '统计日期格式错误',
+        }), 422
+
+    requested = sorted({
+        item.strip()
+        for item in str(request.args.get('leagues') or '').split(',')
+        if item.strip()
+    })
+    if requested:
+        leagues = requested[:80]
+    else:
+        leagues = sorted({
+            str(item or '').strip()
+            for item in mongo_storage.matches_collection.distinct(
+                'league',
+                {
+                    'status': 2,
+                    'owner_date': {'$lt': before_date},
+                },
+            )
+            if str(item or '').strip()
+        })[:80]
+
+    profiles = mongo_storage.get_fae_league_profiles(
+        before_date,
+        leagues,
+    )
+    items = sorted(
+        [
+            {
+                'league': league,
+                'profile': profile,
+            }
+            for league, profile in profiles.items()
+            if profile
+        ],
+        key=lambda item: (
+            not bool(
+                item['profile'].get('eligible_for_adjustment')
+            ),
+            -int(item['profile'].get('sample_size') or 0),
+            item['league'],
+        ),
+    )
+    return jsonify({
+        'success': True,
+        'data': {
+            'before_date': before_date,
+            'count': len(items),
+            'items': items,
+        },
+    })
+
+
 @app.route('/api/fae/daily-ai', methods=['GET'])
 def get_fae_daily_ai():
     if not mongo_storage:

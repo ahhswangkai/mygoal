@@ -7,172 +7,189 @@
     </header>
 
     <main class="results-content">
-      <section class="results-filters" aria-label="赛果筛选">
-        <div class="filter-field league-filter">
-          <span class="filter-label">联赛</span>
-          <button type="button" class="league-filter-trigger" @click="openLeagueFilter">
-            <span>{{ leagueFilterLabel }}</span>
-            <i></i>
+      <nav class="results-view-tabs" aria-label="赛果内容">
+        <button
+          type="button"
+          :class="{ active: activeTab === 'results' }"
+          :aria-current="activeTab === 'results' ? 'page' : undefined"
+          @click="activeTab = 'results'"
+        >赛果</button>
+        <button
+          type="button"
+          :class="{ active: activeTab === 'profiles' }"
+          :aria-current="activeTab === 'profiles' ? 'page' : undefined"
+          @click="activeTab = 'profiles'"
+        >联赛画像</button>
+      </nav>
+
+      <template v-if="activeTab === 'results'">
+        <section class="results-filters" aria-label="赛果筛选">
+          <div class="filter-field league-filter">
+            <span class="filter-label">联赛</span>
+            <button type="button" class="league-filter-trigger" @click="openLeagueFilter">
+              <span>{{ leagueFilterLabel }}</span>
+              <i></i>
+            </button>
+          </div>
+          <div class="filter-field time-filter">
+            <span class="filter-label">时间范围</span>
+            <div class="time-segments" role="group" aria-label="时间范围">
+              <button
+                v-for="range in [{ value: 'all', label: '全部' }, { value: '7', label: '近 7 天' }, { value: '30', label: '近 30 天' }]"
+                :key="range.value"
+                type="button"
+                :class="{ active: timeRange === range.value }"
+                :aria-pressed="timeRange === range.value"
+                @click="timeRange = range.value"
+              >
+                {{ range.label }}
+              </button>
+            </div>
+          </div>
+        </section>
+
+        <div v-if="loading" class="results-state">正在加载赛果…</div>
+        <div v-else-if="error" class="results-state results-error">
+          <span>{{ error }}</span>
+          <button type="button" @click="fetchMatches">重试</button>
+        </div>
+        <div v-else-if="filteredMatches.length === 0" class="results-state">暂无完赛数据</div>
+
+        <section v-else class="results-list">
+          <article
+            v-for="match in filteredMatches"
+            :key="match.match_id"
+            class="result-card"
+            role="link"
+            tabindex="0"
+            :aria-label="`查看${match.home_team}对${match.away_team}比赛详情`"
+            @click="goToDetail(match.match_id)"
+            @keydown.enter="goToDetail(match.match_id)"
+            @keydown.space.prevent="goToDetail(match.match_id)"
+          >
+            <header class="result-meta">
+              <strong>{{ match.league || '未知联赛' }}</strong>
+              <span class="match-number">{{ match.match_number || '—' }}</span>
+              <time>{{ formatTime(match.match_time) }}</time>
+            </header>
+            <div class="result-score">
+              <span>{{ match.home_team }}</span>
+              <strong>{{ match.home_score }}<i>:</i>{{ match.away_score }}</strong>
+              <span>{{ match.away_team }}</span>
+            </div>
+            <div class="result-markets">
+              <div>
+                <span>让球结果</span>
+                <strong :class="{ hit: hiResult(match) }">{{ hiResultLabel(match) }}</strong>
+                <small v-if="hiHandicapValue(match) !== null">盘口 {{ signed(hiHandicapValue(match)) }}</small>
+              </div>
+              <div>
+                <span>欧赔结果</span>
+                <strong :class="{ hit: euroResult(match) }">{{ label(euroResult(match), { win: '主胜', draw: '平', lose: '客胜' }) }}</strong>
+                <small>{{ hitOdds(match, 'euro') }}</small>
+              </div>
+              <div>
+                <span>亚盘结果</span>
+                <strong :class="{ hit: asianResult(match) }">{{ asianResultLabel(match) }}</strong>
+                <small>{{ asianHandicapLabel(match) }}</small>
+              </div>
+              <div>
+                <span>大小球结果</span>
+                <strong :class="{ hit: ouResult(match) }">{{ ouResultLabel(match) }}</strong>
+                <small>{{ ouTotalLabel(match) }}</small>
+              </div>
+            </div>
+          </article>
+
+          <div class="results-load-more">
+            <button v-if="loadMoreError" type="button" @click="loadMore">加载失败，点击重试</button>
+            <small v-else-if="loadingMore">加载中...</small>
+            <small v-else-if="!hasMore">已加载全部</small>
+          </div>
+          <div ref="loadMoreSentinel" class="load-more-sentinel" aria-hidden="true"></div>
+        </section>
+      </template>
+
+      <template v-else>
+        <section class="profile-toolbar">
+          <div>
+            <strong>联赛历史画像</strong>
+            <span>时间衰减统计 · 仅使用今天以前的完赛数据</span>
+          </div>
+          <button type="button" class="profile-filter-button" @click="openLeagueFilter">
+            {{ leagueFilterLabel }}
           </button>
+        </section>
+
+        <div v-if="profilesLoading" class="results-state">正在计算联赛画像…</div>
+        <div v-else-if="profilesError" class="results-state results-error">
+          <span>{{ profilesError }}</span>
+          <button type="button" @click="fetchLeagueProfiles">重试</button>
         </div>
-        <div class="filter-field time-filter">
-          <span class="filter-label">时间范围</span>
-          <div class="time-segments" role="group" aria-label="时间范围">
-            <button
-              v-for="range in [{ value: 'all', label: '全部' }, { value: '7', label: '近 7 天' }, { value: '30', label: '近 30 天' }]"
-              :key="range.value"
-              type="button"
-              :class="{ active: timeRange === range.value }"
-              :aria-pressed="timeRange === range.value"
-              @click="timeRange = range.value"
-            >
-              {{ range.label }}
-            </button>
-          </div>
+        <div v-else-if="leagueProfileItems.length === 0" class="results-state">
+          暂无联赛历史画像
         </div>
-      </section>
-
-      <div v-if="loading" class="results-state">正在加载赛果…</div>
-      <div v-else-if="error" class="results-state results-error">
-        <span>{{ error }}</span>
-        <button type="button" @click="fetchMatches">重试</button>
-      </div>
-      <div v-else-if="filteredMatches.length === 0" class="results-state">暂无完赛数据</div>
-
-      <section v-else class="results-list">
-        <article
-          v-for="match in filteredMatches"
-          :key="match.match_id"
-          class="result-card"
-          role="link"
-          tabindex="0"
-          :aria-label="`查看${match.home_team}对${match.away_team}比赛详情`"
-          @click="goToDetail(match.match_id)"
-          @keydown.enter="goToDetail(match.match_id)"
-          @keydown.space.prevent="goToDetail(match.match_id)"
-        >
-          <header class="result-meta">
-            <strong>{{ match.league || '未知联赛' }}</strong>
-            <span class="match-number">{{ match.match_number || '—' }}</span>
-            <time>{{ formatTime(match.match_time) }}</time>
-          </header>
-          <div class="result-score">
-            <span>{{ match.home_team }}</span>
-            <strong>{{ match.home_score }}<i>:</i>{{ match.away_score }}</strong>
-            <span>{{ match.away_team }}</span>
-          </div>
-          <div class="result-markets">
-            <div>
-              <span>让球结果</span>
-              <strong :class="{ hit: hiResult(match) }">{{ hiResultLabel(match) }}</strong>
-              <small v-if="hiHandicapValue(match) !== null">盘口 {{ signed(hiHandicapValue(match)) }}</small>
-            </div>
-            <div>
-              <span>欧赔结果</span>
-              <strong :class="{ hit: euroResult(match) }">{{ label(euroResult(match), { win: '主胜', draw: '平', lose: '客胜' }) }}</strong>
-              <small>{{ hitOdds(match, 'euro') }}</small>
-            </div>
-            <div>
-              <span>亚盘结果</span>
-              <strong :class="{ hit: asianResult(match) }">{{ asianResultLabel(match) }}</strong>
-              <small>{{ asianHandicapLabel(match) }}</small>
-            </div>
-            <div>
-              <span>大小球结果</span>
-              <strong :class="{ hit: ouResult(match) }">{{ ouResultLabel(match) }}</strong>
-              <small>{{ ouTotalLabel(match) }}</small>
-            </div>
-          </div>
-          <div class="league-profile-entry" @click.stop>
-            <button
-              type="button"
-              :aria-expanded="profileState(match.match_id).open"
-              @click="toggleLeagueProfile(match)"
-              @keydown.stop
-            >
-              <span>联赛历史画像</span>
-              <small v-if="profileState(match.match_id).data">
-                {{ profileState(match.match_id).data.sample_size }}场 ·
-                {{ profileState(match.match_id).data.confidence }}
-              </small>
-              <i :class="{ open: profileState(match.match_id).open }"></i>
-            </button>
-
-            <section
-              v-if="profileState(match.match_id).open"
-              class="league-profile-panel"
-            >
-              <div v-if="profileState(match.match_id).loading" class="league-profile-state">
-                正在计算赛前联赛画像…
+        <section v-else class="league-profiles-list">
+          <article
+            v-for="item in leagueProfileItems"
+            :key="item.league"
+            class="league-profile-card"
+          >
+            <header>
+              <div>
+                <strong>{{ item.league }}</strong>
+                <span>统计截至 {{ item.profile.before_date }} 之前</span>
               </div>
-              <div v-else-if="profileState(match.match_id).error" class="league-profile-state error">
-                {{ profileState(match.match_id).error }}
+              <em :class="{ eligible: item.profile.eligible_for_adjustment }">
+                {{ item.profile.eligible_for_adjustment ? `可信度 ${item.profile.confidence}` : '样本不足' }}
+              </em>
+            </header>
+            <div class="league-profile-grid">
+              <div>
+                <span>历史样本</span>
+                <strong>{{ item.profile.sample_size }}</strong>
+                <small>有效 {{ item.profile.effective_sample_size }}</small>
               </div>
-              <template v-else-if="profileState(match.match_id).data">
-                <header>
-                  <div>
-                    <strong>{{ match.league }}</strong>
-                    <span>统计截至 {{ profileState(match.match_id).data.before_date }} 之前</span>
-                  </div>
-                  <em :class="{ eligible: profileState(match.match_id).data.eligible_for_adjustment }">
-                    {{ profileState(match.match_id).data.eligible_for_adjustment ? '可作为辅助基线' : '样本不足' }}
-                  </em>
-                </header>
-                <div class="league-profile-grid">
-                  <div>
-                    <span>历史样本</span>
-                    <strong>{{ profileState(match.match_id).data.sample_size }}</strong>
-                    <small>有效 {{ profileState(match.match_id).data.effective_sample_size }}</small>
-                  </div>
-                  <div>
-                    <span>主胜 / 平 / 客胜</span>
-                    <strong>
-                      {{ percent(profileState(match.match_id).data.baseline?.home_win_rate) }} /
-                      {{ percent(profileState(match.match_id).data.baseline?.draw_rate) }} /
-                      {{ percent(profileState(match.match_id).data.baseline?.away_win_rate) }}
-                    </strong>
-                  </div>
-                  <div>
-                    <span>场均进球</span>
-                    <strong>{{ decimal(profileState(match.match_id).data.baseline?.avg_total_goals) }}</strong>
-                    <small>双方进球 {{ percent(profileState(match.match_id).data.baseline?.both_teams_score_rate) }}</small>
-                  </div>
-                  <div>
-                    <span>一球分差</span>
-                    <strong>{{ percent(profileState(match.match_id).data.baseline?.one_goal_margin_rate) }}</strong>
-                  </div>
-                  <div>
-                    <span>竞彩让平</span>
-                    <strong>{{ percent(profileState(match.match_id).data.sporttery_handicap?.let_draw_rate) }}</strong>
-                    <small>{{ profileState(match.match_id).data.sporttery_handicap?.sample || 0 }}场有让球盘</small>
-                  </div>
-                  <div>
-                    <span>大球 / 小球</span>
-                    <strong>
-                      {{ percent(profileState(match.match_id).data.total_market?.over_rate) }} /
-                      {{ percent(profileState(match.match_id).data.total_market?.under_rate) }}
-                    </strong>
-                  </div>
-                </div>
-                <ul class="league-profile-signals">
-                  <li
-                    v-for="signal in profileState(match.match_id).data.hidden_signals || []"
-                    :key="signal"
-                  >{{ signal }}</li>
-                </ul>
-                <p>历史条件频率仅作辅助，不代表单场真实概率。</p>
-              </template>
-            </section>
-          </div>
-        </article>
-
-        <div class="results-load-more">
-          <button v-if="loadMoreError" type="button" @click="loadMore">加载失败，点击重试</button>
-          <small v-else-if="loadingMore">加载中...</small>
-          <small v-else-if="!hasMore">已加载全部</small>
-        </div>
-        <div ref="loadMoreSentinel" class="load-more-sentinel" aria-hidden="true"></div>
-      </section>
+              <div>
+                <span>主胜 / 平 / 客胜</span>
+                <strong>
+                  {{ percent(item.profile.baseline?.home_win_rate) }} /
+                  {{ percent(item.profile.baseline?.draw_rate) }} /
+                  {{ percent(item.profile.baseline?.away_win_rate) }}
+                </strong>
+              </div>
+              <div>
+                <span>场均进球</span>
+                <strong>{{ decimal(item.profile.baseline?.avg_total_goals) }}</strong>
+                <small>双方进球 {{ percent(item.profile.baseline?.both_teams_score_rate) }}</small>
+              </div>
+              <div>
+                <span>一球分差</span>
+                <strong>{{ percent(item.profile.baseline?.one_goal_margin_rate) }}</strong>
+              </div>
+              <div>
+                <span>竞彩让平</span>
+                <strong>{{ percent(item.profile.sporttery_handicap?.let_draw_rate) }}</strong>
+                <small>{{ item.profile.sporttery_handicap?.sample || 0 }}场有让球盘</small>
+              </div>
+              <div>
+                <span>大球 / 小球</span>
+                <strong>
+                  {{ percent(item.profile.total_market?.over_rate) }} /
+                  {{ percent(item.profile.total_market?.under_rate) }}
+                </strong>
+              </div>
+            </div>
+            <ul class="league-profile-signals">
+              <li
+                v-for="signal in item.profile.hidden_signals || []"
+                :key="signal"
+              >{{ signal }}</li>
+            </ul>
+            <p>历史条件频率仅作辅助，不代表单场真实概率。</p>
+          </article>
+        </section>
+      </template>
     </main>
 
     <div v-if="showLeagueFilter" class="league-filter-overlay" @click.self="cancelLeagueFilter">
@@ -215,11 +232,12 @@
 
 <script setup>
 import axios from 'axios'
-import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import AccountButton from '../components/AccountButton.vue'
 
 const router = useRouter()
+const activeTab = ref('results')
 const matches = ref([])
 const loading = ref(false)
 const loadingMore = ref(false)
@@ -235,7 +253,10 @@ const pageSize = 20
 const availableLeagues = ref([])
 const totalAvailableMatches = ref(0)
 const loadMoreSentinel = ref(null)
-const leagueProfiles = reactive({})
+const leagueProfileItems = ref([])
+const profilesLoading = ref(false)
+const profilesError = ref('')
+const loadedProfileFilter = ref(null)
 let loadMoreObserver = null
 
 const leagues = computed(() => availableLeagues.value)
@@ -255,33 +276,26 @@ const goToDetail = matchId => {
   router.push(`/match/${matchId}`)
 }
 
-const profileState = matchId => {
-  const key = String(matchId || '')
-  if (!leagueProfiles[key]) {
-    leagueProfiles[key] = {
-      open: false,
-      loading: false,
-      error: '',
-      data: null
-    }
-  }
-  return leagueProfiles[key]
-}
-
-const toggleLeagueProfile = async match => {
-  const state = profileState(match.match_id)
-  state.open = !state.open
-  if (!state.open || state.data || state.loading) return
-  state.loading = true
-  state.error = ''
+const fetchLeagueProfiles = async () => {
+  const filterKey = selectedLeagues.value.slice().sort().join('|') || '*'
+  profilesLoading.value = true
+  profilesError.value = ''
   try {
-    const response = await axios.get(`/api/fae/league-profile/${match.match_id}`)
-    state.data = response.data?.data?.profile || null
-    if (!state.data) state.error = '暂无联赛历史画像'
+    const response = await axios.get('/api/fae/league-profiles', {
+      params: {
+        before_date: formatDateParam(new Date()),
+        leagues: selectedLeagues.value.length
+          ? selectedLeagues.value.join(',')
+          : undefined
+      }
+    })
+    leagueProfileItems.value = response.data?.data?.items || []
+    loadedProfileFilter.value = filterKey
   } catch (profileError) {
-    state.error = profileError.response?.data?.message || '联赛画像加载失败'
+    leagueProfileItems.value = []
+    profilesError.value = profileError.response?.data?.message || '联赛画像加载失败'
   } finally {
-    state.loading = false
+    profilesLoading.value = false
   }
 }
 
@@ -564,7 +578,14 @@ watch([timeRange, () => selectedLeagues.value.join('|')], () => {
   hasMore.value = true
   loadMoreError.value = false
   fetchMatches()
+  if (activeTab.value === 'profiles') fetchLeagueProfiles()
   nextTick(createLoadMoreObserver)
+})
+
+watch(activeTab, value => {
+  if (value !== 'profiles') return
+  const filterKey = selectedLeagues.value.slice().sort().join('|') || '*'
+  if (loadedProfileFilter.value !== filterKey) fetchLeagueProfiles()
 })
 
 onMounted(() => {
@@ -580,6 +601,10 @@ onUnmounted(() => {
 
 <style scoped>
 .results-content { padding: 12px; }
+.results-view-tabs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; margin-bottom: 12px; padding: 4px; background: #e9e9ec; border-radius: 11px; }
+.results-view-tabs button { height: 42px; color: #777780; font: inherit; font-size: 14px; font-weight: 600; background: transparent; border: 0; border-radius: 8px; cursor: pointer; }
+.results-view-tabs button.active { color: #f33b48; background: #fff; box-shadow: 0 2px 7px rgb(24 24 30 / 10%); }
+.results-view-tabs button:focus-visible { outline: 2px solid rgb(243 59 72 / 45%); outline-offset: -2px; }
 .results-filters { display: grid; grid-template-columns: minmax(120px, .8fr) minmax(210px, 1.2fr); align-items: end; gap: 16px; margin-bottom: 12px; padding: 14px; background: #fff; border: 1px solid #f0f0f2; border-radius: 12px; box-shadow: 0 3px 14px rgb(30 35 50 / 5%); }
 .filter-field { display: grid; min-width: 0; gap: 7px; }
 .filter-label { color: #777; font-size: 12px; font-weight: 500; line-height: 1; }
@@ -648,21 +673,19 @@ onUnmounted(() => {
 .result-markets span, .result-markets small { overflow: hidden; color: #999; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .result-markets strong { color: #555; font-size: 13px; }
 .result-markets strong.hit { color: #f33b48; }
-.league-profile-entry { margin-top: 9px; border-top: 1px solid #efeff1; }
-.league-profile-entry > button { display: grid; width: 100%; grid-template-columns: auto 1fr auto; align-items: center; gap: 8px; padding: 11px 2px 0; color: #555; background: transparent; border: 0; text-align: left; cursor: pointer; }
-.league-profile-entry > button span { font-size: 12px; font-weight: 600; }
-.league-profile-entry > button small { color: #aaa; font-size: 10px; text-align: right; }
-.league-profile-entry > button i { width: 7px; height: 7px; border-right: 1.5px solid #aaa; border-bottom: 1.5px solid #aaa; transform: translateY(-2px) rotate(45deg); transition: transform .18s ease; }
-.league-profile-entry > button i.open { transform: translateY(2px) rotate(225deg); }
-.league-profile-panel { margin-top: 10px; padding: 11px; background: #faf7f8; border: 1px solid #f1e3e6; border-radius: 8px; cursor: default; }
-.league-profile-state { padding: 20px 8px; color: #999; font-size: 12px; text-align: center; }
-.league-profile-state.error { color: #d55; }
-.league-profile-panel > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
-.league-profile-panel > header div { display: grid; gap: 2px; }
-.league-profile-panel > header strong { color: #333; font-size: 13px; }
-.league-profile-panel > header span { color: #aaa; font-size: 9px; }
-.league-profile-panel > header em { padding: 3px 7px; color: #999; font-size: 9px; font-style: normal; white-space: nowrap; background: #eee; border-radius: 10px; }
-.league-profile-panel > header em.eligible { color: #b85e69; background: #fae8eb; }
+.profile-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; padding: 14px; background: linear-gradient(135deg, #fff 0%, #fff8f9 100%); border: 1px solid #f1e3e6; border-radius: 12px; box-shadow: 0 3px 14px rgb(30 35 50 / 5%); }
+.profile-toolbar > div { display: grid; min-width: 0; gap: 4px; }
+.profile-toolbar strong { color: #2d2d32; font-size: 15px; }
+.profile-toolbar span { color: #999; font-size: 10px; line-height: 1.4; }
+.profile-filter-button { max-width: 42%; padding: 8px 12px; overflow: hidden; color: #f33b48; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; background: #fff; border: 1px solid #f2aab1; border-radius: 18px; cursor: pointer; }
+.league-profiles-list { display: grid; gap: 10px; }
+.league-profile-card { padding: 13px; background: #fff; border: 1px solid #f0e8e9; border-radius: 10px; box-shadow: 0 2px 8px rgb(30 35 50 / 5%); }
+.league-profile-card > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; margin-bottom: 11px; }
+.league-profile-card > header div { display: grid; gap: 3px; }
+.league-profile-card > header strong { color: #2f2f34; font-size: 15px; }
+.league-profile-card > header span { color: #aaa; font-size: 10px; }
+.league-profile-card > header em { padding: 4px 8px; color: #999; font-size: 9px; font-style: normal; white-space: nowrap; background: #eee; border-radius: 10px; }
+.league-profile-card > header em.eligible { color: #b85e69; background: #fae8eb; }
 .league-profile-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
 .league-profile-grid > div { display: grid; min-width: 0; gap: 2px; padding: 8px; background: #fff; border: 1px solid #f0e8e9; border-radius: 6px; }
 .league-profile-grid span, .league-profile-grid small { overflow: hidden; color: #999; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
@@ -670,7 +693,7 @@ onUnmounted(() => {
 .league-profile-signals { display: grid; gap: 4px; margin: 9px 0 0; padding: 0; list-style: none; }
 .league-profile-signals li { position: relative; padding-left: 12px; color: #815961; font-size: 10px; line-height: 1.45; }
 .league-profile-signals li::before { position: absolute; top: 6px; left: 2px; width: 4px; height: 4px; content: ""; background: #df6d79; border-radius: 50%; }
-.league-profile-panel > p { margin-top: 8px; color: #aaa; font-size: 9px; line-height: 1.4; }
+.league-profile-card > p { margin: 8px 0 0; color: #aaa; font-size: 9px; line-height: 1.4; }
 .results-state { display: flex; min-height: 180px; align-items: center; justify-content: center; gap: 12px; color: #999; }
 .results-error { flex-direction: column; color: #d44; }
 .results-state button { padding: 8px 15px; border: 0; border-radius: 7px; background: #f33b48; color: #fff; }
