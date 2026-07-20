@@ -261,7 +261,10 @@
             @click="openProfileMatchDetail(match.match_id)"
           >
             <span class="profile-match-meta">
-              <b>{{ match.match_number || match.owner_date }}</b>
+              <b>
+                <span>{{ match.match_number || '历史场次' }}</span>
+                <time>{{ profileMatchKickoff(match) }}</time>
+              </b>
               <i :class="profileMatchesKind === 'not_cover' ? 'type-not-cover' : `type-${match.result_type}`">{{ profileMatchTypeLabel(match) }}</i>
             </span>
             <span class="profile-match-score">
@@ -481,6 +484,18 @@ const profileMatchTypeLabel = match => {
 const oddsText = value => {
   const number = Number(value)
   return Number.isFinite(number) ? number.toFixed(2) : '-'
+}
+const profileMatchKickoff = match => {
+  const ownerDate = String(match.owner_date || '').slice(0, 10)
+  const raw = String(match.match_time || '').trim().replace('T', ' ')
+  const full = raw.match(/^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2})/)
+  if (full) return `${full[1]} ${full[2]}`
+  const short = raw.match(/^(\d{2}-\d{2})\s+(\d{2}:\d{2})/)
+  if (short) {
+    const year = /^\d{4}/.test(ownerDate) ? ownerDate.slice(0, 4) : ''
+    return `${year ? `${year}-` : ''}${short[1]} ${short[2]}`
+  }
+  return ownerDate || '-'
 }
 
 const percent = value => {
@@ -907,7 +922,8 @@ onUnmounted(() => {
 .profile-match-list { display: grid; gap: 8px; padding: 10px; overflow-y: auto; }
 .profile-match-row { display: grid; gap: 10px; padding: 12px; font: inherit; text-align: left; background: #fff; border: 1px solid #eeeef1; border-radius: 10px; cursor: pointer; }
 .profile-match-meta { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-.profile-match-meta b { color: #888; font-size: 11px; }
+.profile-match-meta b { display: flex; min-width: 0; align-items: center; gap: 8px; color: #666; font-size: 11px; }
+.profile-match-meta time { color: #aaa; font-size: 9px; font-weight: 400; white-space: nowrap; }
 .profile-match-meta i { padding: 3px 7px; color: #888; font-size: 9px; font-style: normal; background: #f2f2f3; border-radius: 9px; }
 .profile-match-meta i.type-draw { color: #b4721e; background: #fff3dc; }
 .profile-match-meta i.type-upset { color: #d74352; background: #fff0f2; }
