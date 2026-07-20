@@ -1207,6 +1207,47 @@ def get_fae_rankings():
     })
 
 
+@app.route('/api/fae/league-profile/<match_id>', methods=['GET'])
+def get_fae_league_profile(match_id):
+    """Return the leakage-safe pre-match league profile for a result card."""
+    if not mongo_storage:
+        return jsonify({
+            'success': False,
+            'message': 'MongoDB不可用',
+        }), 503
+    match = mongo_storage.get_match_by_id(str(match_id or ''))
+    if not match:
+        return jsonify({
+            'success': False,
+            'message': '比赛不存在',
+        }), 404
+    league = str(match.get('league') or '').strip()
+    before_date = str(match.get('owner_date') or '')[:10]
+    if not league or not re.fullmatch(r'\d{4}-\d{2}-\d{2}', before_date):
+        return jsonify({
+            'success': False,
+            'message': '比赛缺少联赛或业务日期',
+        }), 422
+    profile = mongo_storage.get_fae_league_profiles(
+        before_date,
+        [league],
+    ).get(league)
+    if not profile:
+        return jsonify({
+            'success': False,
+            'message': '暂无联赛历史画像',
+        }), 404
+    return jsonify({
+        'success': True,
+        'data': {
+            'match_id': str(match.get('match_id') or ''),
+            'match_number': str(match.get('match_number') or ''),
+            'league': league,
+            'profile': profile,
+        },
+    })
+
+
 @app.route('/api/fae/daily-ai', methods=['GET'])
 def get_fae_daily_ai():
     if not mongo_storage:
