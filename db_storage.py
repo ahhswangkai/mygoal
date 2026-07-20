@@ -1166,6 +1166,12 @@ class MongoDBStorage:
                         'euro_current_lose': 1,
                         'hi_handicap_value': 1,
                         'handicap': 1,
+                        'hi_current_home_odds': 1,
+                        'hi_current_draw_odds': 1,
+                        'hi_current_away_odds': 1,
+                        'hi_initial_home_odds': 1,
+                        'hi_initial_draw_odds': 1,
+                        'hi_initial_away_odds': 1,
                     },
                 ).sort([
                     ('owner_date', DESCENDING),

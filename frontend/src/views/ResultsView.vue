@@ -273,9 +273,26 @@
               <b :class="{ favorite: match.favorite_side === 'away' }">{{ match.away_team }}</b>
             </span>
             <span class="profile-match-detail">
-              热门 {{ match.favorite_team }} @{{ oddsText(match.favorite_odds) }}
-              · 欧赔 {{ oddsText(match.euro_current_win) }}/{{ oddsText(match.euro_current_draw) }}/{{ oddsText(match.euro_current_lose) }}
-              · 让球 {{ signed(match.hi_handicap_value ?? match.handicap) }}
+              <span>
+                热门 {{ match.favorite_team }} @{{ oddsText(match.favorite_odds) }}
+                · 欧赔 {{ oddsText(match.euro_current_win) }}/{{ oddsText(match.euro_current_draw) }}/{{ oddsText(match.euro_current_lose) }}
+              </span>
+              <span class="profile-handicap-title">
+                竞彩让球 {{ signed(match.hi_handicap_value ?? match.handicap) }}
+                <i>让胜 / 让平 / 让负</i>
+              </span>
+              <span class="profile-handicap-odds">
+                <b>即时</b>
+                {{ oddsText(match.hi_current_home_odds) }} /
+                {{ oddsText(match.hi_current_draw_odds) }} /
+                {{ oddsText(match.hi_current_away_odds) }}
+              </span>
+              <span class="profile-handicap-odds initial">
+                <b>初盘</b>
+                {{ oddsText(match.hi_initial_home_odds) }} /
+                {{ oddsText(match.hi_initial_draw_odds) }} /
+                {{ oddsText(match.hi_initial_away_odds) }}
+              </span>
             </span>
           </button>
           <button
@@ -933,7 +950,14 @@ onUnmounted(() => {
 .profile-match-score b { overflow: hidden; color: #333; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
 .profile-match-score b.favorite { color: #f33b48; }
 .profile-match-score strong { color: #222; font-size: 18px; white-space: nowrap; }
-.profile-match-detail { overflow: hidden; color: #999; font-size: 9px; line-height: 1.5; text-overflow: ellipsis; white-space: nowrap; }
+.profile-match-detail { display: grid; gap: 2px; overflow: hidden; color: #999; font-size: 9px; line-height: 1.5; }
+.profile-match-detail > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.profile-handicap-title { color: #666; font-weight: 600; }
+.profile-handicap-title i { margin-left: 5px; color: #aaa; font-style: normal; font-weight: 400; }
+.profile-handicap-odds { color: #555; }
+.profile-handicap-odds b { display: inline-block; min-width: 27px; color: #f33b48; font-size: inherit; }
+.profile-handicap-odds.initial { color: #999; }
+.profile-handicap-odds.initial b { color: #999; }
 .profile-matches-more { margin: 2px auto 5px; padding: 8px 24px; color: #f33b48; font-size: 11px; background: #fff; border: 1px solid #f3aeb5; border-radius: 18px; }
 @media (max-width: 430px) {
   .profile-matches-overlay { align-items: flex-end; padding: 0; }
