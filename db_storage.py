@@ -93,6 +93,7 @@ class MongoDBStorage:
         self.fae_daily_ai_matches_collection = self.db['fae_daily_ai_matches']
         self.fae_daily_ai_batches_collection = self.db['fae_daily_ai_batches']
         self.fae_daily_ai_reviews_collection = self.db['fae_daily_ai_reviews']
+        self.wecom_deliveries_collection = self.db['wecom_deliveries']
         self.user_picks_collection = self.db['user_picks']
         self.bets_collection = self.db['bets']
         
@@ -216,6 +217,12 @@ class MongoDBStorage:
             )
             self.fae_daily_ai_reviews_collection.create_index([
                 ('owner_date', ASCENDING), ('reviewed_at', DESCENDING)
+            ])
+            self.wecom_deliveries_collection.create_index(
+                [('delivery_key', ASCENDING)], unique=True
+            )
+            self.wecom_deliveries_collection.create_index([
+                ('event_type', ASCENDING), ('updated_at', DESCENDING)
             ])
             
             # 用户选择表索引
@@ -895,6 +902,89 @@ class MongoDBStorage:
         except Exception as e:
             self.logger.error(f"读取 FAE 全日研判失败: {str(e)}")
             return None
+
+    def get_wecom_delivery(self, delivery_key):
+        """Read one deduplication record without exposing webhook secrets."""
+        try:
+            return self.wecom_deliveries_collection.find_one(
+                {'delivery_key': str(delivery_key or '')},
+                {'_id': 0},
+            )
+        except Exception as e:
+            self.logger.error(f"读取企业微信投递记录失败: {str(e)}")
+            return None
+
+    def claim_wecom_delivery(
+        self,
+        delivery_key,
+        event_type,
+        *,
+        content_hash=None,
+    ):
+        """Atomically claim one delivery; failed records may be retried."""
+        key = str(delivery_key or '')
+        now = datetime.utcnow().isoformat() + 'Z'
+        try:
+            self.wecom_deliveries_collection.insert_one({
+                'delivery_key': key,
+                'event_type': str(event_type or ''),
+                'content_hash': str(content_hash or ''),
+                'status': 'sending',
+                'success': False,
+                'created_at': now,
+                'updated_at': now,
+            })
+            return True
+        except DuplicateKeyError:
+            claimed = self.wecom_deliveries_collection.update_one(
+                {
+                    'delivery_key': key,
+                    'success': {'$ne': True},
+                    'status': {'$ne': 'sending'},
+                },
+                {'$set': {
+                    'status': 'sending',
+                    'content_hash': str(content_hash or ''),
+                    'updated_at': now,
+                }},
+            )
+            return bool(claimed.modified_count)
+        except Exception as e:
+            self.logger.error(f"占用企业微信投递任务失败: {str(e)}")
+            return False
+
+    def save_wecom_delivery(
+        self,
+        delivery_key,
+        event_type,
+        result,
+        *,
+        content_hash=None,
+    ):
+        """Persist a sanitized delivery result for scheduler deduplication."""
+        try:
+            payload = {
+                'delivery_key': str(delivery_key or ''),
+                'event_type': str(event_type or ''),
+                'content_hash': str(content_hash or ''),
+                'status': str((result or {}).get('status') or 'failed'),
+                'success': bool((result or {}).get('success')),
+                'status_code': (result or {}).get('status_code'),
+                'errcode': (result or {}).get('errcode'),
+                'message': str((result or {}).get('message') or '')[:240],
+                'updated_at': datetime.utcnow().isoformat() + 'Z',
+            }
+            if payload['success']:
+                payload['sent_at'] = payload['updated_at']
+            self.wecom_deliveries_collection.update_one(
+                {'delivery_key': payload['delivery_key']},
+                {'$set': payload},
+                upsert=True,
+            )
+            return True
+        except Exception as e:
+            self.logger.error(f"保存企业微信投递记录失败: {str(e)}")
+            return False
 
     def get_fae_daily_ai_snapshot(self, owner_date):
         """Return the latest daily AI run created while every match was pre-game."""

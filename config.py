@@ -44,4 +44,11 @@ LOG_DIR = os.path.join(BASE_DIR, 'logs')
 os.makedirs(LOG_DIR, exist_ok=True)
 LOG_FILE = os.path.join(LOG_DIR, 'crawler.log')
 
-WECHAT_WEBHOOK_URL = os.getenv('WECHAT_WEBHOOK_URL', 'https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=b0dd1c4a-8067-4e65-ba06-9f7cc736a02f')
+# 企业微信机器人密钥只能通过服务器环境变量配置，禁止写入源码。
+WECOM_WEBHOOK_URL = (
+    os.getenv('WECOM_WEBHOOK_URL')
+    or os.getenv('WECHAT_WEBHOOK_URL')
+    or ''
+).strip()
+# 旧名称保留给尚未迁移的调用方，不包含任何默认密钥。
+WECHAT_WEBHOOK_URL = WECOM_WEBHOOK_URL

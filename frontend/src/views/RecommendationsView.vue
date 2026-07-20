@@ -945,7 +945,11 @@ async function runDailyAi(force) {
       method: 'POST',
       credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ date: selectedDate.value, force })
+      body: JSON.stringify({
+        date: selectedDate.value,
+        force,
+        push_wecom: true
+      })
     })
     const payload = await response.json().catch(() => ({}))
     if (response.status === 401) {

@@ -46,7 +46,14 @@ import requests
 import random
 import threading
 import uuid
-from config import WECHAT_WEBHOOK_URL
+from config import WECOM_WEBHOOK_URL
+from wecom_notifier import (
+    WeComNotifier,
+    delivery_key as wecom_delivery_key,
+    format_daily_ai_message,
+    format_live_alert_message,
+    format_review_message,
+)
 
 
 
@@ -66,6 +73,7 @@ user_storage = UserStorage(
 sporttery_calculator_session = requests.Session()
 sporttery_calculator_session.trust_env = False
 settlement_lock = threading.Lock()
+wecom_notifier = WeComNotifier(WECOM_WEBHOOK_URL)
 
 
 def login_required(view):
@@ -162,6 +170,96 @@ except Exception as e:
     mongo_storage = None
     use_mongodb = False
     print(f"⚠️  MongoDB连接失败，使用文件存储: {str(e)}")
+
+
+def _env_enabled(name, default=True):
+    fallback = 'true' if default else 'false'
+    return os.getenv(name, fallback).lower() in ('1', 'true', 'yes', 'on')
+
+
+def _wecom_delivery_status():
+    return {
+        'configured': wecom_notifier.configured,
+        'enabled': _env_enabled('WECOM_ENABLED', True),
+        'daily_ai': _env_enabled('WECOM_PUSH_DAILY_AI', True),
+        'ai_review': _env_enabled('WECOM_PUSH_AI_REVIEW', True),
+        'live_alerts': _env_enabled('WECOM_PUSH_LIVE_ALERTS', True),
+    }
+
+
+def _deliver_wecom_once(event_type, identity, content):
+    """Send one sanitized markdown event with persistent deduplication."""
+    if not _env_enabled('WECOM_ENABLED', True):
+        return {
+            'success': False,
+            'status': 'disabled',
+            'message': '企业微信通知已停用',
+        }
+    if not wecom_notifier.configured:
+        return {
+            'success': False,
+            'status': 'not_configured',
+            'message': '企业微信机器人 Webhook 尚未配置',
+        }
+    key = wecom_delivery_key(event_type, identity)
+    if mongo_storage:
+        existing = mongo_storage.get_wecom_delivery(key) or {}
+        if existing.get('success'):
+            return {
+                'success': True,
+                'status': 'deduplicated',
+                'message': '该消息已经投递，已跳过重复发送',
+                'delivery_key': key,
+            }
+        if not mongo_storage.claim_wecom_delivery(
+            key,
+            event_type,
+            content_hash=wecom_delivery_key('content', content),
+        ):
+            return {
+                'success': False,
+                'status': 'in_progress',
+                'message': '同一消息正在投递或已被其他进程处理',
+                'delivery_key': key,
+            }
+    result = wecom_notifier.send_markdown(content)
+    if mongo_storage:
+        mongo_storage.save_wecom_delivery(
+            key,
+            event_type,
+            result,
+            content_hash=wecom_delivery_key('content', content),
+        )
+    return {**result, 'delivery_key': key}
+
+
+def _push_wecom_daily_ai(result):
+    if not _env_enabled('WECOM_PUSH_DAILY_AI', True):
+        return {'success': False, 'status': 'disabled'}
+    identity = (
+        result.get('run_id')
+        or result.get('input_hash')
+        or result.get('owner_date')
+    )
+    return _deliver_wecom_once(
+        'daily_ai',
+        identity,
+        format_daily_ai_message(result),
+    )
+
+
+def _push_wecom_ai_review(review):
+    if (
+        not _env_enabled('WECOM_PUSH_AI_REVIEW', True)
+        or not review
+        or not review.get('completed')
+    ):
+        return {'success': False, 'status': 'not_ready'}
+    return _deliver_wecom_once(
+        'ai_review',
+        review.get('run_id') or review.get('owner_date'),
+        format_review_message(review),
+    )
 
 
 
@@ -1427,10 +1525,15 @@ def run_fae_daily_ai():
     )[:10]
     try:
         data = _run_fae_daily_ai(date_str, force=bool(payload.get('force')))
+        wecom_delivery = (
+            _push_wecom_daily_ai(data)
+            if payload.get('push_wecom') is not False else None
+        )
         return jsonify({
             'success': True,
             'data': data,
             'cache_hit': bool(data.get('cache_hit')),
+            'wecom_delivery': wecom_delivery,
             'message': (
                 '赔率数据未变化，已返回上次全日研判'
                 if data.get('cache_hit')
@@ -1446,6 +1549,43 @@ def run_fae_daily_ai():
             'success': False,
             'message': f'全日研判运行失败: {exc}',
         }), 500
+
+
+@app.route('/api/wecom/status', methods=['GET'])
+@login_required
+def get_wecom_status():
+    return jsonify({
+        'success': True,
+        'data': {
+            **_wecom_delivery_status(),
+            'can_manage': bool(_fae_admin_user()),
+        },
+    })
+
+
+@app.route('/api/wecom/test', methods=['POST'])
+@fae_admin_required
+def test_wecom_delivery():
+    payload = request.get_json(silent=True) or {}
+    user = _fae_admin_user() or {}
+    custom = str(payload.get('message') or '').strip()
+    content = "\n".join([
+        "## MyGoal 企业微信通知测试",
+        custom[:500] or "机器人连接成功，后续可接收全日研判和赛后复盘。",
+        "",
+        f"> 操作账号：{user.get('username') or '-'}",
+        f"> 时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+    ])
+    result = _deliver_wecom_once(
+        'manual_test',
+        uuid.uuid4().hex,
+        content,
+    )
+    return jsonify({
+        'success': bool(result.get('success')),
+        'data': result,
+        'message': result.get('message'),
+    }), 200 if result.get('success') else 502
 
 
 @app.route('/api/fae/daily-ai/match/<match_id>', methods=['GET'])
@@ -1507,9 +1647,11 @@ def run_fae_daily_ai_review():
     )[:10]
     force_ai = bool(payload.get('force_ai') or payload.get('force'))
     review = _review_fae_daily_ai(date_str, force_ai=force_ai)
+    wecom_delivery = _push_wecom_ai_review(review) if review else None
     return jsonify({
         'success': bool(review),
         'data': review,
+        'wecom_delivery': wecom_delivery,
         'message': (
             (
                 '复盘已完成，AI 深度诊断已写入数据库'
@@ -2061,6 +2203,16 @@ def _run_scheduled_fae_daily_ai():
             f"{result.get('match_count', 0)} 场，"
             f"{'缓存命中' if result.get('cache_hit') else '已生成并逐场入库'}"
         )
+        delivery = _push_wecom_daily_ai(result)
+        if delivery.get('success'):
+            print(f"✅ 企业微信全日研判: {delivery.get('status')}")
+        elif delivery.get('status') not in (
+            'disabled', 'not_configured'
+        ):
+            print(
+                f"⚠️  企业微信全日研判未发送: "
+                f"{delivery.get('message') or delivery.get('status')}"
+            )
     except Exception as exc:
         print(f"❌ FAE 火山全日研判失败 {date_str}: {str(exc)}")
 
@@ -2179,8 +2331,10 @@ def _crawl_latest():
                 for snapshot_date in (
                     mongo_storage.get_fae_daily_ai_snapshot_dates(14)
                 ):
-                    if _review_fae_daily_ai(snapshot_date):
+                    daily_review = _review_fae_daily_ai(snapshot_date)
+                    if daily_review:
                         ai_review_count += 1
+                        _push_wecom_ai_review(daily_review)
                 if ai_review_count:
                     print(
                         f"✅ FAE AI主复盘: 更新 {ai_review_count} 天"
@@ -2198,7 +2352,7 @@ def _crawl_latest():
             except Exception as exc:
                 print(f"❌ FAE 平/让平快照或复盘失败: {str(exc)}")
 
-        # 5. 微信推送逻辑
+        # 5. 企业微信比赛提醒
         def to_float(x):
             try:
                 return float(x)
@@ -2214,53 +2368,28 @@ def _crawl_latest():
             cond_rangping = let_val in ['0', '平手'] or ('平' in let_val)
             return cond_ping or cond_rangping
             
-        def send_wechat(text):
-            if not WECHAT_WEBHOOK_URL:
-                return
-            try:
-                payload = {"msgtype":"text","text":{"content":text}}
-                headers = {"Content-Type":"application/json"}
-                requests.post(WECHAT_WEBHOOK_URL, json=payload, headers=headers, timeout=10)
-            except Exception:
-                pass
-
         alert_matches = []
         for m in matches or []:
             if meets_alert(m):
                 alert_matches.append(m)
                 
-        if alert_matches:
-            # 聚合通知
-            lines = [f"🔔 发现 {len(alert_matches)} 场符合条件的比赛"]
-            lines.append("-" * 20)
-            
-            for m in alert_matches:
-                home = m.get('home_team', '')
-                away = m.get('away_team', '')
-                tm = m.get('match_time', '')
-                # 尝试提取时间部分 HH:MM
-                if tm and len(tm) >= 5:
-                    tm = tm[-5:]
-                    
-                num = m.get('match_number', '')
-               
-                # 识别标签
-                tags = []
-                draw_odds = to_float(m.get('euro_current_draw') or m.get('euro_initial_draw'))
-                hi_val = m.get('hi_handicap_value') or ''
-                
-                if draw_odds and 2.85 <= draw_odds <= 3.5:
-                    tags.append(f'平{draw_odds}')
-                if hi_val and (hi_val in ['0', '平手'] or ('平' in hi_val)):
-                    tags.append('让平')
-                
-                tag_str = ' '.join(tags)
-                lines.append(f"{num} {tm} {home} vs {away}")
-                lines.append(f"   [{tag_str}]")
-                lines.append("") # 空行分隔
-                
-            send_wechat("\n".join(lines))
-            print(f"✅ 已推送 {len(alert_matches)} 场比赛通知")
+        if (
+            alert_matches
+            and _env_enabled('WECOM_PUSH_LIVE_ALERTS', True)
+        ):
+            content = format_live_alert_message(alert_matches)
+            alert_identity = '|'.join(sorted(
+                str(item.get('match_id') or item.get('match_number') or '')
+                for item in alert_matches
+                if item.get('match_id') or item.get('match_number')
+            ))
+            delivery = _deliver_wecom_once(
+                'live_alerts',
+                alert_identity,
+                content,
+            )
+            if delivery.get('success'):
+                print(f"✅ 已推送 {len(alert_matches)} 场企业微信比赛提醒")
     except Exception as e:
         print(f"❌ 定时爬取任务异常: {str(e)}")
         import traceback
@@ -2306,17 +2435,6 @@ def _start_scheduler():
 @app.before_first_request
 def _init_jobs():
     _start_scheduler()
-
-def send_wechat_message(text):
-    if not WECHAT_WEBHOOK_URL:
-        return False
-    try:
-        payload = {"msgtype": "text", "text": {"content": text}}
-        headers = {"Content-Type": "application/json"}
-        r = requests.post(WECHAT_WEBHOOK_URL, json=payload, headers=headers, timeout=10)
-        return r.status_code == 200
-    except Exception:
-        return False
 
 def format_all_odds(m):
     def val(x):
