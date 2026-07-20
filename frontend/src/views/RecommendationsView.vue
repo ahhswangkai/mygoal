@@ -59,7 +59,6 @@
               <strong>火山全日 AI 研判</strong>
               <small>
                 {{ faeDailyAi.match_count || 0 }} 场一次性横向比较 ·
-                {{ faeDailyAi.model || 'ark-code-latest' }} ·
                 研判时间 {{ formatAiTime(faeDailyAi.generated_at) }}
               </small>
             </div>
