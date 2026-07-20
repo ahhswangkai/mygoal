@@ -167,6 +167,19 @@
                 <span>一球分差</span>
                 <strong>{{ percent(item.profile.baseline?.one_goal_margin_rate) }}</strong>
               </div>
+              <div class="surprise-metric">
+                <span>盘口反常率</span>
+                <strong>{{ percent(item.profile.market_surprise?.favorite_fail_rate) }}</strong>
+                <small>
+                  热门打平 {{ percent(item.profile.market_surprise?.favorite_draw_rate) }} ·
+                  弱方胜 {{ percent(item.profile.market_surprise?.underdog_win_rate) }}
+                </small>
+              </div>
+              <div class="surprise-metric">
+                <span>热门不穿盘</span>
+                <strong>{{ percent(item.profile.market_surprise?.favorite_not_cover_rate) }}</strong>
+                <small>{{ item.profile.market_surprise?.handicap_sample || 0 }}场明确热门盘</small>
+              </div>
               <div>
                 <span>竞彩让平</span>
                 <strong>{{ percent(item.profile.sporttery_handicap?.let_draw_rate) }}</strong>
@@ -186,7 +199,7 @@
                 :key="signal"
               >{{ signal }}</li>
             </ul>
-            <p>历史条件频率仅作辅助，不代表单场真实概率。</p>
+            <p>盘口反常率：临场热门赔率≤2.20且胜负赔率差≥0.20时，热门方最终未赢；历史频率仅作辅助。</p>
           </article>
         </section>
       </template>
@@ -690,6 +703,8 @@ onUnmounted(() => {
 .league-profile-grid > div { display: grid; min-width: 0; gap: 2px; padding: 8px; background: #fff; border: 1px solid #f0e8e9; border-radius: 6px; }
 .league-profile-grid span, .league-profile-grid small { overflow: hidden; color: #999; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
 .league-profile-grid strong { color: #3f3f43; font-size: 11px; }
+.league-profile-grid > div.surprise-metric { background: #fffaf6; border-color: #f1dfd1; }
+.league-profile-grid > div.surprise-metric strong { color: #d56a28; }
 .league-profile-signals { display: grid; gap: 4px; margin: 9px 0 0; padding: 0; list-style: none; }
 .league-profile-signals li { position: relative; padding-left: 12px; color: #815961; font-size: 10px; line-height: 1.45; }
 .league-profile-signals li::before { position: absolute; top: 6px; left: 2px; width: 4px; height: 4px; content: ""; background: #df6d79; border-radius: 50%; }

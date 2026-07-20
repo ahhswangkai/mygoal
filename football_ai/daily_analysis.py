@@ -14,7 +14,7 @@ from .provider import ArkNarrativeClient, FAEError, FAEOutputError
 from .version import ENGINE_VERSION
 
 
-DAILY_PROMPT_VERSION = "five-market-daily-v7-league-profile"
+DAILY_PROMPT_VERSION = "five-market-daily-v8-market-surprise"
 
 HANDICAP_VALUES = {
     "平手": 0.0, "平/半": 0.25, "平手/半球": 0.25,
@@ -636,6 +636,8 @@ class FAEDailyAIAnalyzer:
             "历史复盘记忆只用于提醒曾经出现的误判和风险，不是当前比赛事实，不得据此直接推荐。",
             "联赛历史画像来自当前比赛日期之前的完场数据并带时间衰减；只允许把eligible_for_adjustment=true且分段样本充足的内容作为低到中权重基线。",
             "联赛画像中的命中率、让平率、进球率是历史条件频率，不是真实胜率；不得单独据此推荐，必须与当天五项市场证据一致。",
+            "联赛画像market_surprise表示临场欧赔存在明确热门时热门方未赢球的历史频率；favorite_fail_rate必须拆看favorite_draw_rate和underdog_win_rate，不能把两者混成同一投注结论。",
+            "若当前热门赔率所在favorite_odds_bands样本不少于20，且联赛热门失手率或不穿盘率显著高于全库，只能降低热门方向置信度并增加平局、弱方不败或让球防选，不得脱离当天盘口直接反买。",
             "若联赛画像与当天盘口冲突，以当天盘口、数据质量和阵容事实为准，并在风险中说明冲突。",
             "单日观察项属于低权重提醒；只有validated_patterns中的跨日模式可以作为辅助校正，且必须让位于当天盘口。",
             "当validated_pattern_count为0时，代表没有经过跨日和足量样本验证的规则；禁止使用历史0%命中区间、严禁纳入、全部排除或类似绝对结论。",
@@ -704,6 +706,7 @@ class FAEDailyAIAnalyzer:
             "历史复盘记忆只是低权重风险提醒，不是当前比赛事实；不得机械套用昨天结论。",
             "联赛历史画像只在eligible_for_adjustment=true时作为低到中权重基线；赔率分段样本不足时不得使用。",
             "历史联赛频率不是真实概率，必须让位于本场欧赔、亚盘、竞彩、大小球和市场一致性。",
+            "market_surprise是明确热门方未赢球的历史频率，必须拆分热门打平和弱方爆冷；仅当当前赔率分段样本不少于20时用于降低热门置信度或增加防选，禁止单独据此反买。",
             "仅validated_patterns可作为跨日辅助校正，近期观察项不能单独改变推荐。",
             "单日0/N或N/N属于小样本，不得据此将当前比赛定义为严禁、必选、高危赔率区间或全部排除。",
             "存在欧亚背离、极端水位或大小球跳档时自动降级，最高3.5星；缺少多项基本面时不得给五星。",

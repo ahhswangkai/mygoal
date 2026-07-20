@@ -111,6 +111,34 @@ class LeagueProfileTests(unittest.TestCase):
 
         self.assertGreater(profile["baseline"]["draw_rate"], 90)
 
+    def test_builds_market_surprise_rates_for_clear_favorites(self):
+        rows = [
+            historical_match("2026-07-18", 2, 0),
+            historical_match("2026-07-18", 1, 1),
+            historical_match("2026-07-18", 0, 1),
+            historical_match(
+                "2026-07-18",
+                1,
+                0,
+                home_odds=4.0,
+                away_odds=1.8,
+                handicap=1,
+            ),
+        ]
+        profile = build_league_profiles(
+            {"测试联赛": rows},
+            "2026-07-19",
+            global_matches=rows,
+            minimum_samples=1,
+        )["测试联赛"]
+        surprise = profile["market_surprise"]
+
+        self.assertEqual(surprise["sample"], 4)
+        self.assertEqual(surprise["favorite_fail_rate"], 75.0)
+        self.assertEqual(surprise["favorite_draw_rate"], 25.0)
+        self.assertEqual(surprise["underdog_win_rate"], 50.0)
+        self.assertEqual(surprise["favorite_not_cover_rate"], 75.0)
+
 
 if __name__ == "__main__":
     unittest.main()

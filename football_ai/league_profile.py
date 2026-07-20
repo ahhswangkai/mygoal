@@ -8,7 +8,7 @@ import re
 from typing import Any, Dict, Iterable, List, Optional
 
 
-LEAGUE_PROFILE_VERSION = "league-profile-v1-time-decay"
+LEAGUE_PROFILE_VERSION = "league-profile-v2-market-surprise"
 
 LEAGUE_ALIAS_GROUPS = (
     ("瑞典超", "瑞超"),
@@ -120,12 +120,33 @@ def _feature_rows(
                 ("home", home_odds)
                 if home_odds <= away_odds else ("away", away_odds)
             )
+        favorite_odds_gap = (
+            abs(home_odds - away_odds)
+            if home_odds is not None and away_odds is not None else None
+        )
+        if favorite_odds_gap is not None and favorite_odds_gap < 0.20:
+            favorite_side = None
+            favorite_odds = None
         favorite_won = (
             outcome == favorite_side if favorite_side else None
         )
         favorite_won_by_one = (
             favorite_won and abs(difference) == 1
             if favorite_won is not None else None
+        )
+        favorite_failed = (
+            not favorite_won if favorite_won is not None else None
+        )
+        favorite_drew = (
+            outcome == "draw" if favorite_side else None
+        )
+        underdog_won = (
+            outcome not in (favorite_side, "draw")
+            if favorite_side else None
+        )
+        favorite_covered = (
+            hhad_result == favorite_side
+            if favorite_side and hhad_result else None
         )
 
         line = _total_line(
@@ -153,8 +174,17 @@ def _feature_rows(
                 _favorite_band(favorite_odds)
                 if favorite_odds is not None else None
             ),
+            "favorite_odds": favorite_odds,
+            "favorite_odds_gap": favorite_odds_gap,
             "favorite_won": favorite_won,
             "favorite_won_by_one": favorite_won_by_one,
+            "favorite_failed": favorite_failed,
+            "favorite_drew": favorite_drew,
+            "underdog_won": underdog_won,
+            "favorite_not_cover": (
+                not favorite_covered
+                if favorite_covered is not None else None
+            ),
             "total_result": total_result,
         })
     return rows
@@ -218,6 +248,27 @@ def _build_profile(
         key: _weighted_rate(rows, "total_result", key)
         for key in ("over", "push", "under")
     }
+    clear_favorite_rows = [
+        row for row in rows
+        if (
+            _number(row.get("favorite_odds")) is not None
+            and float(row["favorite_odds"]) <= 2.20
+            and _number(row.get("favorite_odds_gap")) is not None
+            and float(row["favorite_odds_gap"]) >= 0.20
+        )
+    ]
+    favorite_failed = _weighted_rate(
+        clear_favorite_rows, "favorite_failed"
+    )
+    favorite_drew = _weighted_rate(
+        clear_favorite_rows, "favorite_drew"
+    )
+    underdog_won = _weighted_rate(
+        clear_favorite_rows, "underdog_won"
+    )
+    favorite_not_cover = _weighted_rate(
+        clear_favorite_rows, "favorite_not_cover"
+    )
     favorite_bands = {}
     for band in ("1.50及以下", "1.51-1.80", "1.81-2.20", "2.20以上"):
         band_rows = [row for row in rows if row.get("favorite_band") == band]
@@ -228,10 +279,19 @@ def _build_profile(
             [row for row in band_rows if row.get("favorite_won")],
             "favorite_won_by_one",
         )
+        failed = _weighted_rate(band_rows, "favorite_failed")
+        drew = _weighted_rate(band_rows, "favorite_drew")
+        underdog = _weighted_rate(band_rows, "underdog_won")
+        not_cover = _weighted_rate(band_rows, "favorite_not_cover")
         favorite_bands[band] = {
             "sample": won["sample"],
             "effective_sample": won["effective_sample"],
             "favorite_win_rate": won["rate"],
+            "favorite_fail_rate": failed["rate"],
+            "favorite_draw_rate": drew["rate"],
+            "underdog_win_rate": underdog["rate"],
+            "favorite_not_cover_rate": not_cover["rate"],
+            "handicap_sample": not_cover["sample"],
             "one_goal_given_favorite_win_rate": won_by_one["rate"],
             "favorite_win_sample": won_by_one["sample"],
         }
@@ -286,6 +346,18 @@ def _build_profile(
             "push_rate": _compact_rate(totals["push"]),
             "under_rate": _compact_rate(totals["under"]),
         },
+        "market_surprise": {
+            "definition": "临场欧赔热门方赔率不高于2.20且胜负赔率差至少0.20时，热门方最终未取胜",
+            "sample": favorite_failed["sample"],
+            "effective_sample": favorite_failed["effective_sample"],
+            "favorite_fail_rate": _compact_rate(favorite_failed),
+            "favorite_draw_rate": _compact_rate(favorite_drew),
+            "underdog_win_rate": _compact_rate(underdog_won),
+            "favorite_not_cover_rate": _compact_rate(
+                favorite_not_cover
+            ),
+            "handicap_sample": favorite_not_cover["sample"],
+        },
         "favorite_odds_bands": favorite_bands,
         "hidden_signals": [],
         "governance": {
@@ -314,6 +386,8 @@ def _add_hidden_signals(
     global_baseline = global_profile.get("baseline") or {}
     handicap = profile.get("sporttery_handicap") or {}
     global_handicap = global_profile.get("sporttery_handicap") or {}
+    surprise = profile.get("market_surprise") or {}
+    global_surprise = global_profile.get("market_surprise") or {}
     deltas = {
         "draw_rate": _delta(
             baseline.get("draw_rate"), global_baseline.get("draw_rate")
@@ -329,6 +403,14 @@ def _add_hidden_signals(
         "let_draw_rate": _delta(
             handicap.get("let_draw_rate"),
             global_handicap.get("let_draw_rate"),
+        ),
+        "favorite_fail_rate": _delta(
+            surprise.get("favorite_fail_rate"),
+            global_surprise.get("favorite_fail_rate"),
+        ),
+        "favorite_not_cover_rate": _delta(
+            surprise.get("favorite_not_cover_rate"),
+            global_surprise.get("favorite_not_cover_rate"),
         ),
     }
     profile["delta_vs_global"] = deltas
@@ -373,6 +455,28 @@ def _add_hidden_signals(
             "竞彩让平率较全库{}{}个百分点".format(
                 "高" if deltas["let_draw_rate"] > 0 else "低",
                 abs(deltas["let_draw_rate"]),
+            )
+        )
+    if (
+        surprise.get("sample", 0) >= 30
+        and deltas["favorite_fail_rate"] is not None
+        and abs(deltas["favorite_fail_rate"]) >= 5
+    ):
+        signals.append(
+            "明确热门失手率较全库{}{}个百分点".format(
+                "高" if deltas["favorite_fail_rate"] > 0 else "低",
+                abs(deltas["favorite_fail_rate"]),
+            )
+        )
+    if (
+        surprise.get("handicap_sample", 0) >= 30
+        and deltas["favorite_not_cover_rate"] is not None
+        and abs(deltas["favorite_not_cover_rate"]) >= 5
+    ):
+        signals.append(
+            "热门方不穿竞彩盘率较全库{}{}个百分点".format(
+                "高" if deltas["favorite_not_cover_rate"] > 0 else "低",
+                abs(deltas["favorite_not_cover_rate"]),
             )
         )
     profile["hidden_signals"] = signals[:6] or ["与全库基线接近，未发现显著联赛偏移"]
