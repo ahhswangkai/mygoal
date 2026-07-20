@@ -201,6 +201,25 @@
                 </strong>
               </div>
             </div>
+            <div
+              v-if="profileRiskPatternItems(item.profile).length"
+              class="league-risk-patterns"
+            >
+              <header>
+                <strong>上盘水位模式</strong>
+                <span>历史同类结构不穿率</span>
+              </header>
+              <div>
+                <span
+                  v-for="pattern in profileRiskPatternItems(item.profile)"
+                  :key="pattern.id"
+                >
+                  <b>{{ pattern.label }}</b>
+                  <strong>{{ percent(pattern.not_cover_rate) }}</strong>
+                  <small>{{ pattern.sample }}场</small>
+                </span>
+              </div>
+            </div>
             <ul class="league-profile-signals">
               <li
                 v-for="signal in item.profile.hidden_signals || []"
@@ -275,6 +294,12 @@
             <span class="profile-match-detail">
               <span class="profile-favorite-summary">
                 热门 {{ match.favorite_team }} @{{ oddsText(match.favorite_odds) }}
+              </span>
+              <span
+                v-if="profileMatchRiskText(match)"
+                class="profile-risk-reason"
+              >
+                市场预警：{{ profileMatchRiskText(match) }}
               </span>
               <span
                 v-for="market in profileMatchMarkets(match)"
@@ -509,6 +534,22 @@ const profileMatchTypeLabel = match => {
     draw: '热门打平',
     upset: '弱方爆冷'
   }[match.result_type] || '样本'
+}
+const profileRiskPatternItems = profile => Object.entries(
+  profile?.asian_risk_patterns?.patterns || {}
+).map(([id, pattern]) => ({
+  id,
+  ...pattern
+})).filter(pattern => Number(pattern.sample || 0) > 0)
+  .sort((left, right) => (
+    Number(right.sample || 0) - Number(left.sample || 0)
+  ))
+const profileMatchRiskText = match => {
+  const risk = match.asian_risk || {}
+  const labels = (risk.patterns || [])
+    .map(pattern => pattern.label)
+    .filter(Boolean)
+  return labels.join(' · ') || risk.primary_label || ''
 }
 const oddsText = value => {
   if (value === null || value === undefined || String(value).trim() === '') return '-'
@@ -1004,6 +1045,16 @@ onUnmounted(() => {
 .league-profile-grid > button.surprise-metric::after { position: absolute; top: 50%; right: 8px; color: #d9a17d; font-size: 14px; content: "›"; transform: translateY(-50%); }
 .league-profile-grid > button.surprise-metric strong { color: #d56a28; }
 .league-profile-grid > button.surprise-metric:focus-visible { outline: 2px solid rgb(213 106 40 / 35%); outline-offset: 1px; }
+.league-risk-patterns { display: grid; gap: 6px; margin-top: 9px; }
+.league-risk-patterns > header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.league-risk-patterns > header strong { color: #555; font-size: 10px; }
+.league-risk-patterns > header span { color: #aaa; font-size: 9px; }
+.league-risk-patterns > div { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 2px; scrollbar-width: none; }
+.league-risk-patterns > div::-webkit-scrollbar { display: none; }
+.league-risk-patterns > div > span { display: grid; flex: 0 0 auto; min-width: 88px; gap: 2px; padding: 7px 8px; background: #fff8f0; border: 1px solid #f1dfd1; border-radius: 7px; }
+.league-risk-patterns b { color: #775b4b; font-size: 9px; }
+.league-risk-patterns strong { color: #d56a28; font-size: 11px; }
+.league-risk-patterns small { color: #aaa; font-size: 8px; }
 .league-profile-signals { display: grid; gap: 4px; margin: 9px 0 0; padding: 0; list-style: none; }
 .league-profile-signals li { position: relative; padding-left: 12px; color: #815961; font-size: 10px; line-height: 1.45; }
 .league-profile-signals li::before { position: absolute; top: 6px; left: 2px; width: 4px; height: 4px; content: ""; background: #df6d79; border-radius: 50%; }
@@ -1046,6 +1097,7 @@ onUnmounted(() => {
 .profile-match-score strong { color: #222; font-size: 18px; white-space: nowrap; }
 .profile-match-detail { display: grid; gap: 5px; overflow: hidden; color: #999; font-size: 9px; line-height: 1.45; }
 .profile-favorite-summary { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.profile-risk-reason { padding: 4px 7px; color: #b06426; background: #fff5e9; border-radius: 5px; }
 .profile-market-block { display: grid; grid-template-columns: 31px minmax(0, 1fr); gap: 1px 7px; padding: 5px 7px; background: #f8f8fa; border-radius: 6px; }
 .profile-market-title { display: flex; grid-column: 1 / -1; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 1px; }
 .profile-market-title b { overflow: hidden; color: #555; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }

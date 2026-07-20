@@ -106,6 +106,10 @@ class DailyAnalysisTests(unittest.TestCase):
         self.assertTrue(any("大小球盘口" in item for item in row["data_warnings"]))
         self.assertEqual(row["sporttery_handicap"]["value"], -1)
         self.assertNotIn("竞彩让球数缺失", row["data_warnings"])
+        self.assertIn(
+            "water_drop_without_deepen",
+            row["current_asian_risk"]["pattern_ids"],
+        )
 
     def test_includes_league_history_profile_in_match_input(self):
         profile = {
@@ -692,6 +696,52 @@ class DailyAnalysisTests(unittest.TestCase):
         ))
         self.assertTrue(any(
             "极端水位" in item for item in analysis["rating_adjustments"]
+        ))
+
+    def test_league_water_pattern_is_auditable_in_calibration(self):
+        source = build_daily_match_input(match("205"))
+        source["current_asian_risk"] = {
+            "favorite_side": "home",
+            "pattern_ids": ["water_drop_without_deepen"],
+        }
+        source["league_history_profile"] = {
+            "eligible_for_adjustment": True,
+            "asian_risk_patterns": {
+                "patterns": {
+                    "water_drop_without_deepen": {
+                        "label": "降水不升盘",
+                        "sample": 24,
+                        "not_cover_rate": 70.8,
+                    }
+                }
+            },
+        }
+        rows = [{
+            "match_id": "205",
+            "analysis": {
+                "primary_play": "让胜",
+                "rating": 4.5,
+                "model_rating": 4.5,
+                "risks": [],
+            },
+            "input_snapshot": source,
+        }]
+
+        analysis = (
+            FAEDailyAIAnalyzer.calibrate_daily_matches(rows)[0]["analysis"]
+        )
+
+        self.assertEqual(
+            analysis["league_asian_risk_evidence"][0]["pattern_id"],
+            "water_drop_without_deepen",
+        )
+        self.assertTrue(any(
+            "联赛降水不升盘模式历史不穿率70.8%" in item
+            for item in analysis["risks"]
+        ))
+        self.assertTrue(any(
+            "联赛历史高样本风险匹配" in item
+            for item in analysis["rating_adjustments"]
         ))
 
     def test_summary_marks_secondary_pool_direction_as_defensive(self):

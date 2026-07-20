@@ -22,6 +22,7 @@ from football_ai.daily_review import aggregate_daily_ai_reviews
 from football_ai.review_memory import build_review_memory
 from football_ai.league_profile import (
     build_league_profiles,
+    classify_asian_risk_patterns,
     classify_market_favorite,
     league_aliases,
 )
@@ -1090,6 +1091,14 @@ class MongoDBStorage:
                 'away_score': 1,
                 'euro_current_win': 1,
                 'euro_current_lose': 1,
+                'euro_initial_win': 1,
+                'euro_initial_lose': 1,
+                'asian_current_home_odds': 1,
+                'asian_current_handicap': 1,
+                'asian_current_away_odds': 1,
+                'asian_initial_home_odds': 1,
+                'asian_initial_handicap': 1,
+                'asian_initial_away_odds': 1,
                 'hi_handicap_value': 1,
                 'handicap': 1,
                 'ou_current_total': 1,
@@ -1219,6 +1228,9 @@ class MongoDBStorage:
                     else match.get('away_team')
                 )
                 item = dict(match)
+                asian_risk = classify_asian_risk_patterns(
+                    match, classification
+                )
                 item.update({
                     'favorite_side': favorite_side,
                     'favorite_team': favorite_team,
@@ -1229,6 +1241,7 @@ class MongoDBStorage:
                         'favorite_not_cover'
                     ),
                     'hhad_result': classification.get('hhad_result'),
+                    'asian_risk': asian_risk,
                 })
                 items.append(item)
 

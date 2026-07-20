@@ -98,6 +98,12 @@ def snapshot():
                     "current": [3.5, 3.2, 1.8],
                 },
                 "total": {"current": [0.9, 2.5, 0.9]},
+                "current_asian_risk": {
+                    "pattern_ids": ["water_drop_without_deepen"],
+                },
+                "league_history_profile": {
+                    "eligible_for_adjustment": True,
+                },
             },
         }],
     }
@@ -143,6 +149,14 @@ class FAEAIReviewAnalyzerTests(unittest.TestCase):
         self.assertFalse(result["governance"]["formal_weights_changed"])
         self.assertEqual(len(result["learning_candidates"]), 1)
         candidate = result["learning_candidates"][0]
+        audit_input = FAEAIReviewAnalyzer(client).build_input(
+            snapshot(), review()
+        )
+        self.assertEqual(
+            audit_input["matches"][0]["market_risk_context"]
+            ["current_asian_risk"]["pattern_ids"],
+            ["water_drop_without_deepen"],
+        )
         self.assertEqual(candidate["delta"], 0.15)
         self.assertEqual(candidate["minimum_samples"], 10)
         self.assertEqual(candidate["evidence_match_ids"], ["201"])

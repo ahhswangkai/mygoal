@@ -10,11 +10,12 @@ from typing import Any, Callable, Dict, Iterable, List, Optional
 
 from json_repair import repair_json
 
+from .league_profile import classify_asian_risk_patterns
 from .provider import ArkNarrativeClient, FAEError, FAEOutputError
 from .version import ENGINE_VERSION
 
 
-DAILY_PROMPT_VERSION = "five-market-daily-v8-market-surprise"
+DAILY_PROMPT_VERSION = "five-market-daily-v9-asian-risk-patterns"
 
 HANDICAP_VALUES = {
     "平手": 0.0, "平/半": 0.25, "平手/半球": 0.25,
@@ -161,6 +162,7 @@ def build_daily_match_input(
             "eligible_for_adjustment": False,
             "hidden_signals": ["暂无可用联赛历史画像"],
         },
+        "current_asian_risk": classify_asian_risk_patterns(match),
         "data_warnings": list(dict.fromkeys(warnings)),
         "missing_fundamentals": [
             "近期状态", "伤停", "首发", "赛程背景"
@@ -638,6 +640,8 @@ class FAEDailyAIAnalyzer:
             "联赛画像中的命中率、让平率、进球率是历史条件频率，不是真实胜率；不得单独据此推荐，必须与当天五项市场证据一致。",
             "联赛画像market_surprise表示临场欧赔存在明确热门时热门方未赢球的历史频率；favorite_fail_rate必须拆看favorite_draw_rate和underdog_win_rate，不能把两者混成同一投注结论。",
             "若当前热门赔率所在favorite_odds_bands样本不少于20，且联赛热门失手率或不穿盘率显著高于全库，只能降低热门方向置信度并增加平局、弱方不败或让球防选，不得脱离当天盘口直接反买。",
+            "current_asian_risk表示当前比赛赛前触发的水位与盘口结构；league_history_profile.asian_risk_patterns表示该联赛同类结构的历史不穿率。只有当前模式一致、该模式样本不少于20且联赛画像可调权时，才可作为低到中权重风险证据。",
+            "退盘削弱、上盘升水、降水不升盘、升盘高水、欧亚背离和热门过热都只是赛前市场预警，不能表述为赛果原因；盘口无明显预警时应明确需要比赛过程数据解释。",
             "若联赛画像与当天盘口冲突，以当天盘口、数据质量和阵容事实为准，并在风险中说明冲突。",
             "单日观察项属于低权重提醒；只有validated_patterns中的跨日模式可以作为辅助校正，且必须让位于当天盘口。",
             "当validated_pattern_count为0时，代表没有经过跨日和足量样本验证的规则；禁止使用历史0%命中区间、严禁纳入、全部排除或类似绝对结论。",
@@ -707,6 +711,7 @@ class FAEDailyAIAnalyzer:
             "联赛历史画像只在eligible_for_adjustment=true时作为低到中权重基线；赔率分段样本不足时不得使用。",
             "历史联赛频率不是真实概率，必须让位于本场欧赔、亚盘、竞彩、大小球和市场一致性。",
             "market_surprise是明确热门方未赢球的历史频率，必须拆分热门打平和弱方爆冷；仅当当前赔率分段样本不少于20时用于降低热门置信度或增加防选，禁止单独据此反买。",
+            "current_asian_risk只描述本场赛前水位结构；只有联赛画像中相同asian_risk_patterns模式样本不少于20时才能辅助降级或增加防选，禁止把市场预警写成赛果真实原因。",
             "仅validated_patterns可作为跨日辅助校正，近期观察项不能单独改变推荐。",
             "单日0/N或N/N属于小样本，不得据此将当前比赛定义为严禁、必选、高危赔率区间或全部排除。",
             "存在欧亚背离、极端水位或大小球跳档时自动降级，最高3.5星；缺少多项基本面时不得给五星。",
@@ -1272,6 +1277,7 @@ class FAEDailyAIAnalyzer:
             )
             cap = 5.0
             adjustments = []
+            historical_risk_notes = []
             warnings = [str(value) for value in source.get("data_warnings") or []]
             signals = (
                 (source.get("fae_core") or {}).get("rule_signals") or []
@@ -1329,6 +1335,57 @@ class FAEDailyAIAnalyzer:
             if market_codes.intersection({"D", "E"}):
                 cap = min(cap, 3.5)
                 adjustments.append("热门过热或深盘高水，星级上限3.5星")
+            current_asian_risk = source.get("current_asian_risk") or {}
+            league_profile = source.get("league_history_profile") or {}
+            historical_patterns = (
+                (league_profile.get("asian_risk_patterns") or {})
+                .get("patterns") or {}
+            )
+            matched_pattern_evidence = []
+            if league_profile.get("eligible_for_adjustment"):
+                for pattern_id in (
+                    current_asian_risk.get("pattern_ids") or []
+                ):
+                    if pattern_id == "no_market_warning":
+                        continue
+                    metric = historical_patterns.get(pattern_id) or {}
+                    sample = int(metric.get("sample") or 0)
+                    not_cover_rate = _number(metric.get("not_cover_rate"))
+                    if sample < 20 or not_cover_rate is None:
+                        continue
+                    matched_pattern_evidence.append({
+                        "pattern_id": pattern_id,
+                        "label": metric.get("label") or pattern_id,
+                        "sample": sample,
+                        "not_cover_rate": round(not_cover_rate, 1),
+                    })
+            if matched_pattern_evidence:
+                strongest_pattern = max(
+                    matched_pattern_evidence,
+                    key=lambda value: (
+                        value["not_cover_rate"], value["sample"]
+                    ),
+                )
+                historical_risk_notes.append(
+                    "联赛{}模式历史不穿率{}%（{}场），仅作条件风险基线".format(
+                        strongest_pattern["label"],
+                        strongest_pattern["not_cover_rate"],
+                        strongest_pattern["sample"],
+                    )
+                )
+                favorite_side = current_asian_risk.get("favorite_side")
+                favorite_cover_play = (
+                    (favorite_side == "home"
+                     and effective_primary_play == "让胜")
+                    or
+                    (favorite_side == "away"
+                     and effective_primary_play == "让负")
+                )
+                if favorite_cover_play:
+                    cap = min(cap, 3.5)
+                    adjustments.append(
+                        "当前水位模式与联赛历史高样本风险匹配，热门穿盘方向最高3.5星"
+                    )
             if len(source.get("missing_fundamentals") or []) >= 3:
                 cap = min(cap, 4.0)
                 adjustments.append("基本面缺失较多，不允许评为五星")
@@ -1390,6 +1447,7 @@ class FAEDailyAIAnalyzer:
                 "value_score": value_profile.get("value_score"),
                 "bet_score": round(bet_score),
                 "market_confidence": market_confidence,
+                "league_asian_risk_evidence": matched_pattern_evidence,
                 "no_bet": no_bet,
                 "no_bet_reasons": list(dict.fromkeys(no_bet_reasons)),
                 "decision": "不下注" if no_bet else "可考虑",
@@ -1409,9 +1467,10 @@ class FAEDailyAIAnalyzer:
                 cls._label_probability_language(value)
                 for value in analysis.get("evidence") or []
             ]
-            if adjustments:
+            if adjustments or historical_risk_notes:
                 analysis["risks"] = list(dict.fromkeys(
                     list(analysis.get("risks") or [])
+                    + historical_risk_notes
                     + no_bet_reasons
                     + adjustments
                 ))[:10]

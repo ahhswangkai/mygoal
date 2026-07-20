@@ -8,7 +8,39 @@ import re
 from typing import Any, Dict, Iterable, List, Optional
 
 
-LEAGUE_PROFILE_VERSION = "league-profile-v2-market-surprise"
+LEAGUE_PROFILE_VERSION = "league-profile-v3-asian-risk-patterns"
+
+HANDICAP_VALUES = {
+    "平手": 0.0,
+    "平/半": 0.25,
+    "平手/半球": 0.25,
+    "半球": 0.5,
+    "半/一": 0.75,
+    "半球/一球": 0.75,
+    "一球": 1.0,
+    "一/球半": 1.25,
+    "一球/球半": 1.25,
+    "球半": 1.5,
+    "球半/两": 1.75,
+    "球半/两球": 1.75,
+    "两球": 2.0,
+    "两/两球半": 2.25,
+    "两球/两球半": 2.25,
+    "两球半": 2.5,
+    "两球半/三球": 2.75,
+    "三球": 3.0,
+}
+
+ASIAN_RISK_PATTERNS = (
+    ("handicap_retreat", "退盘削弱"),
+    ("upper_water_rise", "上盘升水"),
+    ("water_drop_without_deepen", "降水不升盘"),
+    ("deepen_high_water", "升盘高水"),
+    ("euro_asian_divergence", "欧亚背离"),
+    ("overheated_shallow", "热门过热"),
+    ("no_market_warning", "盘口无明显预警"),
+)
+ASIAN_RISK_LABELS = dict(ASIAN_RISK_PATTERNS)
 
 LEAGUE_ALIAS_GROUPS = (
     ("瑞典超", "瑞超"),
@@ -66,6 +98,190 @@ def _favorite_band(odds: float) -> str:
     if odds <= 2.20:
         return "1.81-2.20"
     return "2.20以上"
+
+
+def _clean_handicap(value: Any) -> str:
+    return re.sub(
+        r"(?:[↑↓]|升|降)+$", "", re.sub(r"\s+", "", str(value or ""))
+    )
+
+
+def _handicap_value(value: Any) -> Optional[float]:
+    text = _clean_handicap(value)
+    if not text:
+        return None
+    number = _number(text)
+    if number is not None and re.fullmatch(r"[+-]?\d+(?:\.\d+)?", text):
+        return number
+    receiving = text.startswith("受")
+    key = text[1:] if receiving else text
+    if key not in HANDICAP_VALUES:
+        return None
+    depth = HANDICAP_VALUES[key]
+    return -depth if receiving else depth
+
+
+def _favorite_from_odds(match: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    home_odds = _number(match.get("euro_current_win"))
+    away_odds = _number(match.get("euro_current_lose"))
+    if (
+        home_odds is None
+        or away_odds is None
+        or home_odds <= 0
+        or away_odds <= 0
+        or abs(home_odds - away_odds) < 0.20
+    ):
+        return None
+    side, odds = (
+        ("home", home_odds)
+        if home_odds < away_odds else ("away", away_odds)
+    )
+    return {
+        "favorite_side": side,
+        "favorite_odds": odds,
+        "clear_favorite": odds <= 2.20,
+    }
+
+
+def classify_asian_risk_patterns(
+    match: Dict[str, Any],
+    favorite: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Describe pre-match Asian-market warning patterns without claiming cause."""
+    favorite = favorite or _favorite_from_odds(match) or {}
+    favorite_side = favorite.get("favorite_side")
+    if not favorite_side or not favorite.get("clear_favorite"):
+        return {
+            "data_complete": False,
+            "favorite_side": favorite_side,
+            "pattern_ids": [],
+            "patterns": [],
+            "primary_id": None,
+            "primary_label": "无明确热门方",
+        }
+
+    initial_line = _handicap_value(match.get("asian_initial_handicap"))
+    current_line = _handicap_value(match.get("asian_current_handicap"))
+    initial_water = _number(match.get(
+        "asian_initial_home_odds"
+        if favorite_side == "home" else "asian_initial_away_odds"
+    ))
+    current_water = _number(match.get(
+        "asian_current_home_odds"
+        if favorite_side == "home" else "asian_current_away_odds"
+    ))
+    initial_euro = _number(match.get(
+        "euro_initial_win"
+        if favorite_side == "home" else "euro_initial_lose"
+    ))
+    current_euro = _number(match.get(
+        "euro_current_win"
+        if favorite_side == "home" else "euro_current_lose"
+    ))
+    if (
+        initial_line is None
+        or current_line is None
+        or initial_water is None
+        or current_water is None
+    ):
+        return {
+            "data_complete": False,
+            "favorite_side": favorite_side,
+            "pattern_ids": [],
+            "patterns": [],
+            "primary_id": None,
+            "primary_label": "亚盘初即时数据不足",
+        }
+
+    initial_depth = (
+        initial_line if favorite_side == "home" else -initial_line
+    )
+    current_depth = (
+        current_line if favorite_side == "home" else -current_line
+    )
+    line_change = round(current_depth - initial_depth, 3)
+    water_change = round(current_water - initial_water, 3)
+    euro_change = (
+        round(current_euro - initial_euro, 3)
+        if current_euro is not None and initial_euro is not None
+        else None
+    )
+    reasons: Dict[str, str] = {}
+
+    if line_change < -0.01:
+        reasons["handicap_retreat"] = (
+            f"热门方盘口由{_clean_handicap(match.get('asian_initial_handicap'))}"
+            f"退至{_clean_handicap(match.get('asian_current_handicap'))}"
+        )
+    if water_change >= 0.05 and line_change <= 0.01:
+        reasons["upper_water_rise"] = (
+            f"上盘水位由{initial_water:.2f}升至{current_water:.2f}"
+        )
+    if water_change <= -0.05 and abs(line_change) <= 0.01:
+        reasons["water_drop_without_deepen"] = (
+            f"上盘水位由{initial_water:.2f}降至{current_water:.2f}，盘口未升深"
+        )
+    if line_change > 0.01 and current_water >= 0.98:
+        reasons["deepen_high_water"] = (
+            f"盘口升深但上盘即时水位仍为{current_water:.2f}"
+        )
+    if (
+        euro_change is not None
+        and euro_change <= -0.03
+        and (line_change < -0.01 or water_change >= 0.05)
+    ):
+        reasons["euro_asian_divergence"] = (
+            f"热门欧赔由{initial_euro:.2f}降至{current_euro:.2f}，"
+            "亚盘却退盘或上盘升水"
+        )
+    if (
+        current_euro is not None
+        and current_euro <= 1.65
+        and current_depth <= 0.75
+        and current_water <= 0.75
+    ):
+        reasons["overheated_shallow"] = (
+            f"热门欧赔{current_euro:.2f}且上盘低水{current_water:.2f}，"
+            f"盘口深度仅{abs(current_depth):g}"
+        )
+    if not reasons:
+        reasons["no_market_warning"] = (
+            "赛前初即时亚盘未触发已定义的明显风险模式"
+        )
+
+    pattern_ids = [
+        pattern_id for pattern_id, _ in ASIAN_RISK_PATTERNS
+        if pattern_id in reasons
+    ]
+    patterns = [{
+        "id": pattern_id,
+        "label": ASIAN_RISK_LABELS[pattern_id],
+        "reason": reasons[pattern_id],
+    } for pattern_id in pattern_ids]
+    primary_id = pattern_ids[0] if pattern_ids else None
+    return {
+        "data_complete": True,
+        "favorite_side": favorite_side,
+        "initial_line": _clean_handicap(match.get("asian_initial_handicap")),
+        "current_line": _clean_handicap(match.get("asian_current_handicap")),
+        "initial_depth": initial_depth,
+        "current_depth": current_depth,
+        "line_change": line_change,
+        "initial_upper_water": initial_water,
+        "current_upper_water": current_water,
+        "upper_water_change": water_change,
+        "favorite_euro_change": euro_change,
+        "pattern_ids": pattern_ids,
+        "patterns": patterns,
+        "primary_id": primary_id,
+        "primary_label": (
+            ASIAN_RISK_LABELS.get(primary_id)
+            if primary_id else "盘口数据不足"
+        ),
+        "governance": (
+            "仅表示赛前市场预警结构，不代表赛果原因；真实原因需结合比赛过程数据。"
+        ),
+    }
 
 
 def classify_market_favorite(
@@ -189,6 +405,7 @@ def _feature_rows(
             favorite_won and abs(difference) == 1
             if favorite_won is not None else None
         )
+        asian_risk = classify_asian_risk_patterns(match, favorite)
 
         line = _total_line(
             match.get("ou_current_total")
@@ -223,6 +440,8 @@ def _feature_rows(
             "favorite_drew": favorite.get("favorite_drew"),
             "underdog_won": favorite.get("underdog_won"),
             "favorite_not_cover": favorite.get("favorite_not_cover"),
+            "asian_risk_data_complete": asian_risk.get("data_complete"),
+            "asian_risk_pattern_ids": asian_risk.get("pattern_ids") or [],
             "total_result": total_result,
         })
     return rows
@@ -307,6 +526,31 @@ def _build_profile(
     favorite_not_cover = _weighted_rate(
         clear_favorite_rows, "favorite_not_cover"
     )
+    asian_risk_patterns = {}
+    non_cover_rows = [
+        row for row in clear_favorite_rows
+        if row.get("favorite_not_cover") is True
+    ]
+    non_cover_weight = sum(row["weight"] for row in non_cover_rows)
+    for pattern_id, pattern_label in ASIAN_RISK_PATTERNS:
+        pattern_rows = [
+            row for row in clear_favorite_rows
+            if pattern_id in (row.get("asian_risk_pattern_ids") or [])
+        ]
+        not_cover = _weighted_rate(pattern_rows, "favorite_not_cover")
+        covered_non_cover_weight = sum(
+            row["weight"] for row in pattern_rows
+            if row.get("favorite_not_cover") is True
+        )
+        asian_risk_patterns[pattern_id] = {
+            "label": pattern_label,
+            "sample": not_cover["sample"],
+            "effective_sample": not_cover["effective_sample"],
+            "not_cover_rate": not_cover["rate"],
+            "not_cover_case_share": round(
+                covered_non_cover_weight / non_cover_weight * 100, 1
+            ) if non_cover_weight else None,
+        }
     favorite_bands = {}
     for band in ("1.50及以下", "1.51-1.80", "1.81-2.20", "2.20以上"):
         band_rows = [row for row in rows if row.get("favorite_band") == band]
@@ -396,6 +640,14 @@ def _build_profile(
             ),
             "handicap_sample": favorite_not_cover["sample"],
         },
+        "asian_risk_patterns": {
+            "definition": (
+                "先识别欧赔明确热门方，再按该方的亚盘深度和水位初即时变化分类；"
+                "not_cover_rate是同类赛前结构的历史不穿率，不是当前比赛真实概率。"
+            ),
+            "minimum_recommended_sample": 20,
+            "patterns": asian_risk_patterns,
+        },
         "favorite_odds_bands": favorite_bands,
         "hidden_signals": [],
         "governance": {
@@ -426,6 +678,21 @@ def _add_hidden_signals(
     global_handicap = global_profile.get("sporttery_handicap") or {}
     surprise = profile.get("market_surprise") or {}
     global_surprise = global_profile.get("market_surprise") or {}
+    risk_patterns = (
+        (profile.get("asian_risk_patterns") or {}).get("patterns") or {}
+    )
+    global_risk_patterns = (
+        (global_profile.get("asian_risk_patterns") or {}).get("patterns") or {}
+    )
+    risk_pattern_deltas = {
+        pattern_id: _delta(
+            (risk_patterns.get(pattern_id) or {}).get("not_cover_rate"),
+            (global_risk_patterns.get(pattern_id) or {}).get(
+                "not_cover_rate"
+            ),
+        )
+        for pattern_id, _ in ASIAN_RISK_PATTERNS
+    }
     deltas = {
         "draw_rate": _delta(
             baseline.get("draw_rate"), global_baseline.get("draw_rate")
@@ -450,6 +717,7 @@ def _add_hidden_signals(
             surprise.get("favorite_not_cover_rate"),
             global_surprise.get("favorite_not_cover_rate"),
         ),
+        "asian_risk_patterns": risk_pattern_deltas,
     }
     profile["delta_vs_global"] = deltas
     if not profile.get("eligible_for_adjustment"):
@@ -517,6 +785,28 @@ def _add_hidden_signals(
                 abs(deltas["favorite_not_cover_rate"]),
             )
         )
+    significant_patterns = []
+    for pattern_id, label in ASIAN_RISK_PATTERNS:
+        metric = risk_patterns.get(pattern_id) or {}
+        pattern_delta = risk_pattern_deltas.get(pattern_id)
+        if (
+            metric.get("sample", 0) >= 20
+            and pattern_delta is not None
+            and abs(pattern_delta) >= 8
+        ):
+            significant_patterns.append((
+                abs(pattern_delta),
+                "{}模式不穿率较全库{}{}个百分点".format(
+                    label,
+                    "高" if pattern_delta > 0 else "低",
+                    abs(pattern_delta),
+                ),
+            ))
+    signals.extend(
+        signal for _, signal in sorted(
+            significant_patterns, reverse=True
+        )[:2]
+    )
     profile["hidden_signals"] = signals[:6] or ["与全库基线接近，未发现显著联赛偏移"]
 
 

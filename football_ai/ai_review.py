@@ -14,7 +14,7 @@ from .provider import ArkNarrativeClient, FAEOutputError
 from .version import ENGINE_VERSION
 
 
-AI_REVIEW_PROMPT_VERSION = "fae-deep-review-v1"
+AI_REVIEW_PROMPT_VERSION = "fae-deep-review-v2-asian-risk-context"
 SETTLED_STATUSES = {"hit", "miss", "push"}
 LEARNING_SCOPES = {
     "euro",
@@ -91,6 +91,14 @@ class FAEAIReviewAnalyzer:
                         "sporttery_handicap",
                         "total",
                     )
+                },
+                "market_risk_context": {
+                    "current_asian_risk": input_snapshot.get(
+                        "current_asian_risk"
+                    ) or {},
+                    "league_history_profile": input_snapshot.get(
+                        "league_history_profile"
+                    ) or {},
                 },
                 "data_warnings": input_snapshot.get(
                     "data_warnings"
@@ -239,6 +247,8 @@ class FAEAIReviewAnalyzer:
             "不得把最终比分反推成赛前必然信号，所有有效或遗漏信号必须能在输入的赛前记录中找到。",
             "固定复核欧赔、亚盘真实升深、竞彩让球、大小球和市场一致性五项。",
             "升降属于走势而非盘口名；让平必须结合输入中的具体让球数解释。",
+            "market_risk_context中的水位模式仅表示赛前风险结构；可以检验该预警是否有效，但不得把退盘、升水或欧亚背离直接写成比赛失利的真实原因。",
+            "若盘口无明显预警，只能说明现有赛前市场数据无法解释赛果；没有xG、红牌、射门等过程数据时必须明确未知。",
             "调权只能作为候选，单日样本不得直接修改正式权重；每个候选必须给出至少10个样本的验证门槛。",
             "输入中的每场已结算比赛必须在matches中恰好出现一次。",
         ]

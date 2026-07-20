@@ -2,6 +2,7 @@ import unittest
 
 from football_ai.league_profile import (
     build_league_profiles,
+    classify_asian_risk_patterns,
     classify_market_favorite,
     league_aliases,
 )
@@ -155,6 +156,59 @@ class LeagueProfileTests(unittest.TestCase):
         self.assertEqual(upset["result_type"], "upset")
         self.assertTrue(upset["favorite_failed"])
         self.assertIsNone(balanced)
+
+    def test_classifies_asian_water_warning_patterns(self):
+        row = historical_match(
+            "2026-07-18", 1, 1, home_odds=1.65, away_odds=4.8
+        )
+        row.update({
+            "euro_initial_win": 1.75,
+            "asian_initial_home_odds": 0.90,
+            "asian_initial_handicap": "半球/一球",
+            "asian_initial_away_odds": 0.98,
+            "asian_current_home_odds": 1.02,
+            "asian_current_handicap": "半球",
+            "asian_current_away_odds": 0.86,
+        })
+
+        risk = classify_asian_risk_patterns(row)
+
+        self.assertTrue(risk["data_complete"])
+        self.assertIn("handicap_retreat", risk["pattern_ids"])
+        self.assertIn("upper_water_rise", risk["pattern_ids"])
+        self.assertIn("euro_asian_divergence", risk["pattern_ids"])
+        self.assertNotIn("water_drop_without_deepen", risk["pattern_ids"])
+
+    def test_builds_historical_not_cover_rate_by_water_pattern(self):
+        covered = historical_match(
+            "2026-07-18", 2, 0, home_odds=1.65, away_odds=4.8
+        )
+        not_covered = historical_match(
+            "2026-07-17", 1, 1, home_odds=1.65, away_odds=4.8
+        )
+        for row in (covered, not_covered):
+            row.update({
+                "euro_initial_win": 1.70,
+                "asian_initial_home_odds": 0.95,
+                "asian_initial_handicap": "半球",
+                "asian_initial_away_odds": 0.85,
+                "asian_current_home_odds": 0.80,
+                "asian_current_handicap": "半球",
+                "asian_current_away_odds": 1.00,
+            })
+
+        profile = build_league_profiles(
+            {"测试联赛": [covered, not_covered]},
+            "2026-07-19",
+            global_matches=[covered, not_covered],
+            minimum_samples=1,
+        )["测试联赛"]
+        pattern = profile["asian_risk_patterns"]["patterns"][
+            "water_drop_without_deepen"
+        ]
+
+        self.assertEqual(pattern["sample"], 2)
+        self.assertAlmostEqual(pattern["not_cover_rate"], 50.0, delta=1.0)
 
 
 if __name__ == "__main__":
