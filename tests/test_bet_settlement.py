@@ -6,6 +6,7 @@ from calculator_math import calculate_max_bonus, calculate_notes
 from bet_settlement import (
     candidate_result_dates,
     grade_item,
+    merge_database_results,
     merge_rescheduled_void_results,
     settle_bet,
 )
@@ -93,6 +94,55 @@ class ItemGradingTests(unittest.TestCase):
 
 
 class BetSettlementTests(unittest.TestCase):
+    def test_database_result_settles_by_date_number_with_half_score(self):
+        selected = item('sporttery-1', 'hafu', '平胜', 3.2)
+        selected['date'] = '2026-07-19'
+        selected['match_num'] = '周日205'
+        result_index = {}
+        merge_database_results(result_index, [{
+            'match_id': '500-match-1',
+            'owner_date': '2026-07-19',
+            'match_number': '周日205',
+            'status': 2,
+            'home_score': '2',
+            'away_score': '1',
+            'home_half_score': '0',
+            'away_half_score': '0',
+        }])
+
+        settled = settle_bet({
+            'selected_items': [selected],
+            'pass_counts': [1],
+            'multiplier': 1,
+            'stake': 2,
+        }, result_index)
+
+        self.assertEqual(settled['status'], 'won')
+        self.assertEqual(
+            settled['settlement']['matches'][0]['half_score'], '0:0'
+        )
+        self.assertEqual(
+            settled['settlement']['matches'][0]['result_source'], 'mongodb'
+        )
+
+    def test_database_result_without_half_score_waits_for_half_full_bet(self):
+        selected = item('sporttery-1', 'hafu', '平胜', 3.2)
+        result_index = {}
+        merge_database_results(result_index, [{
+            'match_id': '500-match-1',
+            'owner_date': selected['date'],
+            'match_number': selected['match_num'],
+            'status': 2,
+            'home_score': '2',
+            'away_score': '1',
+        }])
+        self.assertIsNone(settle_bet({
+            'selected_items': [selected],
+            'pass_counts': [1],
+            'multiplier': 1,
+            'stake': 2,
+        }, result_index))
+
     def test_two_and_three_pass_bonus_sums_each_ticket(self):
         selected = [
             item('1', 'hhad', 'draw', 2.98),

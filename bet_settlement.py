@@ -98,6 +98,54 @@ def parse_score(value):
         return None
 
 
+def merge_database_results(result_index, matches):
+    """Merge completed MongoDB matches using business date and match number."""
+    for match in matches or []:
+        try:
+            status = int(match.get('status') or 0)
+        except (TypeError, ValueError):
+            status = 0
+        if status != 2:
+            continue
+
+        full_score = parse_score(match.get('score'))
+        if full_score is None:
+            full_score = parse_score('{}:{}'.format(
+                match.get('home_score', ''),
+                match.get('away_score', ''),
+            ))
+        if full_score is None:
+            continue
+
+        half_score = parse_score(match.get('half_score'))
+        if half_score is None:
+            half_score = parse_score('{}:{}'.format(
+                match.get('home_half_score', ''),
+                match.get('away_half_score', ''),
+            ))
+        match_id = str(match.get('match_id') or '')
+        match_date = str(match.get('owner_date') or '')[:10]
+        match_number = str(match.get('match_number') or '')
+        result = {
+            'matchId': match_id,
+            'matchDate': match_date,
+            'matchNumStr': match_number,
+            'matchResultStatus': '2',
+            'poolStatus': 'Payout',
+            'resultStatus': '数据库完场赛果',
+            'sectionsNo1': (
+                '{}:{}'.format(*half_score) if half_score is not None else ''
+            ),
+            'sectionsNo999': '{}:{}'.format(*full_score),
+            'resultSource': 'mongodb',
+        }
+        if match_id:
+            result_index[match_id] = result
+        if match_date and match_number:
+            result_index[(match_date, match_number)] = result
+    return result_index
+
+
 def outcome_name(score):
     if score[0] > score[1]:
         return '胜'
@@ -228,6 +276,7 @@ def settle_bet(bet, result_index):
             'full_score': str(result.get('sectionsNo999') or ''),
             'half_score': str(result.get('sectionsNo1') or ''),
             'result_status': str(result.get('resultStatus') or ''),
+            'result_source': str(result.get('resultSource') or 'sporttery'),
             'is_void': is_void_result(result),
             'item_results': item_results,
         })

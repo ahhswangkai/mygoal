@@ -181,6 +181,7 @@ class FootballCrawler:
                     league_td = tds[0]
                     round_td = tds[1]
                     time_td = tds[2]
+                    half_td = tds[7]
                     match_id = tr.get('fid', '')
                 else:
                     # 普通页面结构：14列
@@ -194,6 +195,7 @@ class FootballCrawler:
                     league_td = tds[1]
                     round_td = tds[2]
                     time_td = tds[3]
+                    half_td = tds[8] if len(tds) > 8 else None
                     match_id = tr.get('fid', '')
                 
                 # 提取主队（包含排名）
@@ -225,7 +227,6 @@ class FootballCrawler:
                         away_rank = rank_text
                 
                 # 提取比分和盘口信息
-                score_td = tds[6]
                 score_div = score_td.find('div', class_='pk')
                 
                 # 初始化比分和盘口
@@ -233,6 +234,9 @@ class FootballCrawler:
                 handicap = ''
                 home_score = ''
                 away_score = ''
+                home_half_score = ''
+                away_half_score = ''
+                half_score = ''
                 
                 if score_div:
                     score_links = score_div.find_all('a')
@@ -254,6 +258,23 @@ class FootballCrawler:
                         # 只有盘口信息
                         handicap = score_links[0].get_text(strip=True)
                         score = '-'
+                else:
+                    score_match = re.search(
+                        r'(\d+)\s*[-:：]\s*(\d+)',
+                        score_td.get_text(' ', strip=True),
+                    )
+                    if score_match:
+                        home_score, away_score = score_match.groups()
+                        score = f"{home_score}-{away_score}"
+
+                if half_td:
+                    half_match = re.search(
+                        r'(\d+)\s*[-:：]\s*(\d+)',
+                        half_td.get_text(' ', strip=True),
+                    )
+                    if half_match:
+                        home_half_score, away_half_score = half_match.groups()
+                        half_score = f"{home_half_score}-{away_half_score}"
                 
                 # 标准化状态：0=未开始，1=进行中，2=完场
                 raw_status = status_td.get_text(strip=True)
@@ -305,6 +326,9 @@ class FootballCrawler:
                     'away_rank': away_rank,  # 客队排名
                     'home_score': home_score,
                     'away_score': away_score,
+                    'home_half_score': home_half_score,
+                    'away_half_score': away_half_score,
+                    'half_score': half_score,
                     'handicap': handicap,
                 }
                 
@@ -847,6 +871,8 @@ class FootballCrawler:
                 # 针对已结束或进行中的比赛，强制更新状态
                 home_score = item.get('homescore', '')
                 away_score = item.get('awayscore', '')
+                home_half_score = item.get('homehalfscore', '')
+                away_half_score = item.get('awayhalfscore', '')
                 
                 # 移除强制更新状态的逻辑，因为API返回的status=0是可信的
                 # 有些未开始比赛 homescore/awayscore 可能是 "0"
@@ -869,6 +895,13 @@ class FootballCrawler:
                 score = '-'
                 if status_code != 0 and home_score and away_score:
                     score = f"{home_score}-{away_score}"
+                half_score = ''
+                if (
+                    status_code != 0
+                    and str(home_half_score).strip() != ''
+                    and str(away_half_score).strip() != ''
+                ):
+                    half_score = f"{home_half_score}-{away_half_score}"
                 
                 match_data = {
                     'match_id': match_id,
@@ -886,6 +919,9 @@ class FootballCrawler:
                     'away_rank': away_rank,
                     'home_score': home_score,
                     'away_score': away_score,
+                    'home_half_score': home_half_score,
+                    'away_half_score': away_half_score,
+                    'half_score': half_score,
                     'handicap': handicap,
                     'owner_date': owner_date,
                 }

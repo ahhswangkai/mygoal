@@ -8,8 +8,7 @@ from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import wraps
 from bet_settlement import (
-    SportteryResultClient,
-    candidate_result_dates,
+    merge_database_results,
     merge_rescheduled_void_results,
     settle_bet,
 )
@@ -61,7 +60,6 @@ app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=30)
 user_storage = UserStorage(
     os.getenv('USER_DATABASE_PATH', os.path.join(os.path.dirname(__file__), 'data', 'users.db'))
 )
-sporttery_result_client = SportteryResultClient()
 # 计算器访问体彩接口时必须直连。requests 默认读取 HTTP(S)_PROXY
 # 环境变量，服务器若配置了代理会导致体彩接口超时或被 WAF 拦截。
 sporttery_calculator_session = requests.Session()
@@ -3007,25 +3005,23 @@ def _settle_pending_calculator_bets(user_id=None):
             if item.get('date')
         }
         result_index = {}
-        for match_date in candidate_result_dates(dates):
-            try:
-                result_index.update(sporttery_result_client.build_index([match_date]))
-            except Exception as exc:
-                print("⚠️  获取 {} 体彩赛果失败: {}".format(match_date, exc))
-
         if mongo_storage and dates:
             try:
-                rescheduled_matches = mongo_storage.get_matches({
+                database_matches = mongo_storage.get_matches({
                     'owner_date': {'$in': sorted(dates)},
-                    'status': 6,
+                    'status': {'$in': [2, 6]},
                 })
+                merge_database_results(result_index, database_matches)
                 merge_rescheduled_void_results(
                     result_index,
                     pending_bets,
-                    rescheduled_matches,
+                    [
+                        match for match in database_matches
+                        if int(match.get('status') or 0) == 6
+                    ],
                 )
             except Exception as exc:
-                print("⚠️  获取改期比赛失败: {}".format(exc))
+                print("⚠️  获取数据库赛果失败: {}".format(exc))
 
         settled_count = 0
         for bet in pending_bets:
