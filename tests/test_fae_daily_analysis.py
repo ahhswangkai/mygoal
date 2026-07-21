@@ -126,6 +126,67 @@ class DailyAnalysisTests(unittest.TestCase):
 
         self.assertEqual(row["league_history_profile"], profile)
 
+    def test_includes_available_500_fundamentals_without_false_missing_warning(self):
+        source_analysis = {
+            "source": "500彩票网",
+            "source_url": "https://odds.500.com/fenxi/shuju-2.shtml",
+            "teams": ["主队", "客队"],
+            "recent": {
+                "home": [{
+                    "home_team": "主队", "away_team": "甲队",
+                    "score": "2:0", "date": "26-07-10",
+                }],
+                "away": [{
+                    "home_team": "乙队", "away_team": "客队",
+                    "score": "1:2", "date": "26-07-11",
+                }],
+            },
+            "history": [{
+                "home_team": "主队", "away_team": "客队",
+                "score": "1:1", "date": "25-07-11",
+            }],
+            "team_rankings": {
+                "home": {"team": "主队", "league_rank": "联赛2"},
+                "away": {"team": "客队", "league_rank": "联赛5"},
+            },
+            "future": {
+                "home": [{"home_team": "主队", "away_team": "丙队"}],
+                "away": [{"home_team": "丁队", "away_team": "客队"}],
+            },
+            "injuries": {
+                "status": "no_listed_players",
+                "home": {"injured": [], "suspended": []},
+                "away": {"injured": [], "suspended": []},
+            },
+            "lineups": {
+                "status": "predicted",
+                "label": "500彩票网预计阵容（非官方确认首发）",
+                "home": {
+                    "team": "主队",
+                    "starters": [{"number": "1", "name": "主门将"}],
+                },
+                "away": {
+                    "team": "客队",
+                    "starters": [{"number": "9", "name": "客前锋"}],
+                },
+            },
+        }
+
+        row = build_daily_match_input(
+            match("2"),
+            source_analysis=source_analysis,
+        )
+
+        self.assertEqual(row["missing_fundamentals"], [])
+        self.assertEqual(
+            row["fundamentals"]["recent"]["away"][0]["away_team"], "客队"
+        )
+        self.assertEqual(
+            row["fundamentals"]["lineups"]["status"], "predicted"
+        )
+        self.assertEqual(row["rank"], {"home": "联赛2", "away": "联赛5"})
+        self.assertIn("不是官方确认首发", row["fundamentals"]["note"])
+
     def test_analyzes_whole_batch_and_falls_back_for_missing_match(self):
         client = FakeDailyArkClient()
         analyzer = FAEDailyAIAnalyzer(client)

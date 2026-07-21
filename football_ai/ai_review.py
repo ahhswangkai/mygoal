@@ -14,7 +14,7 @@ from .provider import ArkNarrativeClient, FAEOutputError
 from .version import ENGINE_VERSION
 
 
-AI_REVIEW_PROMPT_VERSION = "fae-deep-review-v2-asian-risk-context"
+AI_REVIEW_PROMPT_VERSION = "fae-deep-review-v3-match-number-prose"
 SETTLED_STATUSES = {"hit", "miss", "push"}
 LEARNING_SCOPES = {
     "euro",
@@ -118,6 +118,9 @@ class FAEAIReviewAnalyzer:
             "reason": item.get("reason"),
             "picks": [{
                 "match_id": pick.get("match_id"),
+                "match_number": (
+                    source_by_id.get(str(pick.get("match_id") or "")) or {}
+                ).get("match_number"),
                 "selection": pick.get("selection"),
                 "selection_text": pick.get("selection_text"),
                 "status": pick.get("status"),
@@ -170,6 +173,7 @@ class FAEAIReviewAnalyzer:
         text, metadata = self.client.generate(prompt)
         parsed = self._extract_json(text)
         normalized = self._normalize(parsed, matches)
+        normalized = self.humanize_review_match_ids(normalized, matches)
         return {
             "status": "completed",
             "input_hash": self.input_hash(snapshot, review),
@@ -250,6 +254,7 @@ class FAEAIReviewAnalyzer:
             "market_risk_context中的水位模式仅表示赛前风险结构；可以检验该预警是否有效，但不得把退盘、升水或欧亚背离直接写成比赛失利的真实原因。",
             "若盘口无明显预警，只能说明现有赛前市场数据无法解释赛果；没有xG、红牌、射门等过程数据时必须明确未知。",
             "调权只能作为候选，单日样本不得直接修改正式权重；每个候选必须给出至少10个样本的验证门槛。",
+            "match_id仅允许用于JSON关联字段；结论、做对了什么、需要修正、市场复核、逐场诊断、调权候选和组合复核等所有自然语言必须使用match_number（如周四201），严禁展示原始比赛ID。",
             "输入中的每场已结算比赛必须在matches中恰好出现一次。",
         ]
         return "\n\n".join([
@@ -440,6 +445,84 @@ class FAEAIReviewAnalyzer:
             },
             "learning_candidates": candidates[:12],
         }
+
+    @classmethod
+    def humanize_review_match_ids(
+        cls,
+        review: Dict[str, Any],
+        source_matches: Optional[Iterable[Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
+        """Replace raw match IDs in prose while preserving identifier fields."""
+        sources = list(source_matches or review.get("matches") or [])
+        labels = {
+            str(item.get("match_id") or ""): str(
+                item.get("match_number") or item.get("match_id") or ""
+            )
+            for item in sources
+            if item.get("match_id")
+        }
+
+        def humanize(value: Any) -> str:
+            text = str(value or "")
+            protected = {}
+            for index, label in enumerate(dict.fromkeys(labels.values())):
+                if not label:
+                    continue
+                token = f"__FAE_MATCH_LABEL_{index}__"
+                if label in text:
+                    text = text.replace(label, token)
+                    protected[token] = label
+            for match_id in sorted(labels, key=len, reverse=True):
+                label = labels[match_id]
+                if not match_id or not label or match_id == label:
+                    continue
+                text = re.sub(
+                    rf"(?<!\d){re.escape(match_id)}(?!\d)", label, text
+                )
+            for token, label in protected.items():
+                text = text.replace(token, label)
+            return text
+
+        def text_list(value: Any) -> List[str]:
+            return [humanize(item) for item in value or []]
+
+        result = dict(review or {})
+        summary = dict(result.get("summary") or {})
+        summary["conclusion"] = humanize(summary.get("conclusion"))
+        for key in (
+            "what_worked", "what_failed", "risk_patterns", "next_actions"
+        ):
+            summary[key] = text_list(summary.get(key))
+        result["summary"] = summary
+        result["market_lessons"] = {
+            key: humanize(value)
+            for key, value in (result.get("market_lessons") or {}).items()
+        }
+        result["matches"] = [{
+            **item,
+            "diagnosis": humanize(item.get("diagnosis")),
+            "correct_signals": text_list(item.get("correct_signals")),
+            "missed_signals": text_list(item.get("missed_signals")),
+            "data_quality_issues": text_list(
+                item.get("data_quality_issues")
+            ),
+            "counterfactual": humanize(item.get("counterfactual")),
+        } for item in result.get("matches") or []]
+        combination = dict(result.get("combination_review") or {})
+        combination["conclusion"] = humanize(
+            combination.get("conclusion")
+        )
+        for key in (
+            "good_choices", "bad_choices", "construction_advice"
+        ):
+            combination[key] = text_list(combination.get(key))
+        result["combination_review"] = combination
+        result["learning_candidates"] = [{
+            **item,
+            "target": humanize(item.get("target")),
+            "reason": humanize(item.get("reason")),
+        } for item in result.get("learning_candidates") or []]
+        return result
 
     @staticmethod
     def _extract_json(raw_text: str) -> Dict[str, Any]:

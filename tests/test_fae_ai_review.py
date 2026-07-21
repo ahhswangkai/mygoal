@@ -172,6 +172,53 @@ class FAEAIReviewAnalyzerTests(unittest.TestCase):
         self.assertEqual(first, second)
         self.assertNotEqual(first, changed)
 
+    def test_humanizes_raw_match_ids_in_all_visible_review_prose(self):
+        raw_id = "1362711"
+        data = {
+            "summary": {
+                "conclusion": "1362711判断失误",
+                "what_worked": ["1362711欧赔识别正确"],
+                "what_failed": ["应修正1362711的亚盘判断"],
+                "risk_patterns": ["1362711热门过热"],
+                "next_actions": ["复核1362711"],
+            },
+            "market_lessons": {"asian": "1362711盘口未升深"},
+            "matches": [{
+                "match_id": raw_id,
+                "match_number": "周二001",
+                "diagnosis": "1362711判断有误",
+                "correct_signals": ["1362711欧赔预警"],
+                "missed_signals": ["1362711亚盘矛盾"],
+                "data_quality_issues": ["1362711缺少首发"],
+                "counterfactual": "下次跳过1362711同类场次",
+            }],
+            "combination_review": {
+                "conclusion": "1362711拖累组合",
+                "good_choices": [],
+                "bad_choices": ["1362711不应入选"],
+                "construction_advice": ["避免1362711同类结构"],
+            },
+            "learning_candidates": [{
+                "target": "1362711风险",
+                "reason": "1362711提供反例",
+                "evidence_match_ids": [raw_id],
+            }],
+        }
+
+        result = FAEAIReviewAnalyzer.humanize_review_match_ids(data)
+
+        self.assertEqual(result["summary"]["conclusion"], "周二001判断失误")
+        self.assertEqual(result["matches"][0]["diagnosis"], "周二001判断有误")
+        self.assertEqual(
+            result["learning_candidates"][0]["reason"],
+            "周二001提供反例",
+        )
+        self.assertEqual(result["matches"][0]["match_id"], raw_id)
+        self.assertEqual(
+            result["learning_candidates"][0]["evidence_match_ids"],
+            [raw_id],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

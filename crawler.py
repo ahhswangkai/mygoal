@@ -1411,14 +1411,26 @@ class FootballCrawler:
                     'total_result': text(cells[8]) if len(cells) > 8 else '',
                 })
 
-        record_tables = []
-        for table in soup.select('div.record table.pub_table'):
-            first_row_cells = table.select_one('tr').select('th,td') if table.select_one('tr') else []
-            if len(first_row_cells) == 8:
-                record_tables.append(table)
+        recent_box = next(
+            (box for box in soup.select('div.M_box.record')
+             if box.select_one('h4') and '近期战绩' in text(box.select_one('h4'))),
+            None
+        )
+        recent_module = (
+            recent_box.select_one('.odds_zj_tubiao.module_cur')
+            if recent_box else None
+        )
+        if not recent_module and recent_box:
+            recent_module = recent_box.select_one('.odds_zj_tubiao')
         recent = {
-            'home': parse_form_table(record_tables[0] if len(record_tables) > 0 else None),
-            'away': parse_form_table(record_tables[2] if len(record_tables) > 2 else None),
+            'home': parse_form_table(
+                recent_module.select_one('.team_a table.pub_table')
+                if recent_module else None
+            ),
+            'away': parse_form_table(
+                recent_module.select_one('.team_b table.pub_table')
+                if recent_module else None
+            ),
         }
 
         standings = []
@@ -1456,13 +1468,127 @@ class FootballCrawler:
                     })
 
         team_names = []
+        team_rankings = {}
         rank_box = next(
             (box for box in soup.select('div.M_box')
              if box.select_one('h4') and '赛前联赛积分排名' in text(box.select_one('h4'))),
             None
         )
         if rank_box:
-            team_names = [text(node) for node in rank_box.select('.team_name')[:2]]
+            for node in rank_box.select('.M_sub_title .team_name')[:2]:
+                clone = BeautifulSoup(str(node), 'lxml')
+                for detail in clone.select('span'):
+                    detail.decompose()
+                team_names.append(text(clone))
+
+            stat_keys = (
+                'scope', 'matches', 'wins', 'draws', 'losses',
+                'goals_for', 'goals_against', 'goal_difference',
+                'points', 'rank', 'win_rate',
+            )
+            for side, box in zip(
+                ('home', 'away'),
+                rank_box.select('.M_content .team_a, .M_content .team_b')[:2],
+            ):
+                rows = []
+                for tr in box.select('table.pub_table tr')[1:]:
+                    values = [text(cell) for cell in tr.select('td')]
+                    if len(values) >= len(stat_keys):
+                        rows.append(dict(zip(stat_keys, values[:len(stat_keys)])))
+                heading = rank_box.select(
+                    '.M_sub_title .team_name'
+                )
+                heading_text = text(heading[0 if side == 'home' else 1]) if len(heading) >= 2 else ''
+                rank_match = re.search(r'\[([^\]]+)\]', heading_text)
+                team_rankings[side] = {
+                    'team': team_names[0 if side == 'home' else 1]
+                    if len(team_names) >= 2 else '',
+                    'league_rank': rank_match.group(1) if rank_match else '',
+                    'records': rows,
+                }
+
+        def parse_player(cell):
+            if not cell:
+                return None
+            number_node = cell.select_one('.td_sp3')
+            number = text(number_node)
+            clone = BeautifulSoup(str(cell), 'lxml')
+            for node in clone.select('.td_sp3'):
+                node.decompose()
+            player_text = text(clone)
+            if not player_text:
+                return None
+            position_match = re.search(r'[（(]([^()（）]+)[）)]$', player_text)
+            return {
+                'number': number,
+                'name': re.sub(r'[（(][^()（）]+[）)]$', '', player_text).strip(),
+                'position': position_match.group(1) if position_match else '',
+            }
+
+        lineups = {}
+        injuries = {}
+        starting_box = soup.select_one('div.M_box.starting')
+        if starting_box:
+            for side, team_box in zip(
+                ('home', 'away'),
+                starting_box.select('.M_content .team_a, .M_content .team_b')[:2],
+            ):
+                heading = text(team_box.select_one('.team_name'))
+                formation = heading.split('阵型:', 1)[1].strip() if '阵型:' in heading else ''
+                starters = []
+                substitutes = []
+                injured = []
+                suspended = []
+                injury_section = False
+                for tr in team_box.select('table.pub_table tr'):
+                    header_text = text(tr)
+                    if tr.select('th'):
+                        if '伤病' in header_text or '停赛' in header_text:
+                            injury_section = True
+                        continue
+                    cells = tr.select('td')
+                    if not cells:
+                        continue
+                    left = parse_player(cells[0])
+                    right = parse_player(cells[1]) if len(cells) > 1 else None
+                    if injury_section:
+                        if left:
+                            injured.append(left)
+                        if right:
+                            suspended.append(right)
+                    else:
+                        if left:
+                            starters.append(left)
+                        if right:
+                            substitutes.append(right)
+                lineups[side] = {
+                    'team': team_names[0 if side == 'home' else 1]
+                    if len(team_names) >= 2 else heading.split('阵型:', 1)[0],
+                    'formation': formation,
+                    'starters': starters,
+                    'substitutes': substitutes,
+                }
+                injuries[side] = {
+                    'injured': injured,
+                    'suspended': suspended,
+                }
+            if lineups:
+                lineups['status'] = 'predicted'
+                lineups['label'] = '500彩票网预计阵容（非官方确认首发）'
+                injuries['status'] = (
+                    'listed'
+                    if any(
+                        injuries.get(side, {}).get(kind)
+                        for side in ('home', 'away')
+                        for kind in ('injured', 'suspended')
+                    )
+                    else 'no_listed_players'
+                )
+                injuries['label'] = (
+                    '500彩票网伤病/停赛栏目'
+                    if injuries['status'] == 'listed'
+                    else '500彩票网伤病/停赛栏目未列出球员'
+                )
 
         return {
             'source': '500彩票网',
@@ -1471,9 +1597,12 @@ class FootballCrawler:
             'title': text(title),
             'teams': team_names,
             'standings': standings,
+            'team_rankings': team_rankings,
             'history': history,
             'recent': recent,
             'future': future,
+            'lineups': lineups,
+            'injuries': injuries,
         }
     
     def _map_odds_details(self, match, odds_details):

@@ -942,8 +942,14 @@ def get_500_match_analysis(match_id):
     """500 官方数据分析页的结构化代理接口。"""
     if not re.fullmatch(r'\d+', str(match_id)):
         return jsonify({'success': False, 'message': '比赛 ID 格式错误'}), 400
+    match = mongo_storage.get_match_by_id(match_id) if mongo_storage else {
+        'match_id': str(match_id)
+    }
     try:
-        data = crawler.crawl_match_analysis(match_id)
+        data = _get_500_fundamentals(
+            match,
+            refresh=request.args.get('refresh') in ('1', 'true'),
+        )
         return jsonify({'success': True, 'data': data})
     except requests.RequestException as exc:
         app.logger.warning('500 analysis request failed for %s: %s', match_id, exc)
@@ -953,12 +959,114 @@ def get_500_match_analysis(match_id):
         return jsonify({'success': False, 'message': '500 数据解析失败'}), 502
 
 
+def _cache_datetime(value):
+    if isinstance(value, datetime):
+        return value
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace('Z', '+00:00')).replace(
+            tzinfo=None
+        )
+    except (TypeError, ValueError):
+        return None
+
+
+def _cached_fundamentals_fresh(data):
+    if not isinstance(data, dict) or not data:
+        return False
+    cached_at = _cache_datetime(data.get('cached_at'))
+    if not cached_at:
+        return False
+    ttl_hours = max(
+        1, int(os.getenv('FAE_FUNDAMENTALS_CACHE_HOURS', '4'))
+    )
+    return datetime.now() - cached_at <= timedelta(hours=ttl_hours)
+
+
+def _get_500_fundamentals(match, refresh=False, source_crawler=None):
+    """读取缓存或抓取一场 500 基本面，并回写比赛文档。"""
+    match = match or {}
+    match_id = str(match.get('match_id') or '')
+    cached = (
+        mongo_storage.get_match_fundamentals(match_id)
+        if mongo_storage else {}
+    )
+    if cached and not refresh and _cached_fundamentals_fresh(cached):
+        return cached
+    try:
+        data = (source_crawler or crawler).crawl_match_analysis(match_id)
+    except (
+        requests.RequestException, ValueError, AttributeError, IndexError
+    ):
+        if cached:
+            stale = dict(cached)
+            stale['cache_status'] = 'stale'
+            return stale
+        raise
+    if mongo_storage:
+        mongo_storage.save_match_fundamentals(match_id, data)
+    return data
+
+
+def _load_daily_fundamentals(matches):
+    """并发加载当天基本面；缓存命中时不访问 500。"""
+    results = {}
+    pending = []
+    cached_by_id = (
+        mongo_storage.get_match_fundamentals_bulk([
+            match.get('match_id') for match in matches
+        ])
+        if mongo_storage else {}
+    )
+    for match in matches:
+        match_id = str(match.get('match_id') or '')
+        cached = cached_by_id.get(match_id) or {}
+        if _cached_fundamentals_fresh(cached):
+            results[match_id] = cached
+        else:
+            pending.append(match)
+    if not pending:
+        return results
+
+    workers = max(
+        1, min(3, int(os.getenv('FAE_FUNDAMENTALS_WORKERS', '2')))
+    )
+
+    def fetch(match):
+        match_id = str(match.get('match_id') or '')
+        return match_id, FootballCrawler().crawl_match_analysis(match_id)
+
+    with ThreadPoolExecutor(max_workers=min(workers, len(pending))) as executor:
+        futures = {executor.submit(fetch, match): match for match in pending}
+        for future in as_completed(futures):
+            match = futures[future]
+            match_id = str(match.get('match_id') or '')
+            try:
+                _, data = future.result()
+                results[match_id] = data
+                if mongo_storage:
+                    mongo_storage.save_match_fundamentals(match_id, data)
+            except (
+                requests.RequestException, ValueError, AttributeError, IndexError
+            ) as exc:
+                app.logger.warning(
+                    '500 fundamentals unavailable for %s: %s', match_id, exc
+                )
+                stale = cached_by_id.get(match_id) or {}
+                if stale:
+                    stale = dict(stale)
+                    stale['cache_status'] = 'stale'
+                results[match_id] = stale
+    return results
+
+
 def _generate_fae_for_match(match, use_ai=True):
     """组装数据并运行 FAE；核心计算不依赖大模型。"""
     match_id = str(match.get('match_id') or '')
     source_analysis = {}
     try:
-        source_analysis = crawler.crawl_match_analysis(match_id)
+        source_analysis = _get_500_fundamentals(match)
     except (requests.RequestException, ValueError, AttributeError, IndexError) as exc:
         app.logger.warning('FAE source unavailable for %s: %s', match_id, exc)
     predictions = mongo_storage.get_predictions(
@@ -985,6 +1093,7 @@ def _build_daily_ai_inputs(matches, league_profiles=None):
     active_skills = (
         mongo_storage.get_active_fae_skills() if mongo_storage else None
     )
+    source_analyses = _load_daily_fundamentals(matches)
     rows = []
     for match in sorted(
         matches,
@@ -993,7 +1102,13 @@ def _build_daily_ai_inputs(matches, league_profiles=None):
             str(item.get('match_number') or ''),
         ),
     ):
-        context = ai_analysis_service.build_context(match=match)
+        source_analysis = source_analyses.get(
+            str(match.get('match_id') or '')
+        ) or {}
+        context = ai_analysis_service.build_context(
+            match=match,
+            source_analysis=source_analysis,
+        )
         core_result = ai_analysis_service.generate_from_context(
             context,
             rule_weights=rule_weights,
@@ -1006,6 +1121,7 @@ def _build_daily_ai_inputs(matches, league_profiles=None):
             league_profile=(league_profiles or {}).get(
                 str(match.get('league') or '').strip()
             ),
+            source_analysis=source_analysis,
         ))
     return rows
 
@@ -1201,6 +1317,15 @@ def _review_fae_daily_ai(owner_date, force_ai=False):
             'AI 深度复盘未启用'
             if not ai_review_enabled
             else '火山方舟尚未配置'
+        )
+    if review.get('ai_deep_review'):
+        review['ai_deep_review'] = (
+            fae_ai_review_analyzer.humanize_review_match_ids(
+                review.get('ai_deep_review') or {},
+                (review.get('ai_deep_review') or {}).get('matches')
+                or review.get('match_results')
+                or [],
+            )
         )
     saved = mongo_storage.save_fae_daily_ai_review(review)
     return saved.get('review') if saved.get('saved') else None
@@ -1615,9 +1740,19 @@ def get_fae_daily_ai_review():
     if not mongo_storage:
         return jsonify({'success': False, 'message': 'MongoDB不可用'}), 500
     date_str = request.args.get('date') or datetime.now().strftime('%Y-%m-%d')
+    data = mongo_storage.get_fae_daily_ai_review(date_str)
+    if data and data.get('ai_deep_review'):
+        data['ai_deep_review'] = (
+            fae_ai_review_analyzer.humanize_review_match_ids(
+                data.get('ai_deep_review') or {},
+                (data.get('ai_deep_review') or {}).get('matches')
+                or data.get('match_results')
+                or [],
+            )
+        )
     return jsonify({
         'success': True,
-        'data': mongo_storage.get_fae_daily_ai_review(date_str),
+        'data': data,
         'primary_source': 'fae-daily-ai',
         'ai_review_enabled': os.getenv(
             'FAE_AI_REVIEW_ENABLED', 'true'

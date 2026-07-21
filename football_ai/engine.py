@@ -82,13 +82,24 @@ class FootballAIEngine:
         history = self._limited_list(source.get("history"), 10)
         home_team = str(match.get("home_team") or "")
         away_team = str(match.get("away_team") or "")
+        source_teams = source.get("teams") or []
+        if not isinstance(source_teams, (list, tuple)):
+            source_teams = []
+        source_home_team = (
+            str(source_teams[0]) if len(source_teams) > 0 else home_team
+        )
+        source_away_team = (
+            str(source_teams[1]) if len(source_teams) > 1 else away_team
+        )
         home_form, home_issues = self._form_summary(
-            home_team, recent.get("home") or [], "home"
+            source_home_team, recent.get("home") or [], "home"
         )
         away_form, away_issues = self._form_summary(
-            away_team, recent.get("away") or [], "away"
+            source_away_team, recent.get("away") or [], "away"
         )
-        history_summary = self._history_summary(home_team, away_team, history)
+        history_summary = self._history_summary(
+            source_home_team, source_away_team, history
+        )
 
         injuries = external.get("injuries", source.get("injuries", match.get("injuries")))
         lineups = external.get("lineups", source.get("lineups", match.get("lineups")))
@@ -112,8 +123,20 @@ class FootballAIEngine:
             quality_issues.append("缺少积分排名数据")
         if not injuries:
             quality_issues.append("缺少伤停数据")
+        elif (
+            isinstance(injuries, dict)
+            and injuries.get("status") == "no_listed_players"
+        ):
+            quality_issues.append(
+                "500伤病/停赛栏目未列出球员，不等同于官方确认无伤停"
+            )
         if not lineups:
             quality_issues.append("缺少首发数据")
+        elif (
+            isinstance(lineups, dict)
+            and lineups.get("status") == "predicted"
+        ):
+            quality_issues.append("当前阵容为500预计阵容，非官方确认首发")
         if not weather:
             quality_issues.append("缺少天气数据")
 
@@ -659,8 +682,21 @@ class FootballAIEngine:
         motivation_tendency = str(motivation)[:80] if motivation else ("杯赛战意需结合轮次确认" if is_cup else "缺少明确战意数据")
 
         injuries = fundamentals.get("injuries")
-        injuries_score = 62 if injuries else 30
-        injuries_tendency = "已接入伤停数据" if injuries else "缺少伤停数据"
+        injury_status = (
+            injuries.get("status") if isinstance(injuries, dict) else None
+        )
+        if injury_status == "no_listed_players":
+            injuries_score = 45
+            injuries_data_status = "partial"
+            injuries_tendency = "500伤停栏目未列出球员，尚非官方确认"
+        elif injuries:
+            injuries_score = 62
+            injuries_data_status = "available"
+            injuries_tendency = "已接入伤停数据"
+        else:
+            injuries_score = 30
+            injuries_data_status = "missing"
+            injuries_tendency = "缺少伤停数据"
 
         history = fundamentals.get("history") or {}
         history_games = int(history.get("valid_matches") or 0)
@@ -682,7 +718,7 @@ class FootballAIEngine:
             "over_under": dimension("over_under", total_score, total_tendency, "available" if total_line is not None else "missing"),
             "sporttery": dimension("sporttery", sporttery_score, sporttery_tendency, sporttery_status),
             "motivation": dimension("motivation", motivation_score, motivation_tendency, "available" if motivation else "partial" if is_cup else "missing"),
-            "injuries": dimension("injuries", injuries_score, injuries_tendency, "available" if injuries else "missing"),
+            "injuries": dimension("injuries", injuries_score, injuries_tendency, injuries_data_status),
             "history": dimension("history", history_score, history_tendency, "available" if history_games else "missing"),
             "form": dimension("form", form_score, form_tendency, "available" if valid_form else "missing"),
             "data_completeness": {

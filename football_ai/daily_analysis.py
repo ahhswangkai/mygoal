@@ -15,7 +15,7 @@ from .provider import ArkNarrativeClient, FAEError, FAEOutputError
 from .version import ENGINE_VERSION
 
 
-DAILY_PROMPT_VERSION = "five-market-daily-v9-asian-risk-patterns"
+DAILY_PROMPT_VERSION = "five-market-daily-v10-500-fundamentals"
 
 HANDICAP_VALUES = {
     "平手": 0.0, "平/半": 0.25, "平手/半球": 0.25,
@@ -41,10 +41,116 @@ def _clean_handicap(value: Any) -> str:
     return re.sub(r"(?:[↑↓]|升|降)+$", "", str(value or "").strip())
 
 
+def _finished_fixtures(value: Any, limit: int = 6) -> List[Dict[str, Any]]:
+    rows = []
+    for item in value if isinstance(value, list) else []:
+        score = str((item or {}).get("score") or "")
+        if not re.fullmatch(r"\d+\s*[:\-]\s*\d+", score):
+            continue
+        rows.append(dict(item))
+        if len(rows) >= limit:
+            break
+    return rows
+
+
+def _compact_lineup_side(value: Any) -> Dict[str, Any]:
+    side = value if isinstance(value, dict) else {}
+
+    def players(key: str) -> List[Dict[str, Any]]:
+        result = []
+        for item in side.get(key) or []:
+            if not isinstance(item, dict) or not item.get("name"):
+                continue
+            result.append({
+                "number": item.get("number"),
+                "name": item.get("name"),
+                "position": item.get("position"),
+            })
+        return result
+
+    return {
+        "team": side.get("team"),
+        "formation": side.get("formation"),
+        "starters": players("starters")[:11],
+        "substitutes": players("substitutes")[:12],
+    }
+
+
+def _fundamentals_snapshot(
+    match: Dict[str, Any],
+    source_analysis: Optional[Dict[str, Any]],
+) -> tuple[Dict[str, Any], List[str]]:
+    source = source_analysis or {}
+    recent = source.get("recent") or {}
+    home_recent = _finished_fixtures(recent.get("home"))
+    away_recent = _finished_fixtures(recent.get("away"))
+    history = _finished_fixtures(source.get("history"))
+    future = source.get("future") or {}
+    schedules = {
+        side: [
+            dict(item) for item in (future.get(side) or [])[:4]
+            if isinstance(item, dict)
+        ]
+        for side in ("home", "away")
+    }
+    team_rankings = source.get("team_rankings") or {}
+    standings = [
+        dict(item) for item in (source.get("standings") or [])[:24]
+        if isinstance(item, dict)
+    ]
+    lineups = source.get("lineups") or {}
+    injuries = source.get("injuries") or {}
+    compact_lineups = {}
+    if isinstance(lineups, dict) and (
+        lineups.get("home") or lineups.get("away")
+    ):
+        compact_lineups = {
+            "status": lineups.get("status"),
+            "label": lineups.get("label"),
+            "home": _compact_lineup_side(lineups.get("home")),
+            "away": _compact_lineup_side(lineups.get("away")),
+        }
+
+    has_rankings = bool(
+        team_rankings
+        or standings
+        or match.get("home_rank")
+        or match.get("away_rank")
+    )
+    availability = {
+        "近期状态": bool(home_recent and away_recent),
+        "历史交锋": bool(history),
+        "积分排名": has_rankings,
+        "未来赛程": bool(schedules["home"] or schedules["away"]),
+        "伤停/停赛": bool(injuries),
+        "预计阵容": bool(compact_lineups),
+    }
+    missing = [label for label, available in availability.items() if not available]
+    return {
+        "source": source.get("source"),
+        "source_url": source.get("source_url"),
+        "cache_status": source.get("cache_status") or "fresh",
+        "teams": source.get("teams") or [],
+        "recent": {"home": home_recent, "away": away_recent},
+        "history": history,
+        "team_rankings": team_rankings,
+        "standings": standings,
+        "future": schedules,
+        "injuries": injuries,
+        "lineups": compact_lineups,
+        "availability": availability,
+        "note": (
+            "lineups为500预计阵容，不是官方确认首发"
+            if compact_lineups.get("status") == "predicted" else ""
+        ),
+    }, missing
+
+
 def build_daily_match_input(
     match: Dict[str, Any],
     fae_result: Optional[Dict[str, Any]] = None,
     league_profile: Optional[Dict[str, Any]] = None,
+    source_analysis: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Create a compact, auditable input for the daily Ark request."""
     analysis = (fae_result or {}).get("analysis") or {}
@@ -59,6 +165,21 @@ def build_daily_match_input(
     sporttery_handicap = _number(handicap_source)
     initial_asian = _clean_handicap(match.get("asian_initial_handicap"))
     current_asian = _clean_handicap(match.get("asian_current_handicap"))
+    fundamentals, missing_fundamentals = _fundamentals_snapshot(
+        match, source_analysis
+    )
+    source_rankings = fundamentals.get("team_rankings") or {}
+
+    def available_rank(side: str) -> Any:
+        direct = match.get(f"{side}_rank")
+        if direct not in (None, ""):
+            return direct
+        ranking = source_rankings.get(side) or {}
+        for record in ranking.get("records") or []:
+            if record.get("scope") == "总成绩" and record.get("rank"):
+                return record.get("rank")
+        return ranking.get("league_rank")
+
     warnings: List[str] = []
     if (
         initial_total is not None
@@ -85,6 +206,12 @@ def build_daily_match_input(
         )[:8]
         if item
     )
+    if missing_fundamentals:
+        warnings.append(
+            "缺少基本面：" + "、".join(missing_fundamentals)
+        )
+    if fundamentals.get("cache_status") == "stale":
+        warnings.append("500基本面刷新失败，当前使用过期缓存并已降权")
     return {
         "match_id": str(match.get("match_id") or ""),
         "match_number": match.get("match_number") or match.get("round_id"),
@@ -93,8 +220,8 @@ def build_daily_match_input(
         "home_team": match.get("home_team"),
         "away_team": match.get("away_team"),
         "rank": {
-            "home": match.get("home_rank"),
-            "away": match.get("away_rank"),
+            "home": available_rank("home"),
+            "away": available_rank("away"),
         },
         "euro": {
             "initial": [
@@ -163,10 +290,9 @@ def build_daily_match_input(
             "hidden_signals": ["暂无可用联赛历史画像"],
         },
         "current_asian_risk": classify_asian_risk_patterns(match),
+        "fundamentals": fundamentals,
         "data_warnings": list(dict.fromkeys(warnings)),
-        "missing_fundamentals": [
-            "近期状态", "伤停", "首发", "赛程背景"
-        ],
+        "missing_fundamentals": missing_fundamentals,
     }
 
 
@@ -635,6 +761,8 @@ class FAEDailyAIAnalyzer:
             "严格区分客队小胜与竞彩让负：away_small_win只放客队明确为胜负方向且预计净胜1球的比赛；竞彩让负必须放入handicap_lose，禁止放入away_small_win。",
             "大小球跳动达到0.75或以上时优先标记数据异常，不得据此强推方向。",
             "不得伪造近期状态、伤停、首发、天气、战意和赛程；输入缺失必须明确说明。",
+            "fundamentals来自500赛前页：recent、history、team_rankings、future可作基本面证据；lineups.status=predicted仅表示预计阵容，禁止称为官方首发；injuries.status=no_listed_players仅表示页面未列出球员，禁止称为确认无伤停。",
+            "fundamentals.cache_status=stale时代表刷新失败后的过期缓存，只能低权重引用并必须提示时效风险。",
             "历史复盘记忆只用于提醒曾经出现的误判和风险，不是当前比赛事实，不得据此直接推荐。",
             "联赛历史画像来自当前比赛日期之前的完场数据并带时间衰减；只允许把eligible_for_adjustment=true且分段样本充足的内容作为低到中权重基线。",
             "联赛画像中的命中率、让平率、进球率是历史条件频率，不是真实胜率；不得单独据此推荐，必须与当天五项市场证据一致。",
@@ -707,6 +835,8 @@ class FAEDailyAIAnalyzer:
             "升降是走势而非盘口名；严格区分升盘和水位变化。",
             "让平必须结合让球数解释；大小球跳动达到0.75优先标异常。",
             "不得编造近期状态、伤停、首发、天气、战意或赛程。",
+            "fundamentals来自500赛前页；预计阵容不能写成官方首发，伤停栏目未列球员不能写成确认无伤停。",
+            "fundamentals.cache_status=stale时必须降低基本面权重并提示时效风险。",
             "历史复盘记忆只是低权重风险提醒，不是当前比赛事实；不得机械套用昨天结论。",
             "联赛历史画像只在eligible_for_adjustment=true时作为低到中权重基线；赔率分段样本不足时不得使用。",
             "历史联赛频率不是真实概率，必须让位于本场欧赔、亚盘、竞彩、大小球和市场一致性。",

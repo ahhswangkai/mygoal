@@ -75,6 +75,7 @@ class MongoDBStorage:
         self.db = self.client[database_name]
         self.matches_collection = self.db['matches']
         self.odds_collection = self.db['odds']
+        self.match_fundamentals_collection = self.db['match_fundamentals']
         self.predictions_collection = self.db['predictions']
         # ai_analyses 保留为 V1 只读兼容集合。
         self.ai_analyses_collection = self.db['ai_analyses']
@@ -119,6 +120,14 @@ class MongoDBStorage:
             # 赔率表索引
             self.odds_collection.create_index([('match_id', ASCENDING)])
             self.odds_collection.create_index([('created_at', DESCENDING)])
+
+            # 500 基本面单独存储，避免比赛列表接口携带大体积阵容/赛程。
+            self.match_fundamentals_collection.create_index(
+                [('match_id', ASCENDING)], unique=True
+            )
+            self.match_fundamentals_collection.create_index([
+                ('updated_at', DESCENDING)
+            ])
             
             # 预测表索引
             self.predictions_collection.create_index([('match_id', ASCENDING)], unique=True)
@@ -297,6 +306,57 @@ class MongoDBStorage:
         
         self.logger.info(f"批量保存比赛数据完成: {success_count}/{len(matches)}")
         return success_count
+
+    def save_match_fundamentals(self, match_id, source_analysis):
+        """缓存单场 500 基本面，供详情页和全日研判复用。"""
+        if not match_id or not isinstance(source_analysis, dict):
+            return None
+        try:
+            now = datetime.now()
+            payload = dict(source_analysis)
+            payload['cached_at'] = now
+            return self.match_fundamentals_collection.update_one(
+                {'match_id': str(match_id)},
+                {
+                    '$set': {
+                        'match_id': str(match_id),
+                        'source': '500彩票网',
+                        'data': payload,
+                        'updated_at': now,
+                    }
+                },
+                upsert=True,
+            )
+        except Exception as e:
+            self.logger.error(f"保存500基本面失败: {str(e)}")
+            return None
+
+    def get_match_fundamentals(self, match_id):
+        """读取单场已缓存的 500 基本面。"""
+        try:
+            document = self.match_fundamentals_collection.find_one(
+                {'match_id': str(match_id)}, {'_id': 0}
+            )
+            return (document or {}).get('data') or {}
+        except Exception as e:
+            self.logger.error(f"读取500基本面失败: {str(e)}")
+            return {}
+
+    def get_match_fundamentals_bulk(self, match_ids):
+        """批量读取基本面缓存，返回 match_id -> data。"""
+        ids = [str(value) for value in match_ids if value not in (None, '')]
+        if not ids:
+            return {}
+        try:
+            return {
+                str(document.get('match_id')): document.get('data') or {}
+                for document in self.match_fundamentals_collection.find(
+                    {'match_id': {'$in': ids}}, {'_id': 0}
+                )
+            }
+        except Exception as e:
+            self.logger.error(f"批量读取500基本面失败: {str(e)}")
+            return {}
     
     def save_odds(self, match_id, odds_data):
         """

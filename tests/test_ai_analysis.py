@@ -200,6 +200,34 @@ class FootballAIEngineTests(unittest.TestCase):
         self.assertEqual(context["fundamentals"]["away_form"]["valid_matches"], 0)
         self.assertTrue(any("混入" in item for item in context["data_quality"]["issues"]))
 
+    def test_expected_lineup_and_empty_injury_section_remain_partial_data(self):
+        service = FootballAIEngine(client=DisabledArkClient())
+        source = source_analysis()
+        source.update({
+            "teams": ["主队", "客队"],
+            "injuries": {
+                "status": "no_listed_players",
+                "home": {"injured": [], "suspended": []},
+                "away": {"injured": [], "suspended": []},
+            },
+            "lineups": {
+                "status": "predicted",
+                "home": {"starters": [{"name": "主队球员"}]},
+                "away": {"starters": [{"name": "客队球员"}]},
+            },
+        })
+
+        context = service.build_context(sample_match(), source)
+        result = service.generate_from_context(context, use_ai=False)
+        injuries = result["analysis"]["dimension_scores"]["injuries"]
+
+        self.assertEqual(injuries["data_status"], "partial")
+        self.assertTrue(any(
+            "非官方确认首发" in issue
+            for issue in context["data_quality"]["issues"]
+        ))
+        self.assertIn("尚非官方确认", injuries["tendency"])
+
     def test_away_favorite_deepening_is_not_mislabeled_as_drop(self):
         service = FootballAIEngine(client=DisabledArkClient())
         match = sample_match()
