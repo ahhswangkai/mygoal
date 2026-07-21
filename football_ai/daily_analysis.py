@@ -331,6 +331,69 @@ class FAEDailyAIAnalyzer:
             default=str,
         ).encode("utf-8")).hexdigest()
 
+    @classmethod
+    def merge_retained_matches(
+        cls,
+        analysis_run: Dict[str, Any],
+        retained_matches: Iterable[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        """Keep immutable pre-game judgements when a same-day rerun is partial.
+
+        A rerun only sends fixtures that are still pre-game to Ark. Fixtures that
+        have already started must remain visible for audit and later review, but
+        they must not be added to the newly generated recommendation pools.
+        """
+        result = dict(analysis_run or {})
+        retained_sources = {
+            str(item.get("match_id") or ""): dict(item)
+            for item in (retained_matches or [])
+            if item.get("match_id")
+        }
+        fresh = [
+            dict(item) for item in (result.get("matches") or [])
+            if (
+                item.get("match_id")
+                and str(item.get("match_id")) not in retained_sources
+            )
+        ]
+        fresh_ids = {str(item.get("match_id")) for item in fresh}
+        retained = []
+        for source in retained_sources.values():
+            match_id = str(source.get("match_id") or "")
+            if not match_id or match_id in fresh_ids:
+                continue
+            item = dict(source)
+            item["match_id"] = match_id
+            item["retained_from_pregame"] = True
+            item.setdefault("retained_from_run_id", item.get("run_id"))
+            retained.append(item)
+
+        combined = fresh + retained
+        combined.sort(key=lambda item: (
+            str(item.get("match_time") or ""),
+            str(item.get("match_number") or ""),
+        ))
+        result["matches"] = combined
+        result["analyzed_match_count"] = len(fresh)
+        result["retained_match_count"] = len(retained)
+        result["match_count"] = len(combined)
+
+        if retained:
+            summary = dict(result.get("daily_summary") or {})
+            warnings = list(summary.get("warnings") or [])
+            labels = [
+                str(item.get("match_number") or item.get("match_id"))
+                for item in retained
+            ]
+            warnings.append(
+                "本轮仅重新研判未开赛比赛；已开赛的"
+                + "、".join(labels)
+                + "保留原赛前研判，不进入本轮新增推荐池和组合。"
+            )
+            summary["warnings"] = list(dict.fromkeys(warnings))[:20]
+            result["daily_summary"] = summary
+        return result
+
     def analyze(
         self,
         owner_date: str,

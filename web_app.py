@@ -1133,13 +1133,42 @@ def _run_fae_daily_ai(owner_date, force=False):
     date_str = str(owner_date or '')[:10]
     if not re.fullmatch(r'\d{4}-\d{2}-\d{2}', date_str):
         raise FAEError('日期格式应为 YYYY-MM-DD')
-    matches = mongo_storage.get_matches(
-        filters={'owner_date': date_str, 'status': 0},
+    all_matches = mongo_storage.get_matches(
+        filters={'owner_date': date_str},
         sort_by='match_time',
         sort_order=1,
     )
+    matches = [
+        match for match in all_matches
+        if match.get('status') in (0, '0')
+    ]
+    retained_matches = []
+    for match in all_matches:
+        if match.get('status') in (0, '0'):
+            continue
+        snapshot = mongo_storage.get_fae_daily_ai_match(
+            match.get('match_id'), date_str
+        )
+        if not snapshot:
+            continue
+        snapshot = dict(snapshot)
+        snapshot['current_status'] = match.get('status')
+        snapshot['retained_from_run_id'] = snapshot.get('run_id')
+        retained_matches.append(snapshot)
+
+    previous_run = mongo_storage.get_fae_daily_ai_run(date_str)
     if not matches:
-        raise FAEError('当天没有未开赛比赛，未调用火山方舟')
+        if not retained_matches or not previous_run:
+            raise FAEError('当天没有未开赛比赛，且没有可保留的赛前研判')
+        result = dict(previous_run)
+        result['matches'] = []
+        result = fae_daily_ai_analyzer.merge_retained_matches(
+            result, retained_matches
+        )
+        result['cache_hit'] = True
+        if not mongo_storage.save_fae_daily_ai_run(result):
+            raise FAEError('保留已开赛比赛的赛前研判失败')
+        return result
     league_profiles = mongo_storage.get_fae_league_profiles(
         date_str,
         [match.get('league') for match in matches],
@@ -1158,6 +1187,11 @@ def _run_fae_daily_ai(owner_date, force=False):
         date_str, input_hash=input_hash
     )
     if cached and not force:
+        cached = fae_daily_ai_analyzer.merge_retained_matches(
+            cached, retained_matches
+        )
+        if not mongo_storage.save_fae_daily_ai_run(cached):
+            raise FAEError('合并已开赛比赛的赛前研判失败')
         cached['cache_hit'] = True
         return cached
     batch_size = max(
@@ -1169,6 +1203,11 @@ def _run_fae_daily_ai(owner_date, force=False):
                 date_str, input_hash=input_hash
             )
             if cached:
+                cached = fae_daily_ai_analyzer.merge_retained_matches(
+                    cached, retained_matches
+                )
+                if not mongo_storage.save_fae_daily_ai_run(cached):
+                    raise FAEError('合并已开赛比赛的赛前研判失败')
                 cached['cache_hit'] = True
                 return cached
         result = fae_daily_ai_analyzer.analyze(
@@ -1178,6 +1217,9 @@ def _run_fae_daily_ai(owner_date, force=False):
             batch_cache_get=mongo_storage.get_fae_daily_ai_batch,
             batch_cache_save=mongo_storage.save_fae_daily_ai_batch,
             review_memory=review_memory,
+        )
+        result = fae_daily_ai_analyzer.merge_retained_matches(
+            result, retained_matches
         )
         if not mongo_storage.save_fae_daily_ai_run(result):
             raise FAEError('全日研判已生成，但写入MongoDB失败')
@@ -1662,7 +1704,10 @@ def run_fae_daily_ai():
             'message': (
                 '赔率数据未变化，已返回上次全日研判'
                 if data.get('cache_hit')
-                else f"已完成 {data.get('match_count', 0)} 场全日研判并逐场入库"
+                else (
+                    f"已重新研判 {data.get('analyzed_match_count', data.get('match_count', 0))} 场，"
+                    f"保留 {data.get('retained_match_count', 0)} 场已开赛的赛前研判"
+                )
             ),
         })
     except FAEError as exc:

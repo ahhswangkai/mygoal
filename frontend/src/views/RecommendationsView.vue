@@ -58,7 +58,12 @@
             <div>
               <strong>火山全日 AI 研判</strong>
               <small>
-                {{ faeDailyAi.match_count || 0 }} 场一次性横向比较 ·
+                共 {{ faeDailyAi.match_count || 0 }} 场 ·
+                <template v-if="faeDailyAi.retained_match_count">
+                  本轮研判 {{ faeDailyAi.analyzed_match_count || 0 }} 场，
+                  保留 {{ faeDailyAi.retained_match_count }} 场赛前结论 ·
+                </template>
+                <template v-else>一次性横向比较 ·</template>
                 研判时间 {{ formatAiTime(faeDailyAi.generated_at) }}
               </small>
             </div>
@@ -162,6 +167,10 @@
                   <small>{{ item.league }} · {{ formatMatchTime(item.match_time) }}</small>
                 </span>
                 <span class="daily-selection-pair">
+                  <em
+                    v-if="item.retained_from_pregame"
+                    class="retained-pregame-badge"
+                  >已开赛·赛前记录</em>
                   <em v-if="item.analysis?.no_bet" class="no-bet-badge">不下注</em>
                   <i>预测 {{ item.analysis?.predicted_result || '观望' }}</i>
                   <em>主 {{ item.analysis?.primary_play || '观望' }}</em>
@@ -1662,6 +1671,11 @@ onBeforeUnmount(() => requestController?.abort())
 
 .daily-match-card summary em.no-bet-badge {
   background: #515866;
+}
+
+.daily-match-card summary em.retained-pregame-badge {
+  color: #8a6428;
+  background: #fff0cf;
 }
 
 .daily-selection-pair {

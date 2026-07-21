@@ -897,8 +897,16 @@ class MongoDBStorage:
                     {'_id': 0, 'match_id': 1, 'status': 1},
                 )
             }
+            prediction_statuses = {
+                str(item.get('match_id')): (
+                    item.get('status_at_prediction')
+                    if item.get('status_at_prediction') is not None
+                    else statuses.get(str(item.get('match_id')))
+                )
+                for item in matches
+            }
             eligible = bool(match_ids) and all(
-                statuses.get(match_id) in (0, '0')
+                prediction_statuses.get(match_id) in (0, '0')
                 for match_id in match_ids
             )
             payload.update({
@@ -919,7 +927,7 @@ class MongoDBStorage:
                     'match_id': str(item.get('match_id') or ''),
                     'run_id': run_id,
                     'owner_date': owner_date,
-                    'status_at_prediction': statuses.get(
+                    'status_at_prediction': prediction_statuses.get(
                         str(item.get('match_id') or '')
                     ),
                     'updated_at': datetime.utcnow().isoformat() + 'Z',

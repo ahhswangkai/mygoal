@@ -96,6 +96,50 @@ def match(match_id, total_initial="2.5", total_current="2.5"):
 
 
 class DailyAnalysisTests(unittest.TestCase):
+    def test_same_day_rerun_retains_started_pregame_judgements(self):
+        current = {
+            "daily_summary": {
+                "warnings": ["本轮市场提醒"],
+                "pools": {"handicap_draw": [{"match_id": "2"}]},
+                "recommended_combinations": [],
+            },
+            "matches": [{
+                "match_id": "2",
+                "match_number": "周二202",
+                "match_time": "07-21 19:00",
+            }],
+        }
+        retained = [{
+            "match_id": "1",
+            "match_number": "周二201",
+            "match_time": "07-21 18:00",
+            "run_id": "old-run",
+            "status_at_prediction": 0,
+            "current_status": 1,
+            "analysis": {"primary_play": "让平"},
+        }]
+
+        result = FAEDailyAIAnalyzer.merge_retained_matches(current, retained)
+
+        self.assertEqual(result["match_count"], 2)
+        self.assertEqual(result["analyzed_match_count"], 1)
+        self.assertEqual(result["retained_match_count"], 1)
+        self.assertEqual(
+            [item["match_id"] for item in result["matches"]], ["1", "2"]
+        )
+        old = result["matches"][0]
+        self.assertTrue(old["retained_from_pregame"])
+        self.assertEqual(old["retained_from_run_id"], "old-run")
+        self.assertEqual(old["status_at_prediction"], 0)
+        self.assertEqual(
+            result["daily_summary"]["pools"]["handicap_draw"],
+            [{"match_id": "2"}],
+        )
+        self.assertIn(
+            "周二201保留原赛前研判",
+            result["daily_summary"]["warnings"][-1],
+        )
+
     def test_builds_clean_five_market_input_and_flags_total_jump(self):
         source = match("2", "2.5", "3.5")
         source["hi_handicap_value"] = None
