@@ -17,6 +17,7 @@ def source(
     guarded=False,
     no_bet=False,
     handicap_play=None,
+    historical_calibration=None,
 ):
     return {
         "match_id": str(match_id),
@@ -36,6 +37,7 @@ def source(
                 "model_selection": "让平" if guarded else selection,
                 "effective_selection": selection,
             },
+            "historical_calibration": historical_calibration or {},
         },
         "input_snapshot": {
             "euro": {"current": list(euro)},
@@ -132,6 +134,33 @@ class DailyAIReviewTests(unittest.TestCase):
         self.assertEqual(stats["singles"]["hits"], 2)
         self.assertEqual(stats["by_play"]["2串1"]["hits"], 1)
         self.assertEqual(stats["guardrail_conflicts"], 1)
+
+    def test_aggregates_history_calibration_brier_score(self):
+        reviews = [{
+            "owner_date": f"2026-07-{10 + index:02d}",
+            "summary": {"singles": {"settled": 1}},
+            "match_results": [{
+                "match_id": str(index),
+                "selection": "平局",
+                "status": "hit" if index % 3 == 0 else "miss",
+                "historical_calibration": {
+                    "applied": True,
+                    "core_probability": 45,
+                    "calibrated_probability": 34,
+                },
+            }],
+            "handicap_results": [],
+            "combo_results": [],
+            "conflicts": [],
+        } for index in range(30)]
+
+        stats = aggregate_daily_ai_reviews(reviews)
+        calibration = stats["history_calibration"]["ordinary_draw"]
+
+        self.assertEqual(calibration["sample"], 30)
+        self.assertEqual(calibration["review_days"], 30)
+        self.assertGreater(calibration["brier_improvement"], 0)
+        self.assertTrue(calibration["validated"])
 
     def test_no_bet_match_is_observed_but_excluded_from_roi(self):
         snapshot = {

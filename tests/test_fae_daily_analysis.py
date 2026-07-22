@@ -170,6 +170,66 @@ class DailyAnalysisTests(unittest.TestCase):
 
         self.assertEqual(row["league_history_profile"], profile)
 
+    def test_includes_match_specific_goal_margin_model(self):
+        model = {
+            "version": "goal-margin-similarity-v1",
+            "ordinary_draw": {
+                "effective_sample": 58.2,
+                "blended_probability": 29.4,
+                "eligible_for_adjustment": True,
+            },
+            "handicap_draw": {
+                "target_goal_difference": 1,
+                "effective_sample": 61.0,
+                "blended_probability": 27.1,
+                "eligible_for_adjustment": True,
+            },
+        }
+
+        row = build_daily_match_input(
+            match("2"),
+            goal_margin_model=model,
+        )
+
+        self.assertEqual(row["historical_goal_margin_model"], model)
+
+    def test_similar_history_conservatively_calibrates_draw_value(self):
+        source = {
+            "fae_core": {
+                "recommendation": {
+                    "market_confidence": {"score": 66},
+                },
+            },
+            "historical_goal_margin_model": {
+                "ordinary_draw": {
+                    "eligible_for_adjustment": True,
+                    "blended_probability": 27.0,
+                    "effective_sample": 64.0,
+                    "credibility_weight": 0.24,
+                    "signal": "历史低于市场",
+                },
+            },
+        }
+        profile = {
+            "label": "平局",
+            "probability": 42,
+            "prediction_score": 74,
+            "odds": 3.2,
+            "market_implied_probability": 30.0,
+            "value_score": 80,
+            "bet_score": 78,
+            "no_bet": False,
+            "no_bet_reasons": [],
+        }
+
+        adjusted = FAEDailyAIAnalyzer._historical_adjusted_profile(
+            source, profile
+        )
+
+        self.assertTrue(adjusted["historical_calibration"]["applied"])
+        self.assertLess(adjusted["probability"], 42)
+        self.assertLess(adjusted["bet_score"], 78)
+
     def test_includes_available_500_fundamentals_without_false_missing_warning(self):
         source_analysis = {
             "source": "500彩票网",

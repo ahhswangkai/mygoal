@@ -120,6 +120,62 @@ def summarize_ai_settled(rows: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
     }
 
 
+def summarize_history_calibration(
+    rows: Iterable[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Compare pre-match raw and history-calibrated probabilities."""
+    records = []
+    for row in rows:
+        if row.get("status") not in {"hit", "miss"}:
+            continue
+        calibration = row.get("historical_calibration") or {}
+        raw = _number(calibration.get("core_probability"))
+        calibrated = _number(calibration.get("calibrated_probability"))
+        if not calibration.get("applied") or raw is None or calibrated is None:
+            continue
+        actual = 1.0 if row.get("status") == "hit" else 0.0
+        records.append((
+            actual,
+            raw / 100,
+            calibrated / 100,
+            str(row.get("review_owner_date") or "")[:10],
+        ))
+    if not records:
+        return {
+            "sample": 0,
+            "review_days": 0,
+            "core_brier": None,
+            "calibrated_brier": None,
+            "brier_improvement": None,
+            "validated": False,
+        }
+    core_brier = sum(
+        (actual - probability) ** 2
+        for actual, probability, _, _ in records
+    ) / len(records)
+    calibrated_brier = sum(
+        (actual - probability) ** 2
+        for actual, _, probability, _ in records
+    ) / len(records)
+    improvement = core_brier - calibrated_brier
+    return {
+        "sample": len(records),
+        "review_days": len({date for *_, date in records if date}),
+        "core_brier": round(core_brier, 5),
+        "calibrated_brier": round(calibrated_brier, 5),
+        "brier_improvement": round(improvement, 5),
+        "validated": (
+            len(records) >= 30
+            and len({date for *_, date in records if date}) >= 5
+            and improvement > 0
+        ),
+        "instruction": (
+            "brier_improvement大于0才表示历史校准优于原始概率；"
+            "至少30个跨日样本后才允许发布调权。"
+        ),
+    }
+
+
 class FAEDailyAIReviewEngine:
     """Grade Ark's effective selections and its global 2/3-leg plans."""
 
@@ -353,6 +409,12 @@ class FAEDailyAIReviewEngine:
             "total_line": total_line,
             "guardrail_triggered": bool(guard.get("triggered")),
             "guardrail": guard,
+            "historical_calibration": analysis.get(
+                "historical_calibration"
+            ) or {},
+            "historical_goal_margin": analysis.get(
+                "historical_goal_margin"
+            ) or {},
         }
         if selection == "观望":
             result.update({"status": "skipped", "return": None, "profit": None})
@@ -416,14 +478,29 @@ def aggregate_daily_ai_reviews(
     combos: List[Dict[str, Any]] = []
     conflicts: List[Dict[str, Any]] = []
     for review in rows:
-        matches.extend(review.get("match_results") or [])
-        handicap_results.extend(review.get("handicap_results") or [])
+        owner_date = str(review.get("owner_date") or "")[:10]
+        matches.extend({
+            **row,
+            "review_owner_date": owner_date,
+        } for row in review.get("match_results") or [])
+        handicap_results.extend({
+            **row,
+            "review_owner_date": owner_date,
+        } for row in review.get("handicap_results") or [])
         combos.extend(review.get("combo_results") or [])
         conflicts.extend(review.get("conflicts") or [])
     labels = sorted({
         row.get("selection") for row in matches
         if row.get("selection") in SUPPORTED_SELECTIONS
     })
+    history_rows_by_key = {}
+    for row in matches + handicap_results:
+        selection = str(row.get("selection") or "")
+        if selection not in {"平局", "让平"}:
+            continue
+        key = (str(row.get("match_id") or ""), selection)
+        history_rows_by_key.setdefault(key, row)
+    history_rows = list(history_rows_by_key.values())
     return {
         "primary_source": "fae-daily-ai",
         "reviewed_days": sum(
@@ -461,5 +538,16 @@ def aggregate_daily_ai_reviews(
             for play in ("2串1", "3串1")
         },
         "guardrail_conflicts": len(conflicts),
+        "history_calibration": {
+            "overall": summarize_history_calibration(history_rows),
+            "ordinary_draw": summarize_history_calibration([
+                row for row in history_rows
+                if row.get("selection") == "平局"
+            ]),
+            "handicap_draw": summarize_history_calibration([
+                row for row in history_rows
+                if row.get("selection") == "让平"
+            ]),
+        },
         "strategy_weights": strategy_weights or {},
     }

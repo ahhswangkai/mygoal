@@ -104,6 +104,13 @@ def snapshot():
                 "league_history_profile": {
                     "eligible_for_adjustment": True,
                 },
+                "historical_goal_margin_model": {
+                    "ordinary_draw": {
+                        "effective_sample": 55.0,
+                        "blended_probability": 29.1,
+                        "eligible_for_adjustment": True,
+                    },
+                },
             },
         }],
     }
@@ -174,6 +181,12 @@ class FAEAIReviewAnalyzerTests(unittest.TestCase):
             audit_input["matches"][0]["handicap_prediction"]
             ["selection_text"],
             "让负(-1)",
+        )
+        self.assertEqual(
+            audit_input["matches"][0]["market_risk_context"]
+            ["historical_goal_margin_model"]["ordinary_draw"]
+            ["effective_sample"],
+            55.0,
         )
         self.assertEqual(
             result["matches"][0]["handicap_verdict"],

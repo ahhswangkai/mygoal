@@ -21,6 +21,7 @@ from football_ai.draw_review import aggregate_draw_reviews
 from football_ai.daily_review import aggregate_daily_ai_reviews
 from football_ai.review_memory import build_review_memory
 from football_ai.league_profile import (
+    build_match_goal_margin_models,
     build_league_profiles,
     classify_asian_risk_patterns,
     classify_market_favorite,
@@ -1259,6 +1260,9 @@ class MongoDBStorage:
                 'asian_initial_away_odds': 1,
                 'hi_handicap_value': 1,
                 'handicap': 1,
+                'hi_current_home_odds': 1,
+                'hi_current_draw_odds': 1,
+                'hi_current_away_odds': 1,
                 'ou_current_total': 1,
                 'ou_initial_total': 1,
             }
@@ -1287,6 +1291,73 @@ class MongoDBStorage:
             )
         except Exception as e:
             self.logger.error(f"读取 FAE 联赛历史画像失败: {str(e)}")
+            return {}
+
+    def get_fae_match_goal_margin_models(self, before_date, matches):
+        """Estimate draw/handicap-draw from leakage-safe similar history."""
+        try:
+            target_date = str(before_date or '')[:10]
+            current_matches = [
+                dict(match) for match in (matches or [])
+                if match.get('match_id')
+            ]
+            if not current_matches:
+                return {}
+            lookback_days = max(
+                180, int(os.getenv('FAE_GOAL_MARGIN_HISTORY_DAYS', '730'))
+            )
+            half_life_days = max(
+                30, int(os.getenv('FAE_GOAL_MARGIN_HALF_LIFE_DAYS', '180'))
+            )
+            minimum_effective_sample = max(
+                10.0,
+                float(os.getenv('FAE_GOAL_MARGIN_MIN_EFFECTIVE', '25')),
+            )
+            maximum_history = max(
+                1000, int(os.getenv('FAE_GOAL_MARGIN_MAX_MATCHES', '5000'))
+            )
+            target = datetime.strptime(target_date, '%Y-%m-%d')
+            cutoff = (
+                target - timedelta(days=lookback_days)
+            ).strftime('%Y-%m-%d')
+            projection = {
+                '_id': 0,
+                'match_id': 1,
+                'league': 1,
+                'owner_date': 1,
+                'home_score': 1,
+                'away_score': 1,
+                'euro_current_win': 1,
+                'euro_current_draw': 1,
+                'euro_current_lose': 1,
+                'asian_current_handicap': 1,
+                'asian_initial_handicap': 1,
+                'hi_handicap_value': 1,
+                'handicap': 1,
+                'hi_current_home_odds': 1,
+                'hi_current_draw_odds': 1,
+                'hi_current_away_odds': 1,
+                'ou_current_total': 1,
+                'ou_initial_total': 1,
+            }
+            history = list(self.matches_collection.find(
+                {
+                    'status': 2,
+                    'owner_date': {'$gte': cutoff, '$lt': target_date},
+                    'home_score': {'$nin': [None, '']},
+                    'away_score': {'$nin': [None, '']},
+                },
+                projection,
+            ).sort('owner_date', DESCENDING).limit(maximum_history))
+            return build_match_goal_margin_models(
+                current_matches,
+                history,
+                target_date,
+                half_life_days=half_life_days,
+                minimum_effective_sample=minimum_effective_sample,
+            )
+        except Exception as e:
+            self.logger.error(f"读取 FAE 历史进球差模型失败: {str(e)}")
             return {}
 
     def get_fae_league_profile_matches(
@@ -1667,6 +1738,9 @@ class MongoDBStorage:
                 'risk': {'risk-control'},
                 'guardrail': {'risk-control'},
                 'combination': {'draw-strategy'},
+                'history_calibration': {
+                    'draw-strategy', 'risk-control'
+                },
             }
             ai_advisories = []
             for ai_review in ai_reviews:

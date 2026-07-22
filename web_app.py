@@ -1085,7 +1085,11 @@ def _generate_fae_for_match(match, use_ai=True):
     )
 
 
-def _build_daily_ai_inputs(matches, league_profiles=None):
+def _build_daily_ai_inputs(
+    matches,
+    league_profiles=None,
+    goal_margin_models=None,
+):
     """Build current deterministic FAE snapshots without making per-match LLM calls."""
     rule_weights = (
         mongo_storage.get_fae_rule_weights() if mongo_storage else None
@@ -1120,6 +1124,9 @@ def _build_daily_ai_inputs(matches, league_profiles=None):
             core_result,
             league_profile=(league_profiles or {}).get(
                 str(match.get('league') or '').strip()
+            ),
+            goal_margin_model=(goal_margin_models or {}).get(
+                str(match.get('match_id') or '')
             ),
             source_analysis=source_analysis,
         ))
@@ -1173,9 +1180,14 @@ def _run_fae_daily_ai(owner_date, force=False):
         date_str,
         [match.get('league') for match in matches],
     )
+    goal_margin_models = mongo_storage.get_fae_match_goal_margin_models(
+        date_str,
+        matches,
+    )
     match_inputs = _build_daily_ai_inputs(
         matches,
         league_profiles=league_profiles,
+        goal_margin_models=goal_margin_models,
     )
     review_memory = mongo_storage.get_fae_review_memory(date_str)
     input_hash = fae_daily_ai_analyzer.input_hash(

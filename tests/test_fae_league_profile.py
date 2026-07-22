@@ -1,6 +1,7 @@
 import unittest
 
 from football_ai.league_profile import (
+    build_match_goal_margin_models,
     build_league_profiles,
     classify_asian_risk_patterns,
     classify_market_favorite,
@@ -209,6 +210,109 @@ class LeagueProfileTests(unittest.TestCase):
 
         self.assertEqual(pattern["sample"], 2)
         self.assertAlmostEqual(pattern["not_cover_rate"], 50.0, delta=1.0)
+
+    def test_goal_margin_model_excludes_target_day_and_future(self):
+        current = historical_match(
+            "2026-07-19", 0, 0, handicap=-1, home_odds=1.8, away_odds=4.2
+        )
+        current.update({
+            "match_id": "current-1",
+            "euro_current_draw": 3.4,
+            "hi_current_home_odds": 2.2,
+            "hi_current_draw_odds": 3.5,
+            "hi_current_away_odds": 2.6,
+            "asian_current_handicap": "半球",
+        })
+        past = [
+            {
+                **current,
+                "match_id": f"past-{index}",
+                "owner_date": "2026-07-18",
+                "home_score": 1,
+                "away_score": 1,
+            }
+            for index in range(12)
+        ]
+        future = [{
+            **current,
+            "match_id": "future",
+            "owner_date": "2026-07-19",
+            "home_score": 4,
+            "away_score": 0,
+        }]
+
+        model = build_match_goal_margin_models(
+            [current], past + future, "2026-07-19",
+            minimum_effective_sample=1,
+        )["current-1"]
+
+        self.assertEqual(
+            model["ordinary_draw"]["historical_probability"], 100.0
+        )
+        self.assertTrue(model["governance"]["future_matches_excluded"])
+
+    def test_handicap_draw_uses_exact_current_goal_margin(self):
+        current = historical_match(
+            "2026-07-19", 0, 0, handicap=-1, home_odds=1.7, away_odds=4.8
+        )
+        current.update({
+            "match_id": "current-2",
+            "euro_current_draw": 3.5,
+            "hi_current_home_odds": 2.1,
+            "hi_current_draw_odds": 3.6,
+            "hi_current_away_odds": 2.8,
+            "asian_current_handicap": "半球/一球",
+        })
+        history = []
+        for index in range(20):
+            history.append({
+                **current,
+                "match_id": f"history-{index}",
+                "owner_date": "2026-07-18",
+                "home_score": 2 if index < 15 else 1,
+                "away_score": 1,
+            })
+
+        model = build_match_goal_margin_models(
+            [current], history, "2026-07-19",
+            minimum_effective_sample=1,
+        )["current-2"]
+
+        self.assertEqual(
+            model["handicap_draw"]["target_goal_difference"], 1
+        )
+        self.assertAlmostEqual(
+            model["handicap_draw"]["historical_probability"],
+            75.0,
+            delta=0.1,
+        )
+        self.assertEqual(
+            model["ordinary_draw"]["historical_probability"], 25.0
+        )
+
+    def test_goal_margin_model_refuses_small_effective_sample(self):
+        current = historical_match("2026-07-19", 0, 0)
+        current.update({
+            "match_id": "current-3",
+            "euro_current_draw": 3.3,
+            "asian_current_handicap": "半球",
+        })
+        history = [{
+            **current,
+            "owner_date": "2026-07-18",
+            "home_score": 1,
+            "away_score": 1,
+        }]
+
+        model = build_match_goal_margin_models(
+            [current], history, "2026-07-19",
+            minimum_effective_sample=10,
+        )["current-3"]
+
+        self.assertFalse(
+            model["ordinary_draw"]["eligible_for_adjustment"]
+        )
+        self.assertEqual(model["ordinary_draw"]["signal"], "样本不足")
 
 
 if __name__ == "__main__":

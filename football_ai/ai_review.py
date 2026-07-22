@@ -14,7 +14,7 @@ from .provider import ArkNarrativeClient, FAEOutputError
 from .version import ENGINE_VERSION
 
 
-AI_REVIEW_PROMPT_VERSION = "fae-deep-review-v4-handicap-reference"
+AI_REVIEW_PROMPT_VERSION = "fae-deep-review-v5-goal-margin-calibration"
 SETTLED_STATUSES = {"hit", "miss", "push"}
 LEARNING_SCOPES = {
     "euro",
@@ -25,6 +25,7 @@ LEARNING_SCOPES = {
     "risk",
     "guardrail",
     "combination",
+    "history_calibration",
 }
 
 
@@ -113,6 +114,12 @@ class FAEAIReviewAnalyzer:
                     ) or {},
                     "league_history_profile": input_snapshot.get(
                         "league_history_profile"
+                    ) or {},
+                    "historical_goal_margin_model": input_snapshot.get(
+                        "historical_goal_margin_model"
+                    ) or {},
+                    "historical_calibration": analysis.get(
+                        "historical_calibration"
                     ) or {},
                 },
                 "data_warnings": input_snapshot.get(
@@ -254,6 +261,7 @@ class FAEAIReviewAnalyzer:
                 "scope": (
                     "euro/asian/sporttery/total/consistency/risk/"
                     "guardrail/combination"
+                    "/history_calibration"
                 ),
                 "target": "需要验证的规则或信号",
                 "action": "increase/decrease/hold",
@@ -274,6 +282,9 @@ class FAEAIReviewAnalyzer:
             "必须分别复核正式主选与handicap_prediction中的竞彩让球参考；普通主胜命中不能掩盖让胜、让平或让负未中。",
             "竞彩让球必须严格按保存的让球数计算：主队-1时，赢2球以上为让胜、恰好赢1球为让平、其余为让负；确定性结算结果优先于文字推断。",
             "market_risk_context中的水位模式仅表示赛前风险结构；可以检验该预警是否有效，但不得把退盘、升水或欧亚背离直接写成比赛失利的真实原因。",
+            "必须复核historical_goal_margin_model：普通平局只核对0球分差，让平只核对赛前竞彩让球数对应的精确净胜球差，严禁用普通平局赛果替代让平结算。",
+            "若historical_calibration.applied=true，要说明它相对core_probability是降低还是提高了概率，以及本场结果是否支持该次校准；单场支持或反对都不得直接升级为规律。",
+            "历史相似模型的候选调权必须使用history_calibration范围，至少要求跨日期且不少于30个有效样本，并以Brier Score、对数损失和模拟ROI的样本外结果决定是否发布。",
             "若盘口无明显预警，只能说明现有赛前市场数据无法解释赛果；没有xG、红牌、射门等过程数据时必须明确未知。",
             "调权只能作为候选，单日样本不得直接修改正式权重；每个候选必须给出至少10个样本的验证门槛。",
             "match_id仅允许用于JSON关联字段；结论、做对了什么、需要修正、市场复核、逐场诊断、调权候选和组合复核等所有自然语言必须使用match_number（如周四201），严禁展示原始比赛ID。",

@@ -15,7 +15,7 @@ from .provider import ArkNarrativeClient, FAEError, FAEOutputError
 from .version import ENGINE_VERSION
 
 
-DAILY_PROMPT_VERSION = "five-market-daily-v10-500-fundamentals"
+DAILY_PROMPT_VERSION = "five-market-daily-v11-goal-margin-history"
 
 HANDICAP_VALUES = {
     "平手": 0.0, "平/半": 0.25, "平手/半球": 0.25,
@@ -150,6 +150,7 @@ def build_daily_match_input(
     match: Dict[str, Any],
     fae_result: Optional[Dict[str, Any]] = None,
     league_profile: Optional[Dict[str, Any]] = None,
+    goal_margin_model: Optional[Dict[str, Any]] = None,
     source_analysis: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Create a compact, auditable input for the daily Ark request."""
@@ -288,6 +289,19 @@ def build_daily_match_input(
             "confidence": "样本不足",
             "eligible_for_adjustment": False,
             "hidden_signals": ["暂无可用联赛历史画像"],
+        },
+        "historical_goal_margin_model": goal_margin_model or {
+            "version": "goal-margin-similarity-v1",
+            "ordinary_draw": {
+                "eligible_for_adjustment": False,
+                "confidence": "样本不足",
+                "signal": "暂无可用相似历史样本",
+            },
+            "handicap_draw": {
+                "eligible_for_adjustment": False,
+                "confidence": "样本不足",
+                "signal": "暂无可用相似历史样本",
+            },
         },
         "current_asian_risk": classify_asian_risk_patterns(match),
         "fundamentals": fundamentals,
@@ -829,6 +843,9 @@ class FAEDailyAIAnalyzer:
             "历史复盘记忆只用于提醒曾经出现的误判和风险，不是当前比赛事实，不得据此直接推荐。",
             "联赛历史画像来自当前比赛日期之前的完场数据并带时间衰减；只允许把eligible_for_adjustment=true且分段样本充足的内容作为低到中权重基线。",
             "联赛画像中的命中率、让平率、进球率是历史条件频率，不是真实胜率；不得单独据此推荐，必须与当天五项市场证据一致。",
+            "historical_goal_margin_model按欧赔强弱、亚盘深度、大小球、竞彩让球数、联赛和时间衰减寻找相似完赛场次；ordinary_draw统计0球分差，handicap_draw统计当前让球数对应的精确净胜球差，两者严禁混用。",
+            "只有historical_goal_margin_model中eligible_for_adjustment=true的结果才可参与校准；必须同时比较effective_sample、confidence、market_probability、blended_probability、odds和value_edge，样本不足时只允许写观察。",
+            "历史相似模型以市场去水概率为先验并限制修正幅度，仍不是真实胜率或因果规律；若历史与市场明显冲突，降低星级或不下注，禁止用历史频率制造必出平局/让平的结论。",
             "联赛画像market_surprise表示临场欧赔存在明确热门时热门方未赢球的历史频率；favorite_fail_rate必须拆看favorite_draw_rate和underdog_win_rate，不能把两者混成同一投注结论。",
             "若当前热门赔率所在favorite_odds_bands样本不少于20，且联赛热门失手率或不穿盘率显著高于全库，只能降低热门方向置信度并增加平局、弱方不败或让球防选，不得脱离当天盘口直接反买。",
             "current_asian_risk表示当前比赛赛前触发的水位与盘口结构；league_history_profile.asian_risk_patterns表示该联赛同类结构的历史不穿率。只有当前模式一致、该模式样本不少于20且联赛画像可调权时，才可作为低到中权重风险证据。",
@@ -903,6 +920,8 @@ class FAEDailyAIAnalyzer:
             "历史复盘记忆只是低权重风险提醒，不是当前比赛事实；不得机械套用昨天结论。",
             "联赛历史画像只在eligible_for_adjustment=true时作为低到中权重基线；赔率分段样本不足时不得使用。",
             "历史联赛频率不是真实概率，必须让位于本场欧赔、亚盘、竞彩、大小球和市场一致性。",
+            "historical_goal_margin_model将普通平局定义为0球分差，将让平定义为当前竞彩让球数对应的精确净胜球差；两种玩法必须分开引用。仅eligible_for_adjustment=true且effective_sample达标时允许参与校准。",
+            "引用相似历史模型时必须同时比较market_probability、blended_probability、odds与value_edge；它以市场为先验且不是因果规律，不得写成必出或真实胜率。",
             "market_surprise是明确热门方未赢球的历史频率，必须拆分热门打平和弱方爆冷；仅当当前赔率分段样本不少于20时用于降低热门置信度或增加防选，禁止单独据此反买。",
             "current_asian_risk只描述本场赛前水位结构；只有联赛画像中相同asian_risk_patterns模式样本不少于20时才能辅助降级或增加防选，禁止把市场预警写成赛果真实原因。",
             "仅validated_patterns可作为跨日辅助校正，近期观察项不能单独改变推荐。",
@@ -1240,21 +1259,129 @@ class FAEDailyAIAnalyzer:
             ),
         )[0] if valid else "观望"
 
-    @staticmethod
+    @classmethod
+    def _historical_adjusted_profile(
+        cls,
+        source: Dict[str, Any],
+        profile: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Conservatively calibrate draw plays with similar finished matches."""
+        result = dict(profile or {})
+        key = {
+            "平局": "ordinary_draw",
+            "让平": "handicap_draw",
+        }.get(str(result.get("label") or ""))
+        if not key:
+            return result
+        model = source.get("historical_goal_margin_model") or {}
+        metric = model.get(key) or {}
+        result["historical_goal_margin"] = metric
+        if not metric.get("eligible_for_adjustment"):
+            return result
+        historical_probability = _number(
+            metric.get("blended_probability")
+        )
+        core_probability = _number(result.get("probability"))
+        if historical_probability is None or core_probability is None:
+            return result
+
+        credibility = min(
+            0.45,
+            max(0.15, 0.15 + float(metric.get("credibility_weight") or 0)),
+        )
+        calibrated_probability = (
+            core_probability
+            + (historical_probability - core_probability) * credibility
+        )
+        # Until the new calibration layer has enough settled, cross-day
+        # evidence, history may strongly reduce an inflated estimate but may
+        # raise it by at most two percentage points.
+        calibrated_probability = round(
+            min(calibrated_probability, core_probability + 2.0), 2
+        )
+        odds = _number(result.get("odds"))
+        market_probability = _number(
+            result.get("market_implied_probability")
+        )
+        expected_return = (
+            calibrated_probability / 100 * odds
+            if odds is not None and odds > 1 else None
+        )
+        value_edge = (
+            calibrated_probability - market_probability
+            if market_probability is not None else None
+        )
+        value_score = (
+            round(
+                55 + value_edge * 1.8
+                + (expected_return - 1) * 30
+            )
+            if value_edge is not None and expected_return is not None
+            else 38
+        )
+        value_score = max(0, min(99, value_score))
+        market_confidence = (
+            (((source.get("fae_core") or {}).get("recommendation") or {})
+             .get("market_confidence") or {})
+        )
+        confidence_score = float(market_confidence.get("score") or 50)
+        prediction_score = float(result.get("prediction_score") or 50)
+        bet_score = round(
+            value_score * 0.55
+            + confidence_score * 0.30
+            + prediction_score * 0.15
+        )
+        bet_score = max(0, min(99, bet_score))
+        reasons = [
+            str(reason) for reason in result.get("no_bet_reasons") or []
+            if str(reason) not in {"赔率价值不足", "综合投注分未达门槛"}
+        ]
+        if value_score < 52:
+            reasons.append("历史校准后赔率价值不足")
+        if bet_score < 55:
+            reasons.append("历史校准后综合投注分未达门槛")
+        result.update({
+            "raw_probability": core_probability,
+            "probability": calibrated_probability,
+            "value_probability": calibrated_probability,
+            "value_edge": round(value_edge, 2)
+            if value_edge is not None else None,
+            "expected_return": round(expected_return, 3)
+            if expected_return is not None else None,
+            "value_score": value_score,
+            "bet_score": bet_score,
+            "score": bet_score,
+            "stars": cls._rating(bet_score / 20),
+            "no_bet_reasons": list(dict.fromkeys(reasons)),
+            "no_bet": bool(reasons),
+            "historical_calibration": {
+                "applied": True,
+                "weight": round(credibility, 3),
+                "core_probability": core_probability,
+                "similar_history_probability": historical_probability,
+                "calibrated_probability": calibrated_probability,
+                "effective_sample": metric.get("effective_sample"),
+                "signal": metric.get("signal"),
+            },
+        })
+        return result
+
+    @classmethod
     def _play_value_profile(
-        source: Dict[str, Any], selection: str
+        cls, source: Dict[str, Any], selection: str
     ) -> Dict[str, Any]:
         categories = (
             (((source.get("fae_core") or {}).get("recommendation") or {})
              .get("category_scores") or [])
         )
-        return next(
+        profile = next(
             (
                 dict(item) for item in categories
                 if str(item.get("label") or "") == str(selection or "")
             ),
             {},
         )
+        return cls._historical_adjusted_profile(source, profile)
 
     @staticmethod
     def _predicted_result(source: Dict[str, Any]) -> str:
@@ -1338,7 +1465,7 @@ class FAEDailyAIAnalyzer:
         """Prefer a materially stronger bettable option over raw prediction."""
         allowed = {"主胜", "平局", "客胜", "让胜", "让平", "让负"}
         categories = [
-            dict(item)
+            cls._historical_adjusted_profile(source, dict(item))
             for item in (
                 (((source.get("fae_core") or {}).get("recommendation") or {})
                  .get("category_scores") or [])
@@ -1640,6 +1767,12 @@ class FAEDailyAIAnalyzer:
                 "value_score": value_profile.get("value_score"),
                 "bet_score": round(bet_score),
                 "market_confidence": market_confidence,
+                "historical_goal_margin": value_profile.get(
+                    "historical_goal_margin"
+                ),
+                "historical_calibration": value_profile.get(
+                    "historical_calibration"
+                ),
                 "league_asian_risk_evidence": matched_pattern_evidence,
                 "no_bet": no_bet,
                 "no_bet_reasons": list(dict.fromkeys(no_bet_reasons)),

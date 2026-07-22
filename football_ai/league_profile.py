@@ -9,6 +9,7 @@ from typing import Any, Dict, Iterable, List, Optional
 
 
 LEAGUE_PROFILE_VERSION = "league-profile-v3-asian-risk-patterns"
+GOAL_MARGIN_MODEL_VERSION = "goal-margin-similarity-v1"
 
 HANDICAP_VALUES = {
     "平手": 0.0,
@@ -478,6 +479,383 @@ def _weighted_average(
         / denominator,
         2,
     ) if denominator else None
+
+
+def _no_vig_probabilities(values: Iterable[Any]) -> Optional[List[float]]:
+    odds = [_number(value) for value in values]
+    if len(odds) != 3 or any(value is None or value <= 1 for value in odds):
+        return None
+    inverse = [1 / float(value) for value in odds]
+    total = sum(inverse)
+    return [value / total for value in inverse] if total else None
+
+
+def _current_euro_probabilities(match: Dict[str, Any]) -> Optional[List[float]]:
+    return _no_vig_probabilities((
+        match.get("euro_current_win"),
+        match.get("euro_current_draw"),
+        match.get("euro_current_lose"),
+    ))
+
+
+def _current_hhad_probabilities(match: Dict[str, Any]) -> Optional[List[float]]:
+    return _no_vig_probabilities((
+        match.get("hi_current_home_odds"),
+        match.get("hi_current_draw_odds"),
+        match.get("hi_current_away_odds"),
+    ))
+
+
+def _match_handicap(match: Dict[str, Any]) -> Optional[float]:
+    return _number(
+        match.get("hi_handicap_value")
+        if match.get("hi_handicap_value") not in (None, "")
+        else match.get("handicap")
+    )
+
+
+def _market_features(match: Dict[str, Any]) -> Dict[str, Any]:
+    total_source = (
+        match.get("ou_current_total")
+        if match.get("ou_current_total") not in (None, "")
+        else match.get("ou_initial_total")
+    )
+    asian_source = (
+        match.get("asian_current_handicap")
+        if match.get("asian_current_handicap") not in (None, "")
+        else match.get("asian_initial_handicap")
+    )
+    return {
+        "league": str(match.get("league") or "").strip(),
+        "euro": _current_euro_probabilities(match),
+        "hhad": _current_hhad_probabilities(match),
+        "asian_line": _handicap_value(asian_source),
+        "total_line": _total_line(total_source),
+        "sporttery_handicap": _match_handicap(match),
+    }
+
+
+def _similarity_weight(
+    current: Dict[str, Any],
+    historical: Dict[str, Any],
+) -> tuple[float, List[str]]:
+    """Return a bounded pre-match market similarity weight.
+
+    The result deliberately uses only fields available before kickoff.  Same
+    league receives more weight, while global rows still provide shrinkage for
+    competitions with limited history.
+    """
+    weight = 1.0
+    matched = []
+    current_league = str(current.get("league") or "")
+    historical_league = str(historical.get("league") or "")
+    if current_league and historical_league in league_aliases(current_league):
+        matched.append("同联赛")
+    else:
+        weight *= 0.32
+
+    current_euro = current.get("euro")
+    historical_euro = historical.get("euro")
+    if current_euro and historical_euro:
+        distance = sum(
+            abs(left - right)
+            for left, right in zip(current_euro, historical_euro)
+        ) / 3
+        weight *= math.exp(-distance / 0.075)
+        if distance <= 0.035:
+            matched.append("欧赔强弱接近")
+    else:
+        weight *= 0.45
+
+    current_hhad = current.get("hhad")
+    historical_hhad = historical.get("hhad")
+    if current_hhad and historical_hhad:
+        distance = sum(
+            abs(left - right)
+            for left, right in zip(current_hhad, historical_hhad)
+        ) / 3
+        weight *= math.exp(-distance / 0.085)
+        if distance <= 0.04:
+            matched.append("竞彩概率接近")
+    else:
+        weight *= 0.65
+
+    for key, scale, label in (
+        ("asian_line", 0.45, "亚盘深度接近"),
+        ("total_line", 0.85, "大小球接近"),
+        ("sporttery_handicap", 0.80, "竞彩让球一致"),
+    ):
+        left = _number(current.get(key))
+        right = _number(historical.get(key))
+        if left is None or right is None:
+            weight *= 0.70
+            continue
+        distance = abs(left - right)
+        weight *= math.exp(-distance / scale)
+        if distance <= (0.01 if key == "sporttery_handicap" else scale / 2):
+            matched.append(label)
+    return max(0.0001, min(1.0, weight)), matched
+
+
+def _wilson_interval(probability: float, effective_sample: float) -> List[float]:
+    if effective_sample <= 0:
+        return [0.0, 100.0]
+    z = 1.96
+    denominator = 1 + z * z / effective_sample
+    centre = (
+        probability + z * z / (2 * effective_sample)
+    ) / denominator
+    margin = z * math.sqrt(
+        probability * (1 - probability) / effective_sample
+        + z * z / (4 * effective_sample * effective_sample)
+    ) / denominator
+    return [
+        round(max(0.0, centre - margin) * 100, 1),
+        round(min(1.0, centre + margin) * 100, 1),
+    ]
+
+
+def _weighted_event_metric(
+    rows: List[Dict[str, Any]],
+    predicate: Any,
+    market_probability: Optional[float],
+    odds: Optional[float],
+    minimum_effective_sample: float,
+) -> Dict[str, Any]:
+    denominator = sum(row["weight"] for row in rows)
+    squared = sum(row["weight"] ** 2 for row in rows)
+    effective_sample = (
+        denominator * denominator / squared if squared else 0.0
+    )
+    hits = sum(row["weight"] for row in rows if predicate(row))
+    historical_probability = hits / denominator if denominator else None
+    eligible = bool(
+        historical_probability is not None
+        and len(rows) >= minimum_effective_sample
+        and effective_sample >= minimum_effective_sample
+        and denominator >= minimum_effective_sample * 0.20
+    )
+    credibility = min(
+        0.40,
+        effective_sample / (effective_sample + 80) * 0.55,
+    ) if eligible else 0.0
+    blended = None
+    if historical_probability is not None:
+        if market_probability is None:
+            blended = historical_probability
+        else:
+            # Market is the prior. History may move it, but never by more than
+            # eight percentage points before out-of-sample calibration.
+            historical_delta = max(
+                -0.08,
+                min(0.08, historical_probability - market_probability),
+            )
+            blended = market_probability + credibility * historical_delta
+    expected_return = (
+        blended * odds
+        if blended is not None and odds is not None and odds > 1 else None
+    )
+    signal = "样本不足"
+    if eligible and market_probability is not None:
+        delta = historical_probability - market_probability
+        signal = (
+            "历史高于市场" if delta >= 0.025
+            else "历史低于市场" if delta <= -0.025
+            else "历史接近市场"
+        )
+    elif eligible:
+        signal = "仅有历史频率"
+    confidence = (
+        "高" if effective_sample >= 100
+        else "中" if effective_sample >= 50
+        else "低" if effective_sample >= minimum_effective_sample
+        else "样本不足"
+    )
+    return {
+        "sample": len(rows),
+        "effective_sample": round(effective_sample, 1),
+        "similarity_weight_mass": round(denominator, 2),
+        "historical_probability": (
+            round(historical_probability * 100, 2)
+            if historical_probability is not None else None
+        ),
+        "market_probability": (
+            round(market_probability * 100, 2)
+            if market_probability is not None else None
+        ),
+        "blended_probability": (
+            round(blended * 100, 2) if blended is not None else None
+        ),
+        "confidence_interval_95": (
+            _wilson_interval(historical_probability, effective_sample)
+            if historical_probability is not None else None
+        ),
+        "odds": round(odds, 3) if odds is not None else None,
+        "fair_odds": (
+            round(1 / blended, 3) if blended and blended > 0 else None
+        ),
+        "expected_return": (
+            round(expected_return, 3)
+            if expected_return is not None else None
+        ),
+        "value_edge": (
+            round((expected_return - 1) * 100, 2)
+            if expected_return is not None else None
+        ),
+        "credibility_weight": round(credibility, 3),
+        "confidence": confidence,
+        "eligible_for_adjustment": eligible,
+        "signal": signal,
+    }
+
+
+def build_match_goal_margin_models(
+    current_matches: Iterable[Dict[str, Any]],
+    historical_matches: Iterable[Dict[str, Any]],
+    before_date: str,
+    *,
+    half_life_days: int = 180,
+    minimum_effective_sample: float = 25,
+    maximum_rows: int = 320,
+) -> Dict[str, Dict[str, Any]]:
+    """Build leakage-safe draw and handicap-draw estimates per current match."""
+    target = _date(before_date)
+    if not target:
+        return {}
+    history = []
+    for match in historical_matches:
+        owner_date = _date(match.get("owner_date"))
+        home = _number(match.get("home_score"))
+        away = _number(match.get("away_score"))
+        if (
+            not owner_date or owner_date >= target
+            or home is None or away is None
+        ):
+            continue
+        history.append({
+            "owner_date": owner_date,
+            "difference": int(home - away),
+            "features": _market_features(match),
+        })
+
+    results = {}
+    for match in current_matches:
+        match_id = str(match.get("match_id") or "")
+        if not match_id:
+            continue
+        features = _market_features(match)
+        weighted = []
+        for row in history:
+            similarity, labels = _similarity_weight(
+                features, row["features"]
+            )
+            age_days = max(0, (target - row["owner_date"]).days)
+            time_weight = math.pow(
+                0.5, age_days / max(1, half_life_days)
+            )
+            weighted.append({
+                "weight": similarity * time_weight,
+                "difference": row["difference"],
+                "same_league": "同联赛" in labels,
+                "labels": labels,
+            })
+        weighted.sort(key=lambda row: row["weight"], reverse=True)
+        rows = weighted[:max(20, int(maximum_rows))]
+
+        euro = _current_euro_probabilities(match)
+        hhad = _current_hhad_probabilities(match)
+        draw_odds = _number(match.get("euro_current_draw"))
+        hhad_draw_odds = _number(match.get("hi_current_draw_odds"))
+        handicap = _match_handicap(match)
+        ordinary = _weighted_event_metric(
+            rows,
+            lambda row: row["difference"] == 0,
+            euro[1] if euro else None,
+            draw_odds,
+            minimum_effective_sample,
+        )
+        if handicap is not None and abs(handicap - round(handicap)) <= 0.01:
+            target_difference = int(-round(handicap))
+            handicap_draw = _weighted_event_metric(
+                rows,
+                lambda row: row["difference"] == target_difference,
+                hhad[1] if hhad else None,
+                hhad_draw_odds,
+                minimum_effective_sample,
+            )
+            handicap_draw["target_goal_difference"] = target_difference
+            handicap_draw["definition"] = (
+                f"主队净胜球差恰好为{target_difference:+d}"
+            )
+        else:
+            handicap_draw = {
+                "sample": len(rows),
+                "effective_sample": 0,
+                "historical_probability": None,
+                "market_probability": hhad[1] * 100 if hhad else None,
+                "blended_probability": None,
+                "odds": hhad_draw_odds,
+                "confidence": "样本不足",
+                "eligible_for_adjustment": False,
+                "signal": "竞彩让球数缺失或不是整数，让平无法映射到精确净胜球差",
+                "target_goal_difference": None,
+            }
+
+        distribution = {}
+        denominator = sum(row["weight"] for row in rows)
+        for label, predicate in (
+            ("客胜3球+", lambda value: value <= -3),
+            ("客胜2球", lambda value: value == -2),
+            ("客胜1球", lambda value: value == -1),
+            ("平局", lambda value: value == 0),
+            ("主胜1球", lambda value: value == 1),
+            ("主胜2球", lambda value: value == 2),
+            ("主胜3球+", lambda value: value >= 3),
+        ):
+            distribution[label] = round(
+                sum(
+                    row["weight"] for row in rows
+                    if predicate(row["difference"])
+                ) / denominator * 100,
+                2,
+            ) if denominator else None
+        label_counts: Dict[str, int] = {}
+        for row in rows[:80]:
+            for label in row["labels"]:
+                label_counts[label] = label_counts.get(label, 0) + 1
+        results[match_id] = {
+            "version": GOAL_MARGIN_MODEL_VERSION,
+            "before_date": str(before_date or "")[:10],
+            "league": features.get("league"),
+            "ordinary_draw": ordinary,
+            "handicap_draw": handicap_draw,
+            "goal_margin_distribution": distribution,
+            "similarity": {
+                "candidate_rows": len(weighted),
+                "used_rows": len(rows),
+                "same_league_rows": sum(
+                    1 for row in rows if row["same_league"]
+                ),
+                "top_match_dimensions": [
+                    label for label, _ in sorted(
+                        label_counts.items(),
+                        key=lambda item: item[1],
+                        reverse=True,
+                    )[:5]
+                ],
+            },
+            "governance": {
+                "historical_only": True,
+                "future_matches_excluded": True,
+                "time_decay_half_life_days": half_life_days,
+                "minimum_effective_sample": minimum_effective_sample,
+                "instruction": (
+                    "相似历史频率是条件估计，不是因果结论或真实胜率；"
+                    "模型以市场去水概率为先验，只做有限幅度修正。"
+                ),
+            },
+        }
+    return results
 
 
 def _compact_rate(metric: Dict[str, Any]) -> Optional[float]:
