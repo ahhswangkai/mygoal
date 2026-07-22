@@ -1983,6 +1983,27 @@ class FAEDailyAIAnalyzer:
             ),
             reverse=True,
         )[:3]
+        pools["core"] = []
+        for item in candidates:
+            analysis = item.get("analysis") or {}
+            primary_play = str(analysis.get("primary_play") or "观望")
+            handicap_play = str(analysis.get("handicap_play") or "")
+            reason_parts = [f"正式主选{primary_play}"]
+            if handicap_play not in ("", "观望", primary_play):
+                reason_parts.append(f"竞彩让球参考{handicap_play}")
+            if analysis.get("bet_score") is not None:
+                reason_parts.append(f"投注分{analysis.get('bet_score')}分")
+            if analysis.get("value_score") is not None:
+                reason_parts.append(f"价值指数{analysis.get('value_score')}分")
+            pools["core"].append({
+                "match_id": str(item.get("match_id") or ""),
+                "rating": cls._rating(analysis.get("rating", 1)),
+                "selection": primary_play,
+                "handicap_play": handicap_play,
+                "reason": "，".join(reason_parts),
+                "role": "主选",
+            })
+        result["pools"] = pools
         core_parts = []
         for item in candidates:
             analysis = item.get("analysis") or {}

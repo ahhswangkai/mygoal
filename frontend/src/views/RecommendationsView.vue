@@ -388,6 +388,16 @@
               <small>按每场1单位模拟</small>
             </article>
             <article>
+              <span>累计让球参考</span>
+              <strong>{{ faeStats.handicap?.hit_rate || 0 }}%</strong>
+              <small>{{ faeStats.handicap?.hits || 0 }}/{{ faeStats.handicap?.settled || 0 }} 命中</small>
+            </article>
+            <article>
+              <span>让球参考ROI</span>
+              <strong :class="metricClass(faeStats.handicap?.roi)">{{ signedMetric(faeStats.handicap?.roi) }}%</strong>
+              <small>让胜 / 让平 / 让负独立结算</small>
+            </article>
+            <article>
               <span>2串1命中</span>
               <strong>{{ faeStats.by_play?.['2串1']?.hit_rate || 0 }}%</strong>
               <small>{{ faeStats.by_play?.['2串1']?.hits || 0 }}/{{ faeStats.by_play?.['2串1']?.settled || 0 }}</small>
@@ -406,9 +416,9 @@
                 <span>权重 {{ strategyWeight(selection).weight }}</span>
               </header>
               <div>
-                <p><span>命中率</span><b>{{ faeStats.by_selection?.[selection]?.hit_rate || 0 }}%</b></p>
-                <p><span>ROI</span><b :class="metricClass(faeStats.by_selection?.[selection]?.roi)">{{ signedMetric(faeStats.by_selection?.[selection]?.roi) }}%</b></p>
-                <p><span>样本</span><b>{{ faeStats.by_selection?.[selection]?.settled || 0 }}</b></p>
+                <p><span>命中率</span><b>{{ strategyStats(selection).hit_rate || 0 }}%</b></p>
+                <p><span>ROI</span><b :class="metricClass(strategyStats(selection).roi)">{{ signedMetric(strategyStats(selection).roi) }}%</b></p>
+                <p><span>样本</span><b>{{ strategyStats(selection).settled || 0 }}</b></p>
               </div>
               <small>{{ weightActionLabel(strategyWeight(selection).action) }}</small>
             </article>
@@ -434,6 +444,7 @@
                   <small>
                     已审计 {{ faeReview.ai_deep_review.coverage?.settled_matches || 0 }}
                     / {{ faeReview.ai_deep_review.coverage?.total_matches || 0 }} 场 ·
+                    让球参考 {{ faeReview.ai_deep_review.coverage?.settled_handicap_references || 0 }} 项 ·
                     {{ faeReview.ai_deep_review.model }}
                   </small>
                 </div>
@@ -511,6 +522,9 @@
                   <em>{{ item.selection_text }} · {{ item.result_score }}</em>
                   <i :class="aiVerdictClass(item.verdict)">{{ item.verdict }}</i>
                 </summary>
+                <small v-if="item.handicap_selection_text" class="ai-handicap-verdict">
+                  竞彩参考 {{ item.handicap_selection_text }} · {{ item.handicap_verdict }}
+                </small>
                 <p>{{ item.diagnosis }}</p>
                 <ul v-if="item.correct_signals?.length">
                   <li v-for="signal in item.correct_signals" :key="`correct-${signal}`">
@@ -544,7 +558,7 @@
 
           <template v-if="faeReview">
             <section class="daily-review-block">
-              <h2><span>AI 当天逐场结果</span><small>{{ faeReview.summary?.singles?.hits || 0 }}/{{ faeReview.summary?.singles?.settled || 0 }}</small></h2>
+              <h2><span>正式主选逐场结果</span><small>{{ faeReview.summary?.singles?.hits || 0 }}/{{ faeReview.summary?.singles?.settled || 0 }}</small></h2>
               <button
                 v-for="item in faeReview.match_results"
                 :key="item.match_id"
@@ -561,6 +575,28 @@
                 <small v-if="item.guardrail_triggered" class="guarded-pick">
                   AI原选{{ item.model_selection }}
                 </small>
+                <small v-if="isSettledStatus(item.status)">{{ signedMetric(item.profit) }}单位</small>
+              </button>
+            </section>
+
+            <section v-if="faeReview.handicap_results?.length" class="daily-review-block">
+              <h2>
+                <span>竞彩让球参考结果</span>
+                <small>{{ faeReview.summary?.handicap?.hits || 0 }}/{{ faeReview.summary?.handicap?.settled || 0 }}</small>
+              </h2>
+              <button
+                v-for="item in faeReview.handicap_results"
+                :key="`handicap-${item.match_id}`"
+                type="button"
+                @click="goToDetail(item.match_id)"
+              >
+                <span><b>{{ item.match_number }}</b>{{ item.home_team }} vs {{ item.away_team }}</span>
+                <strong>{{ item.selection_text || item.selection }}</strong>
+                <em>
+                  {{ item.result_score || '待赛' }}
+                  <small v-if="item.odds">@{{ item.odds }}</small>
+                </em>
+                <i :class="item.status">{{ reviewStatusLabel(item.status) }}</i>
                 <small v-if="isSettledStatus(item.status)">{{ signedMetric(item.profit) }}单位</small>
               </button>
             </section>
@@ -772,6 +808,7 @@ const comboGroups = computed(() => [
   { key: 'three', title: '3关方案（3串1）', items: faeParlays.value?.three_leg || [] }
 ].filter(group => group.items.length))
 const dailyPoolLabels = {
+  core: '重点推荐',
   handicap_draw: '重点让平',
   handicap_lose: '重点让负',
   draw: '普通平局',
@@ -1029,6 +1066,13 @@ function strategyWeight(selection) {
     weight: 1,
     action: 'hold'
   }
+}
+
+function strategyStats(selection) {
+  if (selection === '让平') {
+    return faeStats.value?.handicap_by_selection?.[selection] || {}
+  }
+  return faeStats.value?.by_selection?.[selection] || {}
 }
 
 function weightActionLabel(action) {
@@ -2532,6 +2576,13 @@ onBeforeUnmount(() => requestController?.abort())
   background: #fff0f3;
 }
 
+.ai-match-diagnoses .ai-handicap-verdict {
+  display: block;
+  margin: 0 9px 5px;
+  color: #a66a16;
+  font-size: 10px;
+}
+
 .ai-match-diagnoses details > p {
   margin: 0;
   padding: 2px 9px 8px;
@@ -2607,7 +2658,7 @@ onBeforeUnmount(() => requestController?.abort())
 
 .review-stats-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 7px;
   padding: 9px;
 }

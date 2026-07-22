@@ -130,9 +130,22 @@ def review(status="hit", score="1:1"):
             "return": 3.2 if status == "hit" else 0,
             "profit": 2.2 if status == "hit" else -1,
         }],
+        "handicap_results": [{
+            "match_id": "201",
+            "match_number": "周六201",
+            "selection": "让负",
+            "selection_text": "让负(-1)",
+            "odds": 1.8,
+            "handicap": -1,
+            "status": "hit",
+            "result_score": score,
+            "return": 1.8,
+            "profit": 0.8,
+        }],
         "combo_results": [],
         "summary": {
             "singles": {"settled": 1, "hits": status == "hit"},
+            "handicap": {"settled": 1, "hits": 1},
         },
     }
 
@@ -156,6 +169,18 @@ class FAEAIReviewAnalyzerTests(unittest.TestCase):
             audit_input["matches"][0]["market_risk_context"]
             ["current_asian_risk"]["pattern_ids"],
             ["water_drop_without_deepen"],
+        )
+        self.assertEqual(
+            audit_input["matches"][0]["handicap_prediction"]
+            ["selection_text"],
+            "让负(-1)",
+        )
+        self.assertEqual(
+            result["matches"][0]["handicap_verdict"],
+            "让球参考命中",
+        )
+        self.assertEqual(
+            result["coverage"]["settled_handicap_references"], 1
         )
         self.assertEqual(candidate["delta"], 0.15)
         self.assertEqual(candidate["minimum_samples"], 10)

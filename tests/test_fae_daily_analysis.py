@@ -921,6 +921,31 @@ class DailyAnalysisTests(unittest.TestCase):
 
         self.assertEqual(aligned["pools"]["handicap_lose"], [])
         self.assertEqual(aligned["pools"]["avoid"], [])
+        self.assertEqual(len(aligned["pools"]["core"]), 1)
+        self.assertEqual(aligned["pools"]["core"][0]["match_id"], "207")
+        self.assertEqual(aligned["pools"]["core"][0]["selection"], "主胜")
+        self.assertEqual(
+            aligned["pools"]["core"][0]["handicap_play"], "让胜"
+        )
+
+    def test_core_pool_excludes_no_bet_matches(self):
+        summary = {"pools": {}}
+        matches = [{
+            "match_id": "201",
+            "match_number": "周二201",
+            "analysis": {
+                "primary_play": "客胜",
+                "handicap_play": "让负",
+                "no_bet": True,
+                "rating": 4,
+            },
+        }]
+
+        aligned = FAEDailyAIAnalyzer.align_summary_ratings(
+            summary, matches
+        )
+
+        self.assertEqual(aligned["pools"]["core"], [])
 
     def test_stale_memory_avoidance_is_removed_without_current_risk(self):
         summary = {

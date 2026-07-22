@@ -14,7 +14,7 @@ from .provider import ArkNarrativeClient, FAEOutputError
 from .version import ENGINE_VERSION
 
 
-AI_REVIEW_PROMPT_VERSION = "fae-deep-review-v3-match-number-prose"
+AI_REVIEW_PROMPT_VERSION = "fae-deep-review-v4-handicap-reference"
 SETTLED_STATUSES = {"hit", "miss", "push"}
 LEARNING_SCOPES = {
     "euro",
@@ -49,6 +49,11 @@ class FAEAIReviewAnalyzer:
             for item in snapshot.get("matches") or []
             if item.get("match_id")
         }
+        handicap_by_id = {
+            str(item.get("match_id") or ""): item
+            for item in review.get("handicap_results") or []
+            if item.get("match_id")
+        }
         matches = []
         for result in review.get("match_results") or []:
             if result.get("status") not in SETTLED_STATUSES:
@@ -57,6 +62,7 @@ class FAEAIReviewAnalyzer:
             source = source_by_id.get(match_id) or {}
             analysis = source.get("analysis") or {}
             input_snapshot = source.get("input_snapshot") or {}
+            handicap_result = handicap_by_id.get(match_id) or {}
             matches.append({
                 "match_id": match_id,
                 "match_number": result.get("match_number"),
@@ -83,6 +89,15 @@ class FAEAIReviewAnalyzer:
                         "score_candidates"
                     ) or [],
                 },
+                "handicap_prediction": {
+                    "selection": handicap_result.get("selection"),
+                    "selection_text": handicap_result.get("selection_text"),
+                    "odds": handicap_result.get("odds"),
+                    "handicap": handicap_result.get("handicap"),
+                    "status": handicap_result.get("status"),
+                    "return": handicap_result.get("return"),
+                    "profit": handicap_result.get("profit"),
+                } if handicap_result else {},
                 "prediction_time_markets": {
                     key: input_snapshot.get(key) or {}
                     for key in (
@@ -183,6 +198,10 @@ class FAEAIReviewAnalyzer:
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "coverage": {
                 "settled_matches": len(matches),
+                "settled_handicap_references": int(
+                    (((review.get("summary") or {}).get("handicap") or {})
+                     .get("settled") or 0)
+                ),
                 "total_matches": len(snapshot.get("matches") or []),
                 "review_completed": bool(review.get("completed")),
             },
@@ -217,6 +236,7 @@ class FAEAIReviewAnalyzer:
             "matches": [{
                 "match_id": "必须来自输入",
                 "verdict": "判断有效/命中但过程有风险/判断失误/走盘",
+                "handicap_verdict": "让球参考命中/让球参考未中/让球走盘/未推荐",
                 "diagnosis": "60到180字",
                 "correct_signals": ["赛前已记录且有效的信号"],
                 "missed_signals": ["赛前已记录但误读或忽略的信号"],
@@ -251,6 +271,8 @@ class FAEAIReviewAnalyzer:
             "不得把最终比分反推成赛前必然信号，所有有效或遗漏信号必须能在输入的赛前记录中找到。",
             "固定复核欧赔、亚盘真实升深、竞彩让球、大小球和市场一致性五项。",
             "升降属于走势而非盘口名；让平必须结合输入中的具体让球数解释。",
+            "必须分别复核正式主选与handicap_prediction中的竞彩让球参考；普通主胜命中不能掩盖让胜、让平或让负未中。",
+            "竞彩让球必须严格按保存的让球数计算：主队-1时，赢2球以上为让胜、恰好赢1球为让平、其余为让负；确定性结算结果优先于文字推断。",
             "market_risk_context中的水位模式仅表示赛前风险结构；可以检验该预警是否有效，但不得把退盘、升水或欧亚背离直接写成比赛失利的真实原因。",
             "若盘口无明显预警，只能说明现有赛前市场数据无法解释赛果；没有xG、红牌、射门等过程数据时必须明确未知。",
             "调权只能作为候选，单日样本不得直接修改正式权重；每个候选必须给出至少10个样本的验证门槛。",
@@ -289,6 +311,8 @@ class FAEAIReviewAnalyzer:
             match_id = str(source.get("match_id") or "")
             generated = generated_by_id.get(match_id) or {}
             result_status = ((source.get("result") or {}).get("status"))
+            handicap_prediction = source.get("handicap_prediction") or {}
+            handicap_status = handicap_prediction.get("status")
             fallback_verdict = {
                 "hit": "判断有效",
                 "miss": "判断失误",
@@ -311,6 +335,15 @@ class FAEAIReviewAnalyzer:
                 ),
                 "result_score": (source.get("result") or {}).get("score"),
                 "result_status": result_status,
+                "handicap_selection_text": handicap_prediction.get(
+                    "selection_text"
+                ),
+                "handicap_result_status": handicap_status,
+                "handicap_verdict": {
+                    "hit": "让球参考命中",
+                    "miss": "让球参考未中",
+                    "push": "让球走盘",
+                }.get(handicap_status, "未推荐"),
                 "verdict": verdict,
                 "diagnosis": cls._text(
                     generated.get("diagnosis"),

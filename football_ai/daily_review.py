@@ -135,6 +135,14 @@ class FAEDailyAIReviewEngine:
             )
             for item in matches
         ]
+        handicap_results = [
+            result
+            for item in matches
+            for result in [self._settle_handicap_reference(
+                item, matches_by_id.get(str(item.get("match_id"))) or {}
+            )]
+            if result is not None
+        ]
         snapshot_by_id = {
             str(item.get("match_id")): item for item in matches
         }
@@ -220,10 +228,19 @@ class FAEDailyAIReviewEngine:
             "completed": pending == 0,
             "pending_matches": pending,
             "match_results": match_results,
+            "handicap_results": handicap_results,
             "combo_results": combo_results,
             "conflicts": conflicts,
             "summary": {
                 "singles": summarize_ai_settled(match_results),
+                "handicap": summarize_ai_settled(handicap_results),
+                "handicap_by_selection": {
+                    label: summarize_ai_settled([
+                        row for row in handicap_results
+                        if row.get("selection") == label
+                    ])
+                    for label in ("让胜", "让平", "让负")
+                },
                 "by_selection": {
                     label: summarize_ai_settled([
                         row for row in match_results
@@ -259,6 +276,31 @@ class FAEDailyAIReviewEngine:
             match,
             str(analysis.get("primary_play") or "观望"),
         )
+        if analysis.get("no_bet"):
+            if result.get("status") == "pending":
+                result["no_bet"] = True
+                result["no_bet_reasons"] = (
+                    analysis.get("no_bet_reasons") or []
+                )
+                return result
+            result["observation_status"] = result.get("status")
+            result["status"] = "skipped"
+            result["return"] = None
+            result["profit"] = None
+            result["no_bet"] = True
+            result["no_bet_reasons"] = analysis.get("no_bet_reasons") or []
+        return result
+
+    def _settle_handicap_reference(
+        self, source: Dict[str, Any], match: Dict[str, Any]
+    ) -> Optional[Dict[str, Any]]:
+        """Settle the displayed Sporttery handicap reference separately."""
+        analysis = source.get("analysis") or {}
+        selection = str(analysis.get("handicap_play") or "")
+        if selection not in {"让胜", "让平", "让负"}:
+            return None
+        result = self._settle_selection(source, match, selection)
+        result["result_type"] = "handicap_reference"
         if analysis.get("no_bet"):
             if result.get("status") == "pending":
                 result["no_bet"] = True
@@ -370,10 +412,12 @@ def aggregate_daily_ai_reviews(
 ) -> Dict[str, Any]:
     rows = list(reviews)
     matches: List[Dict[str, Any]] = []
+    handicap_results: List[Dict[str, Any]] = []
     combos: List[Dict[str, Any]] = []
     conflicts: List[Dict[str, Any]] = []
     for review in rows:
         matches.extend(review.get("match_results") or [])
+        handicap_results.extend(review.get("handicap_results") or [])
         combos.extend(review.get("combo_results") or [])
         conflicts.extend(review.get("conflicts") or [])
     labels = sorted({
@@ -389,6 +433,14 @@ def aggregate_daily_ai_reviews(
             )
         ),
         "singles": summarize_ai_settled(matches),
+        "handicap": summarize_ai_settled(handicap_results),
+        "handicap_by_selection": {
+            label: summarize_ai_settled([
+                row for row in handicap_results
+                if row.get("selection") == label
+            ])
+            for label in ("让胜", "让平", "让负")
+        },
         "by_selection": {
             label: summarize_ai_settled([
                 row for row in matches if row.get("selection") == label

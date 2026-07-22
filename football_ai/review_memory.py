@@ -79,6 +79,9 @@ def build_review_memory(
         settlement = (
             ((review.get("summary") or {}).get("singles") or {})
         )
+        handicap_settlement = (
+            ((review.get("summary") or {}).get("handicap") or {})
+        )
         lessons = deep.get("market_lessons") or {}
         observations.append({
             "date": str(review.get("owner_date") or "")[:10],
@@ -88,6 +91,13 @@ def build_review_memory(
                 "settled": int(settlement.get("settled") or 0),
                 "hit_rate": _number(settlement.get("hit_rate")),
                 "roi": _number(settlement.get("roi")),
+                "handicap_settled": int(
+                    handicap_settlement.get("settled") or 0
+                ),
+                "handicap_hit_rate": _number(
+                    handicap_settlement.get("hit_rate")
+                ),
+                "handicap_roi": _number(handicap_settlement.get("roi")),
             },
             "conclusion": _text(summary.get("conclusion"), 360),
             "what_failed": _list(

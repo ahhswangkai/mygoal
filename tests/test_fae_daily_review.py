@@ -16,6 +16,7 @@ def source(
     rating=4,
     guarded=False,
     no_bet=False,
+    handicap_play=None,
 ):
     return {
         "match_id": str(match_id),
@@ -25,6 +26,7 @@ def source(
         "away_team": f"客队{match_id}",
         "analysis": {
             "primary_play": selection,
+            "handicap_play": handicap_play,
             "model_primary_play": "让平" if guarded else selection,
             "rating": rating,
             "no_bet": no_bet,
@@ -148,6 +150,42 @@ class DailyAIReviewTests(unittest.TestCase):
         self.assertEqual(row["observation_status"], "hit")
         self.assertTrue(row["no_bet"])
         self.assertEqual(review["summary"]["singles"]["settled"], 0)
+
+    def test_settles_handicap_reference_separately_from_primary_pick(self):
+        snapshot = {
+            **self.snapshot,
+            "matches": [
+                source(
+                    "205", "主胜", handicap=-1,
+                    hhad=(2.55, 3.15, 2.25), handicap_play="让胜",
+                ),
+                source(
+                    "207", "主胜", handicap=-1,
+                    hhad=(2.90, 3.22, 2.11), handicap_play="让胜",
+                ),
+            ],
+            "daily_summary": {"recommended_combinations": []},
+        }
+        results = {
+            "205": {"status": 2, "home_score": 1, "away_score": 0},
+            "207": {"status": 2, "home_score": 4, "away_score": 0},
+        }
+
+        review = FAEDailyAIReviewEngine().review(snapshot, results)
+        primary = {
+            item["match_id"]: item for item in review["match_results"]
+        }
+        handicap = {
+            item["match_id"]: item for item in review["handicap_results"]
+        }
+
+        self.assertEqual(primary["205"]["status"], "hit")
+        self.assertEqual(handicap["205"]["selection_text"], "让胜(-1)")
+        self.assertEqual(handicap["205"]["status"], "miss")
+        self.assertEqual(handicap["207"]["status"], "hit")
+        self.assertEqual(review["summary"]["handicap"]["settled"], 2)
+        self.assertEqual(review["summary"]["handicap"]["hits"], 1)
+        self.assertEqual(review["summary"]["handicap"]["hit_rate"], 50.0)
 
 
 if __name__ == "__main__":

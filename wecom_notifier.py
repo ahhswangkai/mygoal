@@ -186,10 +186,22 @@ def format_review_message(review: Dict[str, Any]) -> str:
     settled = int(singles.get("settled") or 0)
     hits = int(singles.get("hits") or 0)
     rate = round(hits / settled * 100, 1) if settled else 0
+    handicap = (review.get("summary") or {}).get("handicap") or {}
+    handicap_settled = int(handicap.get("settled") or 0)
+    handicap_hits = int(handicap.get("hits") or 0)
+    handicap_rate = (
+        round(handicap_hits / handicap_settled * 100, 1)
+        if handicap_settled else 0
+    )
     lines = [
         f"## FAE 赛后复盘 · {owner_date}",
         f"> 单场 {hits}/{settled} 命中 · {rate:g}%",
     ]
+    if handicap_settled:
+        lines.append(
+            f"> 竞彩让球参考 {handicap_hits}/{handicap_settled} 命中"
+            f" · {handicap_rate:g}% · ROI {float(handicap.get('roi') or 0):g}%"
+        )
     conclusion = _clip(ai_summary.get("conclusion"), 520)
     if conclusion:
         lines.extend(["", "**复盘结论**", conclusion])

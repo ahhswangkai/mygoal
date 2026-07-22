@@ -1693,9 +1693,19 @@ class MongoDBStorage:
             now = datetime.utcnow().isoformat() + 'Z'
             for active in active_skills:
                 if active.get('skill_id') == 'draw-strategy':
+                    selection_stats = dict(
+                        draw_stats.get('by_selection') or {}
+                    )
+                    selection_stats['让平'] = (
+                        (draw_stats.get('handicap_by_selection') or {}).get(
+                            '让平'
+                        )
+                        or selection_stats.get('让平')
+                        or {}
+                    )
                     candidate = build_draw_skill_candidate(
                         active,
-                        draw_stats.get('by_selection') or {},
+                        selection_stats,
                         minimum_samples=minimum_samples,
                         minimum_new_samples=minimum_new_samples,
                     )
@@ -2358,7 +2368,16 @@ class MongoDBStorage:
         active_weights = self.get_fae_draw_strategy_weights()
         weights = {}
         for selection in ('平局', '让平'):
-            summary = (stats.get('by_selection') or {}).get(selection) or {}
+            if selection == '让平':
+                summary = (
+                    (stats.get('handicap_by_selection') or {}).get(selection)
+                    or (stats.get('by_selection') or {}).get(selection)
+                    or {}
+                )
+            else:
+                summary = (
+                    (stats.get('by_selection') or {}).get(selection) or {}
+                )
             samples = int(summary.get('settled') or 0)
             roi = float(summary.get('roi') or 0)
             weight = float(active_weights.get(selection) or 1.0)
