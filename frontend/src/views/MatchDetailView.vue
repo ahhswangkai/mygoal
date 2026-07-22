@@ -90,6 +90,10 @@
                 <p><span>投注分</span><b>{{ dailyAiContent.bet_score ?? '--' }}分</b></p>
                 <p><span>投注结论</span><b :class="{ danger: dailyAiContent.no_bet }">{{ dailyAiContent.decision || '观望' }}</b></p>
               </div>
+              <HistoricalGoalMarginCard
+                :model="dailyAiSnapshot.historical_goal_margin_model"
+                :calibration="dailyAiContent.historical_calibration"
+              />
               <div class="daily-detail-markets">
                 <p v-for="item in dailyAiMarkets" :key="item.key">
                   <span>{{ item.label }}</span>
@@ -341,6 +345,7 @@
 <script setup>
 import { computed, defineComponent, h, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import HistoricalGoalMarginCard from '../components/HistoricalGoalMarginCard.vue'
 import { openAuth } from '../auth'
 
 const DataSection = defineComponent({

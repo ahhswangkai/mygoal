@@ -97,6 +97,16 @@
                 单日结论只作风险提醒，不直接决定今天推荐
               </small>
             </div>
+            <div v-if="historicalModelCount" class="goal-margin-loaded">
+              <strong>已加载历史进球差模型</strong>
+              <span>
+                覆盖 {{ historicalModelCount }} 场 ·
+                {{ historicalCalibrationCount }} 场实际校准
+              </span>
+              <small>
+                展开逐场分析可查看普通平局、竞彩让平的相似样本、概率与赔率价值
+              </small>
+            </div>
           </div>
 
           <div v-if="dailyPoolGroups.length" class="daily-pools">
@@ -214,6 +224,10 @@
                   <p><span>投注分</span><b>{{ item.analysis?.bet_score ?? '--' }}分</b></p>
                   <p><span>结论</span><b :class="{ 'no-bet-text': item.analysis?.no_bet }">{{ item.analysis?.decision || '观望' }}</b></p>
                 </div>
+                <HistoricalGoalMarginCard
+                  :model="item.input_snapshot?.historical_goal_margin_model"
+                  :calibration="item.analysis?.historical_calibration"
+                />
                 <div class="daily-market-grid">
                   <p v-for="market in dailyMarkets" :key="market.key">
                     <span>{{ market.label }}</span>
@@ -729,6 +743,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import AccountButton from '../components/AccountButton.vue'
+import HistoricalGoalMarginCard from '../components/HistoricalGoalMarginCard.vue'
 import { openAuth } from '../auth'
 
 const router = useRouter()
@@ -814,6 +829,12 @@ const dailyPoolGroups = computed(() => {
 const dailyMatchMap = computed(() => Object.fromEntries(
   (faeDailyAi.value?.matches || []).map(item => [String(item.match_id), item])
 ))
+const historicalModelCount = computed(() => (
+  faeDailyAi.value?.matches || []
+).filter(item => item.input_snapshot?.historical_goal_margin_model?.version).length)
+const historicalCalibrationCount = computed(() => (
+  faeDailyAi.value?.matches || []
+).filter(item => item.analysis?.historical_calibration?.applied).length)
 const visibleDailyMatches = computed(() => (
   faeDailyAi.value?.matches || []
 ).filter(item => !item.retained_from_pregame))
@@ -1468,6 +1489,36 @@ onBeforeUnmount(() => requestController?.abort())
 .daily-review-memory small {
   grid-column: 1 / 3;
   color: #9992a1;
+  font-size: 9px;
+}
+
+.goal-margin-loaded {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 3px 7px;
+  margin-top: 9px;
+  padding: 7px 8px;
+  color: #4c665d;
+  font-size: 10px;
+  line-height: 1.45;
+  background: #edf8f3;
+  border-radius: 7px;
+}
+
+.goal-margin-loaded strong {
+  color: #237157;
+  font-size: 10px;
+}
+
+.goal-margin-loaded span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.goal-margin-loaded small {
+  grid-column: 1 / 3;
+  color: #7e958d;
   font-size: 9px;
 }
 
