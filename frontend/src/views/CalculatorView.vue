@@ -87,34 +87,42 @@
                   <div class="odds-row had-row">
                     <div class="goal-line">
                       <span class="single-tag" v-if="match.hadSingle">单</span>
-                      <span class="line-text">[0]</span>
+                      <span class="line-text">[{{ poolLine(match.had, 0) }}]</span>
                     </div>
                     <div
                       v-for="(odd, opt) in getOdds(match.had)"
                       :key="'had-'+opt"
                       class="mix-btn"
-                      :class="{ selected: isSel(match.id, 'had', opt) }"
+                      :class="{
+                        selected: isSel(match.id, 'had', opt),
+                        unavailable: !isOddsAvailable(odd)
+                      }"
+                      :aria-disabled="!isOddsAvailable(odd)"
                       @click="toggleOdds(match, 'had', opt, odd, labelHad(opt))"
                     >
                       <div class="mix-text">{{ labelHad(opt) }}</div>
-                      <div class="mix-odds">{{ odd }}</div>
+                      <div class="mix-odds">{{ displayOdds(odd) }}</div>
                       <span class="mix-arrow" :class="flagClass(match.had, opt)">{{ flagArrow(match.had, opt) }}</span>
                     </div>
                   </div>
                   <div class="odds-row had-row">
                     <div class="goal-line">
                       <span class="single-tag" v-if="match.hhadSingle">单</span>
-                      <span class="line-text">[{{ formatHandicap(match.handicap) }}]</span>
+                      <span class="line-text">[{{ poolLine(match.hhad, formatHandicap(match.handicap)) }}]</span>
                     </div>
                     <div
                       v-for="(odd, opt) in getOdds(match.hhad)"
                       :key="'hhad-'+opt"
                       class="mix-btn"
-                      :class="{ selected: isSel(match.id, 'hhad', opt) }"
+                      :class="{
+                        selected: isSel(match.id, 'hhad', opt),
+                        unavailable: !isOddsAvailable(odd)
+                      }"
+                      :aria-disabled="!isOddsAvailable(odd)"
                       @click="toggleOdds(match, 'hhad', opt, odd, labelHhad(opt))"
                     >
                       <div class="mix-text">{{ labelHhad(opt) }}</div>
-                      <div class="mix-odds">{{ odd }}</div>
+                      <div class="mix-odds">{{ displayOdds(odd) }}</div>
                       <span class="mix-arrow" :class="flagClass(match.hhad, opt)">{{ flagArrow(match.hhad, opt) }}</span>
                     </div>
                   </div>
@@ -125,34 +133,42 @@
                     <div class="odds-row mixed-base-row">
                       <div class="goal-line">
                         <span class="single-tag" v-if="match.hadSingle">单</span>
-                        <span class="line-text">[0]</span>
+                        <span class="line-text">[{{ poolLine(match.had, 0) }}]</span>
                       </div>
                       <div
                         v-for="(odd, opt) in getOdds(match.had)"
                         :key="'mix-had-'+opt"
                         class="mix-btn"
-                        :class="{ selected: isSel(match.id, 'had', opt) }"
+                        :class="{
+                          selected: isSel(match.id, 'had', opt),
+                          unavailable: !isOddsAvailable(odd)
+                        }"
+                        :aria-disabled="!isOddsAvailable(odd)"
                         @click="toggleOdds(match, 'had', opt, odd, labelHad(opt))"
                       >
                         <div class="mix-text">{{ labelHad(opt) }}</div>
-                        <div class="mix-odds">{{ odd }}</div>
+                        <div class="mix-odds">{{ displayOdds(odd) }}</div>
                         <span class="mix-arrow" :class="flagClass(match.had, opt)">{{ flagArrow(match.had, opt) }}</span>
                       </div>
                     </div>
                     <div class="odds-row mixed-base-row">
                       <div class="goal-line">
                         <span class="single-tag" v-if="match.hhadSingle">单</span>
-                        <span class="line-text">[{{ formatHandicap(match.handicap) }}]</span>
+                        <span class="line-text">[{{ poolLine(match.hhad, formatHandicap(match.handicap)) }}]</span>
                       </div>
                       <div
                         v-for="(odd, opt) in getOdds(match.hhad)"
                         :key="'mix-hhad-'+opt"
                         class="mix-btn"
-                        :class="{ selected: isSel(match.id, 'hhad', opt) }"
+                        :class="{
+                          selected: isSel(match.id, 'hhad', opt),
+                          unavailable: !isOddsAvailable(odd)
+                        }"
+                        :aria-disabled="!isOddsAvailable(odd)"
                         @click="toggleOdds(match, 'hhad', opt, odd, labelHhad(opt))"
                       >
                         <div class="mix-text">{{ labelHhad(opt) }}</div>
-                        <div class="mix-odds">{{ odd }}</div>
+                        <div class="mix-odds">{{ displayOdds(odd) }}</div>
                         <span class="mix-arrow" :class="flagClass(match.hhad, opt)">{{ flagArrow(match.hhad, opt) }}</span>
                       </div>
                     </div>
@@ -869,6 +885,18 @@ const formatHandicap = (h) => {
   return value > 0 ? `+${value}` : `${value}`
 }
 
+const isOddsAvailable = odd => {
+  const value = Number(odd)
+  return Number.isFinite(value) && value > 0
+}
+
+const isPoolAvailable = pool => (
+  ['win', 'draw', 'lose'].some(opt => isOddsAvailable(pool?.[opt]))
+)
+
+const poolLine = (pool, line) => isPoolAvailable(pool) ? line : '未'
+const displayOdds = odd => isOddsAvailable(odd) ? odd : '-'
+
 const flagArrow = (pool, opt) => {
   if (!pool) return ''
   return oddsTrendArrow(pool[opt + 'Flag'])
@@ -909,6 +937,7 @@ const awayScores = (s) => {
 }
 
 const toggleOdds = (match, pool, opt, odd, label) => {
+  if (!isOddsAvailable(odd)) return
   const idx = selectedItems.value.findIndex(i => i.matchId === match.id && i.pool === pool && i.opt === opt)
   if (idx >= 0) {
     selectedItems.value.splice(idx, 1)
@@ -1303,5 +1332,20 @@ onMounted(() => { fetchMatches() })
 .play-conflict-replace {
   color: #d32f2f;
   font-weight: 700;
+}
+
+.calculator-page .mix-btn.unavailable {
+  cursor: default;
+  pointer-events: none;
+  background: #fafafa;
+  border-color: #e2e2e2;
+}
+
+.calculator-page .mix-btn.unavailable .mix-odds {
+  color: #b8b8b8;
+}
+
+.calculator-page .mix-btn.unavailable .mix-arrow {
+  display: none;
 }
 </style>

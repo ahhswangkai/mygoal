@@ -125,12 +125,12 @@
           </div>
 
           <section
-            v-if="faeDailyAi.daily_summary?.recommended_combinations?.length"
+            v-if="visibleDailyCombinations.length"
             class="daily-ai-combos"
           >
             <h2>AI 推荐 2 / 3 关</h2>
             <article
-              v-for="(combo, index) in faeDailyAi.daily_summary.recommended_combinations"
+              v-for="(combo, index) in visibleDailyCombinations"
               :key="`daily-combo-${index}`"
             >
               <header><b>{{ combo.play }}</b><span>{{ displayDailyText(combo.reason) }}</span></header>
@@ -153,35 +153,40 @@
             <p>今日没有同时达到门槛的平局与让平候选，不强行凑组合。</p>
           </section>
 
-          <section class="daily-match-section">
-            <h2>逐场五维分析</h2>
+          <section v-if="visibleDailyMatches.length" class="daily-match-section">
+            <header class="daily-match-section-title">
+              <h2>逐场五维分析</h2>
+              <span>{{ visibleDailyMatches.length }} 场未开赛</span>
+            </header>
             <details
-              v-for="item in faeDailyAi.matches || []"
+              v-for="item in visibleDailyMatches"
               :key="item.match_id"
               class="daily-match-card"
             >
               <summary>
-                <span>
+                <span class="daily-match-info">
                   <b>{{ item.match_number }}</b>
-                  {{ item.home_team }} vs {{ item.away_team }}
+                  <span>{{ item.home_team }}<i>VS</i>{{ item.away_team }}</span>
                   <small>{{ item.league }} · {{ formatMatchTime(item.match_time) }}</small>
                 </span>
                 <span class="daily-selection-pair">
-                  <em
-                    v-if="item.retained_from_pregame"
-                    class="retained-pregame-badge"
-                  >已开赛·赛前记录</em>
-                  <em v-if="item.analysis?.no_bet" class="no-bet-badge">不下注</em>
-                  <i>预测 {{ item.analysis?.predicted_result || '观望' }}</i>
-                  <em>主 {{ item.analysis?.primary_play || '观望' }}</em>
-                  <i v-if="item.analysis?.secondary_play && item.analysis.secondary_play !== '观望'">
-                    防 {{ item.analysis.secondary_play }}
-                  </i>
-                  <i v-if="item.analysis?.handicap_play && item.analysis.handicap_play !== '观望'">
-                    让球 {{ item.analysis.handicap_play }}
-                  </i>
+                  <span class="daily-primary-choice">
+                    <i>{{ item.analysis?.no_bet ? '结论' : '主选' }}</i>
+                    <em :class="{ 'no-bet-badge': item.analysis?.no_bet }">
+                      {{ item.analysis?.no_bet ? '不下注' : (item.analysis?.primary_play || '观望') }}
+                    </em>
+                  </span>
+                  <strong>{{ item.analysis?.no_bet ? '观察' : (item.analysis?.star_text || starText(item.analysis?.rating)) }}</strong>
+                  <span class="daily-pick-notes">
+                    <i>倾向 {{ item.analysis?.predicted_result || '观望' }}</i>
+                    <i v-if="item.analysis?.secondary_play && item.analysis.secondary_play !== '观望'">
+                      防 {{ item.analysis.secondary_play }}
+                    </i>
+                    <i v-if="item.analysis?.handicap_play && item.analysis.handicap_play !== '观望'">
+                      让球 {{ item.analysis.handicap_play }}
+                    </i>
+                  </span>
                 </span>
-                <strong>{{ item.analysis?.no_bet ? '观察' : (item.analysis?.star_text || starText(item.analysis?.rating)) }}</strong>
               </summary>
               <div class="daily-match-body">
                 <div
@@ -818,7 +823,12 @@ const dailyPoolLabels = {
 const dailyPoolGroups = computed(() => {
   const source = faeDailyAi.value?.daily_summary?.pools || {}
   const pools = Object.fromEntries(
-    Object.entries(source).map(([key, items]) => [key, [...(items || [])]])
+    Object.entries(source).map(([key, items]) => [
+      key,
+      [...(items || [])].filter(item => (
+        !dailyMatch(item.match_id).retained_from_pregame
+      ))
+    ])
   )
   pools.handicap_lose ||= []
   pools.away_small_win = (pools.away_small_win || []).filter(item => {
@@ -842,6 +852,17 @@ const dailyPoolGroups = computed(() => {
 const dailyMatchMap = computed(() => Object.fromEntries(
   (faeDailyAi.value?.matches || []).map(item => [String(item.match_id), item])
 ))
+const visibleDailyMatches = computed(() => (
+  faeDailyAi.value?.matches || []
+).filter(item => !item.retained_from_pregame))
+const visibleDailyCombinations = computed(() => (
+  faeDailyAi.value?.daily_summary?.recommended_combinations || []
+).filter(combo => (
+  (combo.picks || []).length > 0
+  && (combo.picks || []).every(pick => (
+    !dailyMatch(pick.match_id).retained_from_pregame
+  ))
+)))
 const dailyMarkets = [
   { key: 'euro', label: '欧赔方向' },
   { key: 'asian', label: '亚盘升深' },
@@ -1584,6 +1605,27 @@ onBeforeUnmount(() => requestController?.abort())
   margin: 0 10px 10px;
 }
 
+.daily-match-section-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.daily-match-section-title h2 {
+  margin: 0;
+  color: #30343b;
+  font-size: 14px;
+}
+
+.daily-match-section-title span {
+  padding: 3px 8px;
+  color: #8c9098;
+  font-size: 10px;
+  background: #f1f2f5;
+  border-radius: 10px;
+}
+
 .daily-ai-combos article {
   margin-bottom: 7px;
   overflow: hidden;
@@ -1664,18 +1706,21 @@ onBeforeUnmount(() => requestController?.abort())
 }
 
 .daily-match-card {
-  margin-bottom: 7px;
+  margin-bottom: 9px;
   overflow: hidden;
-  border: 1px solid #eee4e6;
-  border-radius: 9px;
+  background: #fff;
+  border: 1px solid #ece7e9;
+  border-radius: 12px;
+  box-shadow: 0 3px 12px rgb(28 34 43 / 4%);
 }
 
 .daily-match-card > summary {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
-  gap: 7px;
+  grid-template-columns: minmax(0, 1fr) minmax(104px, auto);
+  gap: 10px;
   align-items: center;
-  padding: 9px;
+  min-height: 82px;
+  padding: 11px 12px;
   cursor: pointer;
   list-style: none;
 }
@@ -1684,69 +1729,115 @@ onBeforeUnmount(() => requestController?.abort())
   display: none;
 }
 
-.daily-match-card summary > span {
+.daily-match-info {
+  min-width: 0;
+}
+
+.daily-match-info > b {
+  display: inline-flex;
+  align-items: center;
+  min-height: 20px;
+  padding: 0 7px;
+  color: #e53955;
+  font-size: 11px;
+  background: #fff1f4;
+  border-radius: 6px;
+}
+
+.daily-match-info > span {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  margin-top: 7px;
   overflow: hidden;
-  color: #444;
+  color: #30343b;
   font-size: 13px;
+  font-weight: 650;
+  line-height: 1.35;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.daily-match-card summary > span b {
-  margin-right: 4px;
+.daily-match-info > span i {
+  color: #b4b6bc;
+  font-size: 9px;
+  font-style: normal;
+  font-weight: 500;
 }
 
 .daily-match-card summary small {
   display: block;
-  margin-top: 3px;
-  color: #aaa;
+  margin-top: 5px;
+  color: #a2a5ac;
   font-size: 10px;
 }
 
-.daily-match-card summary em {
-  padding: 4px 6px;
+.daily-primary-choice {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 5px;
+}
+
+.daily-primary-choice > i {
+  color: #a3a6ad;
+  font-size: 9px;
+  font-style: normal;
+}
+
+.daily-primary-choice em {
+  min-width: 43px;
+  padding: 4px 8px;
   color: #fff;
   font-size: 12px;
   font-style: normal;
   font-weight: 700;
+  text-align: center;
   background: #e53955;
-  border-radius: 5px;
+  border-radius: 7px;
 }
 
-.daily-match-card summary em.no-bet-badge {
+.daily-primary-choice em.no-bet-badge {
   background: #515866;
-}
-
-.daily-match-card summary em.retained-pregame-badge {
-  color: #8a6428;
-  background: #fff0cf;
 }
 
 .daily-selection-pair {
   display: grid;
-  gap: 2px;
+  gap: 4px;
   justify-items: end;
+  min-width: 104px;
 }
 
-.daily-selection-pair i {
+.daily-selection-pair > strong {
+  color: #e53955;
+  font-size: 11px;
+  letter-spacing: .4px;
+  white-space: nowrap;
+}
+
+.daily-pick-notes {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 2px 6px;
+}
+
+.daily-pick-notes i {
   color: #8a8f96;
   font-size: 9px;
   font-style: normal;
   white-space: nowrap;
 }
 
-.daily-match-card summary > strong {
-  color: #e53955;
-  font-size: 11px;
-}
-
 .daily-match-card[open] > summary {
-  background: #fff8f9;
+  background: linear-gradient(135deg, #fffafb, #fff);
   border-bottom: 1px solid #f1e6e8;
 }
 
 .daily-match-body {
-  padding: 10px;
+  padding: 11px;
+  background: #fcfcfd;
 }
 
 .daily-guardrail-note {
