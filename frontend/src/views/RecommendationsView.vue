@@ -25,7 +25,7 @@
           <span class="fae-badge">FAE</span>
           <div>
             <strong>Football AI Engine</strong>
-            <small>v{{ faeRankings.engine_version || faeParlays.engine_version || '2.0.0' }}</small>
+            <small>v{{ faeDailyAi?.engine_version || faeSkills.engine_version || '2.0.0' }}</small>
           </div>
         </div>
         <button type="button" :class="{ rotating: loading }" @click="fetchData">↻</button>
@@ -34,9 +34,6 @@
       <nav class="recommendation-tabs">
         <button :class="{ active: activeSection === 'dailyAi' }" @click="activeSection = 'dailyAi'">
           AI研判
-        </button>
-        <button :class="{ active: activeSection === 'rankings' }" @click="activeSection = 'rankings'">
-          每日推荐榜
         </button>
         <button :class="{ active: activeSection === 'review' }" @click="activeSection = 'review'">
           赛后复盘
@@ -261,101 +258,6 @@
         </div>
         <p v-if="dailyAiMessage" class="skill-action-message">{{ dailyAiMessage }}</p>
         <p v-if="dailyAiError" class="skill-action-message error">{{ dailyAiError }}</p>
-      </template>
-
-      <template v-else-if="activeSection === 'rankings'">
-        <section v-if="rankingGroups.length" class="ranking-panel">
-          <header class="panel-heading">
-            <div>
-              <strong>每日推荐榜</strong>
-              <small>各玩法独立评分，展示前三名</small>
-            </div>
-            <span>{{ faeRankings.count || 0 }} 场</span>
-          </header>
-          <div class="ranking-grid">
-            <section v-for="group in rankingGroups" :key="group.name">
-              <h2>{{ group.name }}</h2>
-              <button
-                v-for="(item, index) in group.items"
-                :key="item.match_id"
-                type="button"
-                @click="goToDetail(item.match_id)"
-              >
-                <i>{{ index + 1 }}</i>
-                <span><b>{{ item.match_number }}</b>{{ item.home_team }} vs {{ item.away_team }}</span>
-                <em>{{ item.odds_source || '即时' }} {{ item.odds || '--' }}</em>
-                <small>价值 {{ item.value_score ?? '--' }} · {{ item.star_text || starText(item.stars) }}</small>
-                <strong>{{ item.bet_score ?? item.score }}分</strong>
-              </button>
-            </section>
-          </div>
-          <div v-if="dangerous.length" class="danger-panel">
-            <h2>⚠ 不下注 / 危险盘口</h2>
-            <button v-for="item in dangerous.slice(0, 5)" :key="item.match_id" type="button" @click="goToDetail(item.match_id)">
-              <span>{{ item.match_number }} {{ item.home_team }} vs {{ item.away_team }}</span>
-              <b>{{ item.no_bet ? '不下注' : `${item.risk?.level || ''}风险` }} · 投注{{ item.bet_score ?? item.score }}分</b>
-            </button>
-          </div>
-        </section>
-        <div v-else class="recommendation-state">当天暂无 FAE 推荐榜数据</div>
-
-        <section v-if="faeParlays.match_recommendations?.length" class="parlay-panel">
-          <header class="panel-heading">
-            <div>
-              <strong>平 / 让平组合</strong>
-              <small>每场只选一个方向，同组不重复比赛</small>
-            </div>
-            <span>{{ faeParlays.match_count }} 场</span>
-          </header>
-
-          <details class="all-picks" open>
-            <summary>
-              <span>当天全部单场方向</span>
-              <b>{{ faeParlays.match_count }} 场</b>
-            </summary>
-            <div class="all-picks-grid">
-              <button
-                v-for="item in faeParlays.match_recommendations"
-                :key="item.match_id"
-                type="button"
-                @click="goToDetail(item.match_id)"
-              >
-                <span><b>{{ item.match_number }}</b>{{ item.home_team }} vs {{ item.away_team }}</span>
-                <strong>{{ item.selection_text }}</strong>
-                <em>{{ item.odds_source || '即时' }} {{ item.odds || '--' }}</em>
-                <small>模型 {{ item.probability }}% · {{ item.score }}分</small>
-              </button>
-            </div>
-          </details>
-
-          <div class="combo-groups">
-            <section v-for="group in comboGroups" :key="group.key" class="combo-group">
-              <h2><span>{{ group.title }}</span><small>优选 {{ group.items.length }} 组</small></h2>
-              <article v-for="(combo, index) in group.items" :key="`${group.key}-${index}`">
-                <header>
-                  <span><i>{{ index + 1 }}</i>{{ combo.play }}</span>
-                  <b>{{ combo.combo_score }}分</b>
-                </header>
-                <button
-                  v-for="pick in combo.picks"
-                  :key="`${pick.match_id}-${pick.selection}`"
-                  type="button"
-                  @click="goToDetail(pick.match_id)"
-                >
-                  <span>{{ pick.match_number }} {{ pick.home_team }} vs {{ pick.away_team }}</span>
-                  <strong>{{ pick.selection_text }}</strong>
-                  <em>@{{ pick.odds || '--' }}</em>
-                </button>
-                <footer>
-                  <span>组合赔率 <b>{{ combo.combined_odds || '--' }}</b></span>
-                  <span>模型命中 <b>{{ combo.model_hit_probability }}%</b></span>
-                </footer>
-              </article>
-            </section>
-          </div>
-          <p class="recommendation-disclaimer">{{ faeParlays.disclaimer }}</p>
-        </section>
-        <div v-else class="recommendation-state">当天暂无可组合的平/让平分析</div>
       </template>
 
       <template v-else-if="activeSection === 'review'">
@@ -697,7 +599,7 @@
                   <button
                     type="button"
                     :disabled="skillBusy || !faeSkills.can_manage"
-                    @click="promoteSkill(candidate)"
+                    @click="openSkillConfirmation('promote', candidate)"
                   >发布 v{{ candidate.proposed_version }}</button>
                 </footer>
               </article>
@@ -727,7 +629,7 @@
                     v-if="skill.can_rollback"
                     type="button"
                     :disabled="skillBusy || !faeSkills.can_manage"
-                    @click="rollbackSkill(skill)"
+                    @click="openSkillConfirmation('rollback', skill)"
                   >回滚</button>
                 </footer>
               </article>
@@ -747,6 +649,67 @@
 
       <p v-if="error && hasData" class="inline-error">{{ error }}</p>
     </main>
+
+    <div
+      v-if="skillConfirmation"
+      class="skill-confirm-overlay"
+      role="presentation"
+      @click.self="closeSkillConfirmation"
+    >
+      <section
+        class="skill-confirm-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="skill-confirm-title"
+      >
+        <header>
+          <span class="fae-badge">FAE</span>
+          <div>
+            <strong id="skill-confirm-title">
+              {{ skillConfirmation.type === 'promote' ? '发布 Skill' : '回滚 Skill' }}
+            </strong>
+            <small>{{ skillConfirmation.item.label }}</small>
+          </div>
+        </header>
+        <div class="skill-confirm-version">
+          <template v-if="skillConfirmation.type === 'promote'">
+            <span>v{{ skillConfirmation.item.parent_version }}</span>
+            <i>→</i>
+            <b>v{{ skillConfirmation.item.proposed_version }}</b>
+          </template>
+          <template v-else>
+            <span>当前 v{{ skillConfirmation.item.version }}</span>
+            <i>→</i>
+            <b>上一版本</b>
+          </template>
+        </div>
+        <p v-if="skillConfirmation.type === 'promote'">
+          发布后，后续新生成的研判会立即使用这组参数；已经保存的历史研判不会被改写。
+        </p>
+        <p v-else>
+          回滚后，后续新生成的研判将恢复使用上一版本参数。
+        </p>
+        <p v-if="skillError" class="skill-confirm-error">{{ skillError }}</p>
+        <footer>
+          <button type="button" :disabled="skillBusy" @click="closeSkillConfirmation">
+            取消
+          </button>
+          <button
+            type="button"
+            class="primary"
+            :disabled="skillBusy"
+            @click="confirmSkillAction"
+          >
+            <template v-if="skillBusy">
+              {{ skillConfirmation.type === 'promote' ? '发布中…' : '回滚中…' }}
+            </template>
+            <template v-else>
+              {{ skillConfirmation.type === 'promote' ? '确认发布' : '确认回滚' }}
+            </template>
+          </button>
+        </footer>
+      </section>
+    </div>
   </div>
 </template>
 
@@ -766,8 +729,6 @@ const dailyAiCanManage = ref(false)
 const dailyAiBusy = ref(false)
 const dailyAiMessage = ref('')
 const dailyAiError = ref('')
-const faeRankings = ref({})
-const faeParlays = ref({})
 const faeReview = ref(null)
 const reviewAiBusy = ref(false)
 const reviewAiMessage = ref('')
@@ -777,6 +738,7 @@ const faeSkills = ref({ active: [], candidates: [], deployments: [] })
 const skillBusy = ref(false)
 const skillMessage = ref('')
 const skillError = ref('')
+const skillConfirmation = ref(null)
 let requestController = null
 
 const formatDateParam = date => {
@@ -800,18 +762,6 @@ const dateOptions = Array.from({ length: 7 }, (_, index) => {
   }
 })
 
-const rankingOrder = ['让平', '让胜', '平局', '主胜', '客胜', '让负']
-const rankingGroups = computed(() => {
-  const groups = faeRankings.value?.groups || {}
-  return rankingOrder
-    .filter(name => Array.isArray(groups[name]) && groups[name].length)
-    .map(name => ({ name, items: groups[name].slice(0, 3) }))
-})
-const dangerous = computed(() => faeRankings.value?.dangerous || [])
-const comboGroups = computed(() => [
-  { key: 'two', title: '2关方案（2串1）', items: faeParlays.value?.two_leg || [] },
-  { key: 'three', title: '3关方案（3串1）', items: faeParlays.value?.three_leg || [] }
-].filter(group => group.items.length))
 const dailyPoolLabels = {
   core: '重点推荐',
   handicap_draw: '重点让平',
@@ -872,8 +822,7 @@ const dailyMarkets = [
 ]
 const hasData = computed(() =>
   faeDailyAi.value
-  || rankingGroups.value.length
-  || faeParlays.value?.match_recommendations?.length
+  || faeReview.value
   || faeSkills.value.active?.length
 )
 
@@ -885,9 +834,7 @@ async function fetchData() {
   error.value = ''
   try {
     const date = encodeURIComponent(selectedDate.value)
-    const [rankingResponse, parlayResponse, reviewResponse, statsResponse, skillsResponse, dailyAiResponse] = await Promise.all([
-      fetch(`/api/fae/rankings?date=${date}`, { signal: controller.signal }),
-      fetch(`/api/fae/draw-parlays?date=${date}`, { signal: controller.signal }),
+    const [reviewResponse, statsResponse, skillsResponse, dailyAiResponse] = await Promise.all([
       fetch(`/api/fae/daily-ai/review?date=${date}`, { signal: controller.signal }),
       fetch('/api/fae/daily-ai/review/stats', { signal: controller.signal }),
       fetch('/api/fae/skills', { signal: controller.signal }),
@@ -896,22 +843,12 @@ async function fetchData() {
         credentials: 'same-origin'
       })
     ])
-    const [rankingPayload, parlayPayload, reviewPayload, statsPayload, skillsPayload, dailyAiPayload] = await Promise.all([
-      rankingResponse.json(),
-      parlayResponse.json(),
+    const [reviewPayload, statsPayload, skillsPayload, dailyAiPayload] = await Promise.all([
       reviewResponse.json(),
       statsResponse.json(),
       skillsResponse.json(),
       dailyAiResponse.json()
     ])
-    if (!rankingResponse.ok || !rankingPayload.success) {
-      throw new Error(rankingPayload.message || '推荐榜加载失败')
-    }
-    if (!parlayResponse.ok || !parlayPayload.success) {
-      throw new Error(parlayPayload.message || '组合推荐加载失败')
-    }
-    faeRankings.value = rankingPayload.data || {}
-    faeParlays.value = parlayPayload.data || {}
     faeReview.value = reviewResponse.ok && reviewPayload.success ? reviewPayload.data : null
     faeStats.value = statsResponse.ok && statsPayload.success ? (statsPayload.data || {}) : {}
     faeSkills.value = skillsResponse.ok && skillsPayload.success
@@ -938,8 +875,6 @@ async function fetchData() {
 function selectDate(date) {
   if (selectedDate.value === date) return
   selectedDate.value = date
-  faeRankings.value = {}
-  faeParlays.value = {}
   faeReview.value = null
   faeDailyAi.value = null
   dailyAiMessage.value = ''
@@ -1174,8 +1109,10 @@ async function runSkillAction(url, body, successMessage) {
     }
     await fetchSkills()
     skillMessage.value = payload.message || successMessage
+    return true
   } catch (e) {
     skillError.value = e.message || 'Skill 操作失败'
+    return false
   } finally {
     skillBusy.value = false
   }
@@ -1189,26 +1126,35 @@ function generateSkillCandidates() {
   )
 }
 
-function promoteSkill(candidate) {
-  if (!window.confirm(
-    `确定发布 ${candidate.label} v${candidate.proposed_version} 吗？新比赛会立即使用这组参数。`
-  )) return
-  return runSkillAction(
-    `/api/fae/skills/${candidate.skill_id}/promote`,
-    { candidate_id: candidate.candidate_id },
-    `${candidate.label} 已发布`
-  )
+function openSkillConfirmation(type, item) {
+  if (skillBusy.value || !faeSkills.value.can_manage) return
+  skillError.value = ''
+  skillMessage.value = ''
+  skillConfirmation.value = { type, item }
 }
 
-function rollbackSkill(skill) {
-  if (!window.confirm(
-    `确定回滚 ${skill.label} v${skill.version} 吗？`
-  )) return
-  return runSkillAction(
-    `/api/fae/skills/${skill.skill_id}/rollback`,
-    {},
-    `${skill.label} 已回滚`
-  )
+function closeSkillConfirmation() {
+  if (skillBusy.value) return
+  skillConfirmation.value = null
+  skillError.value = ''
+}
+
+async function confirmSkillAction() {
+  const confirmation = skillConfirmation.value
+  if (!confirmation || skillBusy.value) return
+  const { type, item } = confirmation
+  const success = type === 'promote'
+    ? await runSkillAction(
+      `/api/fae/skills/${item.skill_id}/promote`,
+      { candidate_id: item.candidate_id },
+      `${item.label} 已发布`
+    )
+    : await runSkillAction(
+      `/api/fae/skills/${item.skill_id}/rollback`,
+      {},
+      `${item.label} 已回滚`
+    )
+  if (success) skillConfirmation.value = null
 }
 
 function skillChangeName(change) {
@@ -1396,7 +1342,7 @@ onBeforeUnmount(() => requestController?.abort())
 
 .recommendation-tabs {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(3, 1fr);
   margin: 10px 0;
   padding: 4px;
   background: #e9eaed;
@@ -1419,8 +1365,6 @@ onBeforeUnmount(() => requestController?.abort())
   box-shadow: 0 2px 6px rgb(30 36 44 / 8%);
 }
 
-.parlay-panel,
-.ranking-panel,
 .review-panel,
 .skill-center-panel,
 .daily-ai-panel {
@@ -1429,10 +1373,6 @@ onBeforeUnmount(() => requestController?.abort())
   border: 1px solid #eadde0;
   border-radius: 13px;
   box-shadow: 0 5px 18px rgb(57 31 37 / 6%);
-}
-
-.ranking-panel + .parlay-panel {
-  margin-top: 12px;
 }
 
 .daily-ai-heading > button,
@@ -2040,202 +1980,6 @@ onBeforeUnmount(() => requestController?.abort())
   font-weight: 700;
 }
 
-.all-picks {
-  margin: 10px;
-  border: 1px solid #f0e5e7;
-  border-radius: 10px;
-}
-
-.all-picks summary {
-  display: flex;
-  justify-content: space-between;
-  padding: 10px;
-  color: #444;
-  font-size: 15px;
-  font-weight: 600;
-  cursor: pointer;
-  list-style: none;
-}
-
-.all-picks summary::-webkit-details-marker {
-  display: none;
-}
-
-.all-picks summary b {
-  color: #e53955;
-  font-size: 13px;
-}
-
-.all-picks-grid,
-.combo-groups,
-.ranking-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-}
-
-.all-picks-grid {
-  padding: 0 8px 8px;
-}
-
-.all-picks-grid button {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 4px 6px;
-  padding: 8px;
-  text-align: left;
-  background: #fcfafb;
-  border: 1px solid #f2e8ea;
-  border-radius: 8px;
-}
-
-.all-picks-grid button > span {
-  grid-column: 1 / 3;
-  overflow: hidden;
-  color: #777;
-  font-size: 13px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.all-picks-grid button > span b {
-  margin-right: 4px;
-  color: #444;
-}
-
-.all-picks-grid button > strong {
-  color: #e53955;
-  font-size: 15px;
-}
-
-.all-picks-grid button > em {
-  color: #555;
-  font-size: 13px;
-  font-style: normal;
-}
-
-.all-picks-grid button > small {
-  grid-column: 1 / 3;
-  color: #aaa;
-  font-size: 12px;
-}
-
-.combo-groups {
-  padding: 0 10px 10px;
-}
-
-.combo-group {
-  min-width: 0;
-}
-
-.combo-group > h2,
-.ranking-grid section > h2 {
-  display: flex;
-  justify-content: space-between;
-  margin: 0 0 7px;
-  color: #333;
-  font-size: 15px;
-}
-
-.combo-group > h2 small {
-  color: #aaa;
-  font-size: 12px;
-  font-weight: 400;
-}
-
-.combo-group article {
-  margin-bottom: 8px;
-  overflow: hidden;
-  background: linear-gradient(145deg, #fff, #fff9fa);
-  border: 1px solid #f0dfe2;
-  border-radius: 9px;
-}
-
-.combo-group article > header {
-  display: flex;
-  justify-content: space-between;
-  padding: 7px 8px;
-  border-bottom: 1px solid #f4e9eb;
-}
-
-.combo-group article > header span {
-  color: #555;
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.combo-group article > header i {
-  display: inline-block;
-  width: 17px;
-  height: 17px;
-  margin-right: 5px;
-  color: #fff;
-  font-size: 12px;
-  font-style: normal;
-  line-height: 17px;
-  text-align: center;
-  background: #e53955;
-  border-radius: 50%;
-}
-
-.combo-group article > header b {
-  color: #e53955;
-  font-size: 13px;
-}
-
-.combo-group article > button {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
-  gap: 5px;
-  width: 100%;
-  padding: 6px 8px;
-  text-align: left;
-  background: none;
-  border: 0;
-  border-bottom: 1px dashed #f0e5e7;
-}
-
-.combo-group article > button span {
-  overflow: hidden;
-  color: #777;
-  font-size: 12px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.combo-group article > button strong {
-  color: #e53955;
-  font-size: 13px;
-  white-space: nowrap;
-}
-
-.combo-group article > button em {
-  color: #555;
-  font-size: 12px;
-  font-style: normal;
-  white-space: nowrap;
-}
-
-.combo-group article > footer {
-  display: flex;
-  justify-content: space-between;
-  padding: 7px 8px;
-  color: #888;
-  font-size: 12px;
-}
-
-.combo-group article > footer b {
-  color: #333;
-}
-
-.recommendation-disclaimer {
-  margin: 0;
-  padding: 0 11px 11px;
-  color: #aaa;
-  font-size: 12px;
-  line-height: 1.55;
-}
-
 .daily-value-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -2270,108 +2014,6 @@ onBeforeUnmount(() => requestController?.abort())
 
 .daily-value-grid .no-bet-text {
   color: #e53955;
-}
-
-.ranking-grid {
-  padding: 10px;
-}
-
-.ranking-grid > section {
-  min-width: 0;
-  padding: 9px;
-  border: 1px solid #f2e6e8;
-  border-radius: 9px;
-}
-
-.ranking-grid section > h2 {
-  color: #e53955;
-}
-
-.ranking-grid section > button {
-  display: grid;
-  grid-template-columns: 18px minmax(0, 1fr) auto;
-  gap: 2px 6px;
-  width: 100%;
-  padding: 7px 0;
-  text-align: left;
-  background: none;
-  border: 0;
-  border-top: 1px solid #f5f0f1;
-}
-
-.ranking-grid button > i {
-  grid-row: 1 / 3;
-  align-self: center;
-  width: 18px;
-  height: 18px;
-  color: #fff;
-  font-size: 12px;
-  font-style: normal;
-  line-height: 18px;
-  text-align: center;
-  background: #e53955;
-  border-radius: 50%;
-}
-
-.ranking-grid button > span {
-  overflow: hidden;
-  color: #777;
-  font-size: 12px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.ranking-grid button > span b {
-  margin-right: 4px;
-  color: #444;
-}
-
-.ranking-grid button > em {
-  color: #777;
-  font-size: 12px;
-  font-style: normal;
-}
-
-.ranking-grid button > small {
-  grid-column: 2;
-  color: #ff9c25;
-  font-size: 12px;
-  letter-spacing: -1px;
-}
-
-.ranking-grid button > strong {
-  grid-column: 3;
-  color: #e53955;
-  font-size: 12px;
-}
-
-.danger-panel {
-  margin: 0 10px 10px;
-  padding: 9px;
-  background: #fff7e8;
-  border-radius: 9px;
-}
-
-.danger-panel h2 {
-  margin: 0 0 5px;
-  color: #9a6b13;
-  font-size: 14px;
-}
-
-.danger-panel button {
-  display: flex;
-  justify-content: space-between;
-  width: 100%;
-  padding: 5px 0;
-  color: #805e21;
-  font-size: 12px;
-  text-align: left;
-  background: none;
-  border: 0;
-}
-
-.danger-panel button b {
-  color: #d47b22;
 }
 
 .review-heading-actions {
@@ -3350,6 +2992,109 @@ onBeforeUnmount(() => requestController?.abort())
   color: #aaa;
 }
 
+.skill-confirm-overlay {
+  position: fixed;
+  z-index: 2000;
+  inset: 0;
+  display: grid;
+  padding: 20px;
+  place-items: center;
+  background: rgb(22 24 31 / 52%);
+  backdrop-filter: blur(2px);
+}
+
+.skill-confirm-dialog {
+  width: min(100%, 360px);
+  padding: 18px;
+  background: #fff;
+  border: 1px solid #f0dfe3;
+  border-radius: 16px;
+  box-shadow: 0 18px 55px rgb(31 24 27 / 24%);
+}
+
+.skill-confirm-dialog > header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.skill-confirm-dialog > header > div {
+  display: grid;
+  gap: 2px;
+}
+
+.skill-confirm-dialog > header strong {
+  color: #2f3036;
+  font-size: 18px;
+}
+
+.skill-confirm-dialog > header small {
+  color: #999;
+  font-size: 12px;
+}
+
+.skill-confirm-version {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin: 16px 0 12px;
+  padding: 12px;
+  color: #999;
+  background: #fff7f9;
+  border: 1px solid #f4dfe4;
+  border-radius: 10px;
+}
+
+.skill-confirm-version i {
+  color: #c8aeb4;
+  font-style: normal;
+}
+
+.skill-confirm-version b {
+  color: #e53955;
+}
+
+.skill-confirm-dialog > p {
+  margin: 0;
+  color: #777;
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+.skill-confirm-dialog > .skill-confirm-error {
+  margin-top: 10px;
+  padding: 8px 10px;
+  color: #d72d49;
+  background: #fff1f3;
+  border-radius: 7px;
+}
+
+.skill-confirm-dialog > footer {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.skill-confirm-dialog > footer button {
+  min-height: 42px;
+  color: #666;
+  font-size: 14px;
+  background: #f3f3f5;
+  border: 0;
+  border-radius: 9px;
+}
+
+.skill-confirm-dialog > footer button.primary {
+  color: #fff;
+  background: linear-gradient(135deg, #ef3654, #ff174a);
+}
+
+.skill-confirm-dialog > footer button:disabled {
+  opacity: 0.65;
+}
+
 .recommendation-state {
   display: grid;
   min-height: 220px;
@@ -3381,12 +3126,6 @@ onBeforeUnmount(() => requestController?.abort())
 }
 
 @media (max-width: 560px) {
-  .all-picks-grid,
-  .combo-groups,
-  .ranking-grid {
-    grid-template-columns: 1fr;
-  }
-
   .review-stats-grid {
     grid-template-columns: repeat(2, 1fr);
   }
