@@ -1867,7 +1867,7 @@ class FAEDailyAIAnalyzer:
         summary: Dict[str, Any],
         matches: List[Dict[str, Any]],
     ) -> Dict[str, Any]:
-        """Keep pool confidence and primary/defensive roles auditable."""
+        """Keep summary pools aligned with the final per-match decision."""
         result = dict(summary or {})
         by_id = {
             str(item.get("match_id") or ""): item
@@ -1886,6 +1886,53 @@ class FAEDailyAIAnalyzer:
                 row = dict(item)
                 match = by_id.get(str(row.get("match_id") or "")) or {}
                 analysis = match.get("analysis") or {}
+                if not match:
+                    continue
+
+                no_bet = bool(analysis.get("no_bet"))
+                primary_play = str(analysis.get("primary_play") or "")
+                secondary_play = str(analysis.get("secondary_play") or "")
+                handicap_play = str(analysis.get("handicap_play") or "")
+                predicted_result = str(
+                    analysis.get("predicted_result") or ""
+                )
+                if key == "avoid" and not no_bet:
+                    # Cross-match synthesis may identify a risk, but it cannot
+                    # overturn the deterministic final betting decision.
+                    continue
+                if key != "avoid" and no_bet:
+                    continue
+                if key == "handicap_draw" and "让平" not in {
+                    primary_play, handicap_play,
+                }:
+                    continue
+                if key == "handicap_lose" and "让负" not in {
+                    primary_play, handicap_play,
+                }:
+                    continue
+                if key == "draw" and "平局" not in {
+                    primary_play, secondary_play, predicted_result,
+                }:
+                    continue
+                if key == "away_small_win" and "客胜" not in {
+                    primary_play, predicted_result,
+                }:
+                    continue
+
+                selection = pool_selections.get(key)
+                if selection and key in {"handicap_draw", "handicap_lose"}:
+                    category_scores = (
+                        (((match.get("input_snapshot") or {}).get("fae_core") or {})
+                         .get("recommendation") or {})
+                        .get("category_scores") or []
+                    )
+                    candidate = next((
+                        value for value in category_scores
+                        if str(value.get("label") or "") == selection
+                    ), None)
+                    if candidate and candidate.get("no_bet"):
+                        continue
+
                 reason = str(row.get("reason") or "")
                 stale_memory_reason = any(marker in reason for marker in (
                     "0%命中", "昨日复盘同模式", "与昨日", "历史失误率",
@@ -1908,7 +1955,6 @@ class FAEDailyAIAnalyzer:
                         cls._rating(row.get("rating", match_rating)),
                         match_rating,
                     )
-                selection = pool_selections.get(key)
                 row["role"] = (
                     "主选" if selection == analysis.get("primary_play")
                     else "防选" if selection == analysis.get("secondary_play")

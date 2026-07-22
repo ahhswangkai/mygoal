@@ -875,6 +875,53 @@ class DailyAnalysisTests(unittest.TestCase):
         self.assertEqual(row["role"], "防选")
         self.assertIn("FAE估算平局概率29%（未校准）", row["reason"])
 
+    def test_summary_cannot_override_final_play_or_no_bet_decision(self):
+        summary = {
+            "pools": {
+                "handicap_lose": [{
+                    "match_id": "207",
+                    "rating": 4,
+                    "reason": "风险模式提示主队可能不穿盘",
+                }],
+                "avoid": [{
+                    "match_id": "207",
+                    "rating": 3.5,
+                    "reason": "建议观察",
+                }],
+            }
+        }
+        matches = [{
+            "match_id": "207",
+            "match_number": "周二207",
+            "analysis": {
+                "primary_play": "主胜",
+                "secondary_play": "平局",
+                "handicap_play": "让胜",
+                "predicted_result": "主胜",
+                "decision": "可考虑",
+                "no_bet": False,
+                "rating": 4,
+            },
+            "input_snapshot": {
+                "fae_core": {
+                    "recommendation": {
+                        "category_scores": [{
+                            "label": "让负",
+                            "no_bet": True,
+                            "no_bet_reasons": ["赔率价值不足"],
+                        }]
+                    }
+                }
+            },
+        }]
+
+        aligned = FAEDailyAIAnalyzer.align_summary_ratings(
+            summary, matches
+        )
+
+        self.assertEqual(aligned["pools"]["handicap_lose"], [])
+        self.assertEqual(aligned["pools"]["avoid"], [])
+
     def test_stale_memory_avoidance_is_removed_without_current_risk(self):
         summary = {
             "core_conclusion": (
