@@ -262,7 +262,7 @@
 
       <template v-else-if="activeSection === 'review'">
         <section class="review-panel">
-          <header class="panel-heading">
+          <header class="panel-heading review-panel-heading">
             <div>
               <strong>AI 研判主复盘</strong>
               <small>确定性结算 + 火山方舟深度诊断，AI 建议不直接修改正式权重</small>
@@ -472,17 +472,23 @@
                 type="button"
                 @click="goToDetail(item.match_id)"
               >
-                <span><b>{{ item.match_number }}</b>{{ item.home_team }} vs {{ item.away_team }}</span>
-                <strong>{{ item.selection_text || item.selection }}</strong>
-                <em>
-                  {{ item.result_score || '待赛' }}
-                  <small v-if="item.odds">@{{ item.odds }}</small>
-                </em>
-                <i :class="item.status">{{ reviewStatusLabel(item.status) }}</i>
-                <small v-if="item.guardrail_triggered" class="guarded-pick">
-                  AI原选{{ item.model_selection }}
-                </small>
-                <small v-if="isSettledStatus(item.status)">{{ signedMetric(item.profit) }}单位</small>
+                <span class="review-match-info">
+                  <b>{{ item.match_number }}</b>{{ item.home_team }} vs {{ item.away_team }}
+                </span>
+                <span class="review-pick-info">
+                  <strong>{{ item.selection_text || item.selection }}</strong>
+                  <i :class="item.status">{{ reviewStatusLabel(item.status) }}</i>
+                  <small v-if="item.guardrail_triggered" class="guarded-pick">
+                    AI原选{{ item.model_selection }}
+                  </small>
+                </span>
+                <span class="review-result-info">
+                  <em>
+                    {{ item.result_score || '待赛' }}
+                    <small v-if="item.odds">@{{ item.odds }}</small>
+                  </em>
+                  <small v-if="isSettledStatus(item.status)">{{ signedMetric(item.profit) }}单位</small>
+                </span>
               </button>
             </section>
 
@@ -497,14 +503,20 @@
                 type="button"
                 @click="goToDetail(item.match_id)"
               >
-                <span><b>{{ item.match_number }}</b>{{ item.home_team }} vs {{ item.away_team }}</span>
-                <strong>{{ item.selection_text || item.selection }}</strong>
-                <em>
-                  {{ item.result_score || '待赛' }}
-                  <small v-if="item.odds">@{{ item.odds }}</small>
-                </em>
-                <i :class="item.status">{{ reviewStatusLabel(item.status) }}</i>
-                <small v-if="isSettledStatus(item.status)">{{ signedMetric(item.profit) }}单位</small>
+                <span class="review-match-info">
+                  <b>{{ item.match_number }}</b>{{ item.home_team }} vs {{ item.away_team }}
+                </span>
+                <span class="review-pick-info">
+                  <strong>{{ item.selection_text || item.selection }}</strong>
+                  <i :class="item.status">{{ reviewStatusLabel(item.status) }}</i>
+                </span>
+                <span class="review-result-info">
+                  <em>
+                    {{ item.result_score || '待赛' }}
+                    <small v-if="item.odds">@{{ item.odds }}</small>
+                  </em>
+                  <small v-if="isSettledStatus(item.status)">{{ signedMetric(item.profit) }}单位</small>
+                </span>
               </button>
             </section>
 
@@ -2018,26 +2030,45 @@ onBeforeUnmount(() => requestController?.abort())
 
 .review-heading-actions {
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
-  gap: 7px;
+  gap: 6px;
+}
+
+.review-panel-heading {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+}
+
+.review-panel-heading > div:first-child {
+  min-width: 0;
 }
 
 .review-heading-actions > span {
-  padding: 3px 7px;
+  min-width: 44px;
+  padding: 5px 7px;
   color: #8b8589;
   font-size: 10px;
+  line-height: 1;
+  text-align: center;
+  white-space: nowrap;
   background: #f4f2f3;
   border-radius: 9px;
 }
 
 .review-heading-actions > button {
-  padding: 6px 9px;
+  min-width: 82px;
+  min-height: 34px;
+  padding: 6px 10px;
   color: #fff;
   font-size: 11px;
   font-weight: 600;
+  line-height: 1.2;
+  white-space: nowrap;
   background: #e53955;
   border: 0;
-  border-radius: 14px;
+  border-radius: 17px;
 }
 
 .review-heading-actions > button:disabled {
@@ -2392,12 +2423,14 @@ onBeforeUnmount(() => requestController?.abort())
 .review-stats-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-auto-rows: 1fr;
   gap: 7px;
   padding: 9px;
 }
 
 .review-stats-grid article {
   display: grid;
+  grid-template-rows: 16px 24px minmax(24px, auto);
   min-height: 82px;
   padding: 9px 7px;
   align-content: center;
@@ -2416,17 +2449,18 @@ onBeforeUnmount(() => requestController?.abort())
 .review-stats-grid span {
   color: #8c878a;
   font-size: 10px;
+  line-height: 16px;
 }
 
 .review-stats-grid strong {
-  margin-top: 4px;
+  margin-top: 2px;
   color: #333;
   font-size: 18px;
-  line-height: 1.1;
+  line-height: 22px;
 }
 
 .review-stats-grid small {
-  margin-top: 4px;
+  margin-top: 2px;
   color: #aaa4a7;
   font-size: 9px;
   line-height: 1.35;
@@ -2558,17 +2592,19 @@ onBeforeUnmount(() => requestController?.abort())
 
 .daily-review-block > button {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
-  gap: 3px 7px;
+  grid-template-columns: minmax(0, 1fr) 76px 58px;
+  gap: 8px;
+  min-height: 72px;
   width: 100%;
-  padding: 8px 10px;
+  padding: 9px 10px;
+  align-items: center;
   text-align: left;
   background: #fff;
   border: 0;
   border-top: 1px solid #f5eff0;
 }
 
-.daily-review-block > button > span {
+.review-match-info {
   overflow: hidden;
   color: #777;
   font-size: 12px;
@@ -2576,59 +2612,78 @@ onBeforeUnmount(() => requestController?.abort())
   white-space: nowrap;
 }
 
-.daily-review-block > button > span b {
+.review-match-info b {
   margin-right: 4px;
   color: #444;
 }
 
-.daily-review-block > button > strong {
-  color: #e53955;
-  font-size: 13px;
+.review-pick-info,
+.review-result-info {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+  align-content: center;
+  justify-items: end;
+  text-align: right;
 }
 
-.daily-review-block > button > em {
+.review-pick-info > strong {
+  color: #e53955;
+  font-size: 13px;
+  line-height: 1.3;
+  white-space: nowrap;
+}
+
+.review-result-info > em {
   color: #555;
   font-size: 12px;
   font-style: normal;
+  line-height: 1.3;
+  white-space: nowrap;
 }
 
-.daily-review-block > button > em small {
+.review-result-info > em small {
   display: block;
   margin-top: 2px;
   color: #aaa;
   font-size: 10px;
 }
 
-.daily-review-block > button > i {
-  grid-column: 2;
+.review-pick-info > i {
   color: #999;
   font-size: 12px;
   font-style: normal;
+  line-height: 1.3;
+  white-space: nowrap;
 }
 
-.daily-review-block > button > i.hit,
+.review-pick-info > i.hit,
 .combo-review-block i.hit {
   color: #15956f;
 }
 
-.daily-review-block > button > i.miss,
+.review-pick-info > i.miss,
 .combo-review-block i.miss {
   color: #e53955;
 }
 
-.daily-review-block > button > i.push,
+.review-pick-info > i.push,
 .combo-review-block i.push {
   color: #b2771b;
 }
 
-.daily-review-block > button > small {
-  grid-column: 3;
+.review-result-info > small {
   color: #777;
   font-size: 12px;
+  line-height: 1.3;
+  white-space: nowrap;
 }
 
-.daily-review-block > button > small.guarded-pick {
+.review-pick-info > small.guarded-pick {
   color: #b2771b;
+  font-size: 9px;
+  line-height: 1.25;
+  white-space: nowrap;
 }
 
 .combo-review-block > article {
