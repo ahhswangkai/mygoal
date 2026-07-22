@@ -383,7 +383,16 @@
 
 <script setup>
 import axios from 'axios'
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import {
+  computed,
+  nextTick,
+  onActivated,
+  onDeactivated,
+  onMounted,
+  onUnmounted,
+  ref,
+  watch
+} from 'vue'
 import { useRouter } from 'vue-router'
 import AccountButton from '../components/AccountButton.vue'
 
@@ -939,15 +948,15 @@ watch(activeTab, value => {
   if (loadedProfileFilter.value !== filterKey) fetchLeagueProfiles()
 })
 
-onMounted(() => {
-  createLoadMoreObserver()
-  fetchMatches()
-})
-
-onUnmounted(() => {
+const stopLoadMoreObserver = () => {
   loadMoreObserver?.disconnect()
   loadMoreObserver = null
-})
+}
+
+onMounted(fetchMatches)
+onActivated(() => nextTick(createLoadMoreObserver))
+onDeactivated(stopLoadMoreObserver)
+onUnmounted(stopLoadMoreObserver)
 </script>
 
 <style scoped>
