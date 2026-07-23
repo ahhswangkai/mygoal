@@ -15,6 +15,9 @@ from utils import setup_logger
 from config import REQUEST_HEADERS, REQUEST_TIMEOUT, REQUEST_DELAY, MAX_RETRIES
 
 
+PREFERRED_ODDS_COMPANY_ID = '6'
+
+
 def clean_asian_handicap(value):
     """去掉盘口单元格末尾的升降走势标记，保留真正的盘口名称。"""
     if value is None:
@@ -457,6 +460,7 @@ class FootballCrawler:
     def parse_asian_handicap(self, html_content):
         """
         解析亚盘赔率数据 - 500彩票网亚盘专门页面
+        固定优先使用伟*（cid=6）；该公司缺失时回退现有来源。
         
         Args:
             html_content: HTML内容
@@ -474,17 +478,28 @@ class FootballCrawler:
                 self.logger.warning("未找到亚盘数据表格 (id=datatb)")
                 return asian_data
             
-            # 优先选择包含“t3*5”的数据行；若没有则取第一行
+            # 第一优先级：伟*（cid=6），保证亚盘和大小球来源一致。
             rows = table.find_all('tr')
-            preferred_row = None
-            for r in rows:
-                try:
-                    txt = r.get_text(strip=True)
-                except Exception:
-                    txt = ''
-                if txt and '**t3*5' in txt:
-                    preferred_row = r
-                    break
+            preferred_row = next(
+                (
+                    row for row in rows
+                    if str(row.get('id') or '') == PREFERRED_ODDS_COMPANY_ID
+                ),
+                None,
+            )
+            used_fallback = preferred_row is None
+
+            # 伟*缺盘时保留原来的回退逻辑，避免整场赔率为空。
+            # 回退优先 t3*5，最后取第一条有效公司行。
+            if not preferred_row:
+                for r in rows:
+                    try:
+                        txt = r.get_text(strip=True)
+                    except Exception:
+                        txt = ''
+                    if txt and ('t3*5' in txt or '**t3*5' in txt):
+                        preferred_row = r
+                        break
             if not preferred_row:
                 preferred_row = table.find('tr', class_='tr1')
             if not preferred_row:
@@ -511,6 +526,12 @@ class FootballCrawler:
                     initial_away = initial_away.replace('↑', '').replace('↓', '')
                     
                     if current_home and current_handicap and current_away:
+                        company_id = str(preferred_row.get('id') or '')
+                        company_link = preferred_row.select_one('td.tb_plgs a')
+                        company_name = (
+                            company_link.get('title', '').strip()
+                            if company_link else ''
+                        )
                         asian_data.append({
                             # 即时盘
                             'current_home_odds': current_home,
@@ -523,9 +544,19 @@ class FootballCrawler:
                             # 兼容旧字段（即时盘）
                             'home_odds': current_home,
                             'handicap': current_handicap,
-                            'away_odds': current_away
+                            'away_odds': current_away,
+                            # 数据源
+                            'source_company_id': company_id,
+                            'source_company_name': company_name,
+                            'source_fallback': used_fallback,
                         })
-                        self.logger.info(f"解析到亚盘(优先t3*5): 即时盘 {current_home}/{current_handicap}/{current_away}, 初盘 {initial_home}/{initial_handicap}/{initial_away}")
+                        source_label = company_name or company_id or '未知'
+                        fallback_label = '（回退）' if used_fallback else ''
+                        self.logger.info(
+                            f"解析到亚盘({source_label}{fallback_label}): "
+                            f"即时盘 {current_home}/{current_handicap}/{current_away}, "
+                            f"初盘 {initial_home}/{initial_handicap}/{initial_away}"
+                        )
                     
                 except (IndexError, ValueError) as e:
                     self.logger.warning(f"解析亚盘数据失败: {str(e)}")
@@ -540,7 +571,7 @@ class FootballCrawler:
     def parse_over_under(self, html_content):
         """
         解析大小球赔率数据 - 500彩票网专门页面
-        优先选择包含"竞*官*"的数据行；若没有则选择"t3*5"；最后取第一行
+        固定优先使用伟*（cid=6）；该公司缺失时回退现有来源。
 
         Args:
             html_content: HTML内容
@@ -558,21 +589,29 @@ class FootballCrawler:
                 self.logger.warning("未找到大小球数据表格 (id=datatb)")
                 return over_under_data
 
-            # 优先选择包含"竞*官*"的数据行；若没有则选择"t3*5"；最后取第一行
+            # 第一优先级：伟*（cid=6），保证亚盘和大小球来源一致。
             rows = table.find_all('tr')
-            preferred_row = None
+            preferred_row = next(
+                (
+                    row for row in rows
+                    if str(row.get('id') or '') == PREFERRED_ODDS_COMPANY_ID
+                ),
+                None,
+            )
+            used_fallback = preferred_row is None
 
-            # 第一优先级：竞*官*(中国)
-            for r in rows:
-                try:
-                    txt = r.get_text(strip=True)
-                except Exception:
-                    txt = ''
-                if txt and '竞*官*' in txt and '竞*官*(中国)' in txt:
-                    preferred_row = r
-                    break
+            # 伟*缺盘时保留原来的回退顺序。
+            if not preferred_row:
+                for r in rows:
+                    try:
+                        txt = r.get_text(strip=True)
+                    except Exception:
+                        txt = ''
+                    if txt and '竞*官*' in txt and '竞*官*(中国)' in txt:
+                        preferred_row = r
+                        break
 
-            # 第二优先级：t3*5
+            # 第二回退来源：t3*5
             if not preferred_row:
                 for r in rows:
                     try:
@@ -596,12 +635,16 @@ class FootballCrawler:
                 try:
                     # 列3-5：即时盘（大球赔率、盘口、小球赔率）
                     current_over = tds[3].get_text(strip=True)
-                    current_total = tds[4].get_text(strip=True)
+                    current_total = clean_asian_handicap(
+                        tds[4].get_text(strip=True)
+                    )
                     current_under = tds[5].get_text(strip=True)
 
                     # 列9-11：初盘（大球赔率、盘口、小球赔率）
                     initial_over = tds[9].get_text(strip=True)
-                    initial_total = tds[10].get_text(strip=True)
+                    initial_total = clean_asian_handicap(
+                        tds[10].get_text(strip=True)
+                    )
                     initial_under = tds[11].get_text(strip=True)
 
                     # 清理箭头符号
@@ -611,16 +654,12 @@ class FootballCrawler:
                     initial_under = initial_under.replace('↑', '').replace('↓', '')
 
                     if current_over and current_total and current_under:
-                        # 判断使用的数据源
-                        source_info = ''
-                        try:
-                            row_text = preferred_row.get_text(strip=True)
-                            if '竞*官*' in row_text:
-                                source_info = '(竞*官*)'
-                            elif 't3*5' in row_text.lower():
-                                source_info = '(t3*5)'
-                        except:
-                            pass
+                        company_id = str(preferred_row.get('id') or '')
+                        company_link = preferred_row.select_one('td.tb_plgs a')
+                        company_name = (
+                            company_link.get('title', '').strip()
+                            if company_link else ''
+                        )
                         over_under_data.append({
                             # 即时盘
                             'current_over_odds': current_over,
@@ -633,9 +672,19 @@ class FootballCrawler:
                             # 兼容旧字段（即时盘）
                             'over_odds': current_over,
                             'total': current_total,
-                            'under_odds': current_under
+                            'under_odds': current_under,
+                            # 数据源
+                            'source_company_id': company_id,
+                            'source_company_name': company_name,
+                            'source_fallback': used_fallback,
                         })
-                        self.logger.info(f"解析到大小球{source_info}: 即时盘 {current_over}/{current_total}/{current_under}, 初盘 {initial_over}/{initial_total}/{initial_under}")
+                        source_label = company_name or company_id or '未知'
+                        fallback_label = '（回退）' if used_fallback else ''
+                        self.logger.info(
+                            f"解析到大小球({source_label}{fallback_label}): "
+                            f"即时盘 {current_over}/{current_total}/{current_under}, "
+                            f"初盘 {initial_over}/{initial_total}/{initial_under}"
+                        )
                 except (IndexError, ValueError) as e:
                     self.logger.warning(f"解析大小球数据失败: {str(e)}")
 
@@ -1627,6 +1676,9 @@ class FootballCrawler:
             match['asian_current_home_odds'] = asian.get('current_home_odds')
             match['asian_current_handicap'] = clean_asian_handicap(asian.get('current_handicap'))
             match['asian_current_away_odds'] = asian.get('current_away_odds')
+            match['asian_source_company_id'] = asian.get('source_company_id')
+            match['asian_source_company_name'] = asian.get('source_company_name')
+            match['asian_source_fallback'] = asian.get('source_fallback', False)
             match['asian_odds'] = f"{match['asian_current_home_odds']}/{match['asian_current_handicap']}/{match['asian_current_away_odds']}"
 
         # 3. 大小球
@@ -1638,6 +1690,9 @@ class FootballCrawler:
             match['ou_current_over_odds'] = ou.get('current_over_odds')
             match['ou_current_total'] = ou.get('current_total')
             match['ou_current_under_odds'] = ou.get('current_under_odds')
+            match['ou_source_company_id'] = ou.get('source_company_id')
+            match['ou_source_company_name'] = ou.get('source_company_name')
+            match['ou_source_fallback'] = ou.get('source_fallback', False)
             match['ou_odds'] = f"{match['ou_current_over_odds']}/{match['ou_current_total']}/{match['ou_current_under_odds']}"
 
         # 4. 让球指数 (Handicap Index)

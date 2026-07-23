@@ -449,7 +449,10 @@ class MongoDBStorage:
                     'asian_current_away_odds': asian.get('current_away_odds', ''),
                     'asian_initial_home_odds': asian.get('initial_home_odds', ''),
                     'asian_initial_handicap': clean_asian_handicap(asian.get('initial_handicap', '')),
-                    'asian_initial_away_odds': asian.get('initial_away_odds', '')
+                    'asian_initial_away_odds': asian.get('initial_away_odds', ''),
+                    'asian_source_company_id': asian.get('source_company_id', ''),
+                    'asian_source_company_name': asian.get('source_company_name', ''),
+                    'asian_source_fallback': asian.get('source_fallback', False),
                 })
             
             # 大小球
@@ -461,7 +464,10 @@ class MongoDBStorage:
                     'ou_current_under_odds': ou.get('current_under_odds', ''),
                     'ou_initial_over_odds': ou.get('initial_over_odds', ''),
                     'ou_initial_total': ou.get('initial_total', ''),
-                    'ou_initial_under_odds': ou.get('initial_under_odds', '')
+                    'ou_initial_under_odds': ou.get('initial_under_odds', ''),
+                    'ou_source_company_id': ou.get('source_company_id', ''),
+                    'ou_source_company_name': ou.get('source_company_name', ''),
+                    'ou_source_fallback': ou.get('source_fallback', False),
                 })
             
             # 让球指数
