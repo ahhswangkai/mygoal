@@ -96,6 +96,92 @@ def match(match_id, total_initial="2.5", total_current="2.5"):
 
 
 class DailyAnalysisTests(unittest.TestCase):
+    @staticmethod
+    def radar_match(
+        match_id,
+        *,
+        secondary="观望",
+        handicap_play="让负",
+        ordinary_value=-5.0,
+        handicap_value=-12.0,
+        primary="主胜",
+    ):
+        categories = [
+            {
+                "label": "平局",
+                "probability": 27,
+                "bet_score": 61,
+                "score": 61,
+                "odds": 3.5,
+                "market_implied_probability": 26,
+                "expected_return": 0.95,
+                "no_bet": ordinary_value < 0,
+            },
+            {
+                "label": "让平",
+                "probability": 26,
+                "bet_score": 60,
+                "score": 60,
+                "odds": 3.4,
+                "market_implied_probability": 28,
+                "expected_return": 0.88,
+                "no_bet": handicap_value < 0,
+            },
+        ]
+        return {
+            "match_id": str(match_id),
+            "match_number": f"周四{match_id}",
+            "analysis": {
+                "primary_play": primary,
+                "secondary_play": secondary,
+                "handicap_play": handicap_play,
+                "predicted_result": primary,
+                "no_bet": True,
+            },
+            "input_snapshot": {
+                "asian": {"current": [0.88, "半球", 0.96]},
+                "sporttery_handicap": {
+                    "value": -1,
+                    "current": [2.4, 3.4, 2.2],
+                },
+                "current_asian_risk": {
+                    "pattern_ids": ["water_drop_without_deepen"],
+                },
+                "fae_core": {
+                    "recommendation": {
+                        "market_confidence": {
+                            "score": 76,
+                            "level": "高",
+                        },
+                        "category_scores": categories,
+                    },
+                },
+                "historical_goal_margin_model": {
+                    "ordinary_draw": {
+                        "eligible_for_adjustment": True,
+                        "historical_probability": 30.0,
+                        "market_probability": 26.0,
+                        "blended_probability": 27.2,
+                        "effective_sample": 62.0,
+                        "confidence": "中",
+                        "odds": 3.5,
+                        "value_edge": ordinary_value,
+                    },
+                    "handicap_draw": {
+                        "eligible_for_adjustment": True,
+                        "target_goal_difference": 1,
+                        "historical_probability": 28.0,
+                        "market_probability": 27.0,
+                        "blended_probability": 27.4,
+                        "effective_sample": 58.0,
+                        "confidence": "中",
+                        "odds": 3.4,
+                        "value_edge": handicap_value,
+                    },
+                },
+            },
+        }
+
     def test_same_day_rerun_retains_started_pregame_judgements(self):
         current = {
             "daily_summary": {
@@ -229,6 +315,90 @@ class DailyAnalysisTests(unittest.TestCase):
         self.assertTrue(adjusted["historical_calibration"]["applied"])
         self.assertLess(adjusted["probability"], 42)
         self.assertLess(adjusted["bet_score"], 78)
+
+    def test_draw_radar_keeps_secondary_draw_as_watch_despite_no_bet(self):
+        row = self.radar_match(
+            "202",
+            secondary="平局",
+            ordinary_value=-4.1,
+        )
+
+        analyzed = FAEDailyAIAnalyzer.apply_draw_radar([row])[0]
+        candidate = analyzed["analysis"]["draw_radar"]["ordinary_draw"]
+        summary = FAEDailyAIAnalyzer.attach_draw_radar_summary(
+            {}, [analyzed]
+        )
+
+        self.assertEqual(candidate["tier"], "watch")
+        self.assertLess(candidate["odds_value"], 0)
+        self.assertIn("同市场防选", candidate["role_signals"])
+        self.assertEqual(
+            summary["draw_radar"]["ordinary_draw"][0]["match_id"], "202"
+        )
+
+    def test_draw_radar_keeps_secondary_handicap_draw_as_watch(self):
+        row = self.radar_match(
+            "205",
+            secondary="让平",
+            handicap_play="让负",
+            handicap_value=-14.3,
+            primary="让负",
+        )
+
+        analyzed = FAEDailyAIAnalyzer.apply_draw_radar([row])[0]
+        candidate = analyzed["analysis"]["draw_radar"]["handicap_draw"]
+
+        self.assertEqual(candidate["tier"], "watch")
+        self.assertEqual(candidate["definition"], "主队恰好赢1球")
+        self.assertLessEqual(candidate["rating"], 3.5)
+        self.assertIn("仅列观察", candidate["reason"])
+
+    def test_only_positive_value_core_radar_rows_can_form_combinations(self):
+        draw = self.radar_match(
+            "202",
+            secondary="平局",
+            ordinary_value=6.0,
+            primary="平局",
+        )
+        handicap = self.radar_match(
+            "205",
+            secondary="让平",
+            handicap_play="让平",
+            handicap_value=8.0,
+            primary="让平",
+        )
+        handicap_profile = (
+            handicap["input_snapshot"]["fae_core"]["recommendation"]
+            ["category_scores"][1]
+        )
+        handicap_profile["odds"] = 4.0
+        handicap_profile["expected_return"] = 1.096
+        handicap["input_snapshot"]["historical_goal_margin_model"][
+            "handicap_draw"
+        ]["odds"] = 4.0
+        rows = FAEDailyAIAnalyzer.apply_draw_radar([draw, handicap])
+        summary = FAEDailyAIAnalyzer.attach_draw_radar_summary(
+            {
+                "pools": {
+                    "draw": [],
+                    "handicap_draw": [],
+                    "avoid": [],
+                },
+                "recommended_combinations": [],
+            },
+            rows,
+        )
+
+        combinations = FAEDailyAIAnalyzer._ensure_mixed_combinations(
+            summary
+        )
+
+        self.assertEqual(len(combinations), 1)
+        self.assertEqual(combinations[0]["play"], "2串1")
+        self.assertEqual(
+            {pick["selection"] for pick in combinations[0]["picks"]},
+            {"平局", "让平"},
+        )
 
     def test_includes_available_500_fundamentals_without_false_missing_warning(self):
         source_analysis = {

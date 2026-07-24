@@ -14,7 +14,7 @@ from .provider import ArkNarrativeClient, FAEOutputError
 from .version import ENGINE_VERSION
 
 
-AI_REVIEW_PROMPT_VERSION = "fae-deep-review-v5-goal-margin-calibration"
+AI_REVIEW_PROMPT_VERSION = "fae-deep-review-v6-draw-radar"
 SETTLED_STATUSES = {"hit", "miss", "push"}
 LEARNING_SCOPES = {
     "euro",
@@ -55,6 +55,11 @@ class FAEAIReviewAnalyzer:
             for item in review.get("handicap_results") or []
             if item.get("match_id")
         }
+        radar_by_id: Dict[str, List[Dict[str, Any]]] = {}
+        for item in review.get("draw_radar_results") or []:
+            match_id = str(item.get("match_id") or "")
+            if match_id:
+                radar_by_id.setdefault(match_id, []).append(item)
         matches = []
         for result in review.get("match_results") or []:
             if result.get("status") not in SETTLED_STATUSES:
@@ -99,6 +104,22 @@ class FAEAIReviewAnalyzer:
                     "return": handicap_result.get("return"),
                     "profit": handicap_result.get("profit"),
                 } if handicap_result else {},
+                "draw_radar_predictions": [{
+                    "selection": item.get("selection"),
+                    "selection_text": item.get("selection_text"),
+                    "tier": item.get("tier"),
+                    "rating": item.get("rating"),
+                    "radar_score": item.get("radar_score"),
+                    "probability": item.get("probability"),
+                    "market_probability": item.get("market_probability"),
+                    "odds": item.get("odds"),
+                    "odds_value": item.get("odds_value"),
+                    "effective_sample": item.get("effective_sample"),
+                    "status": item.get("status"),
+                    "return": item.get("return"),
+                    "profit": item.get("profit"),
+                    "reason": item.get("reason"),
+                } for item in radar_by_id.get(match_id, [])],
                 "prediction_time_markets": {
                     key: input_snapshot.get(key) or {}
                     for key in (
@@ -209,6 +230,10 @@ class FAEAIReviewAnalyzer:
                     (((review.get("summary") or {}).get("handicap") or {})
                      .get("settled") or 0)
                 ),
+                "settled_draw_radar_rows": int(
+                    (((((review.get("summary") or {}).get("draw_radar") or {})
+                       .get("overall") or {}).get("settled")) or 0)
+                ),
                 "total_matches": len(snapshot.get("matches") or []),
                 "review_completed": bool(review.get("completed")),
             },
@@ -280,6 +305,7 @@ class FAEAIReviewAnalyzer:
             "固定复核欧赔、亚盘真实升深、竞彩让球、大小球和市场一致性五项。",
             "升降属于走势而非盘口名；让平必须结合输入中的具体让球数解释。",
             "必须分别复核正式主选与handicap_prediction中的竞彩让球参考；普通主胜命中不能掩盖让胜、让平或让负未中。",
+            "必须单独复核draw_radar_predictions：核心候选与观察候选分开统计；观察命中不能事后包装成正式推荐，核心未中也必须记录。",
             "竞彩让球必须严格按保存的让球数计算：主队-1时，赢2球以上为让胜、恰好赢1球为让平、其余为让负；确定性结算结果优先于文字推断。",
             "market_risk_context中的水位模式仅表示赛前风险结构；可以检验该预警是否有效，但不得把退盘、升水或欧亚背离直接写成比赛失利的真实原因。",
             "必须复核historical_goal_margin_model：普通平局只核对0球分差，让平只核对赛前竞彩让球数对应的精确净胜球差，严禁用普通平局赛果替代让平结算。",

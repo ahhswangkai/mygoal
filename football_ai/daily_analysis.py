@@ -15,7 +15,7 @@ from .provider import ArkNarrativeClient, FAEError, FAEOutputError
 from .version import ENGINE_VERSION
 
 
-DAILY_PROMPT_VERSION = "five-market-daily-v11-goal-margin-history"
+DAILY_PROMPT_VERSION = "five-market-daily-v12-draw-radar"
 
 HANDICAP_VALUES = {
     "平手": 0.0, "平/半": 0.25, "平手/半球": 0.25,
@@ -509,6 +509,7 @@ class FAEDailyAIAnalyzer:
             for source in rows
         ]
         stored_matches = self.calibrate_daily_matches(stored_matches)
+        stored_matches = self.apply_draw_radar(stored_matches)
         stored_matches = self.normalize_match_memory_governance(
             stored_matches, memory
         )
@@ -599,6 +600,9 @@ class FAEDailyAIAnalyzer:
         daily_summary = self._apply_no_bet_summary(
             daily_summary, stored_matches
         )
+        daily_summary = self.attach_draw_radar_summary(
+            daily_summary, stored_matches
+        )
         daily_summary["recommended_combinations"] = (
             self._ensure_mixed_combinations(daily_summary)
         )
@@ -667,15 +671,29 @@ class FAEDailyAIAnalyzer:
             str(item.get("match_id") or "")
             for item in pools.get("avoid") or []
         }
+        radar = daily_summary.get("draw_radar") or {}
+        radar_draw = [
+            item for item in radar.get("ordinary_draw") or []
+            if item.get("tier") == "core"
+        ]
+        radar_handicap_draw = [
+            item for item in radar.get("handicap_draw") or []
+            if item.get("tier") == "core"
+        ]
+        draw_source = radar_draw if radar else pools.get("draw") or []
+        handicap_draw_source = (
+            radar_handicap_draw
+            if radar else pools.get("handicap_draw") or []
+        )
         draw = [
-            item for item in pools.get("draw") or []
+            item for item in draw_source
             if (
                 float(item.get("rating") or 0) >= minimum_rating
                 and str(item.get("match_id") or "") not in avoid_ids
             )
         ]
         handicap_draw = [
-            item for item in pools.get("handicap_draw") or []
+            item for item in handicap_draw_source
             if (
                 float(item.get("rating") or 0) >= minimum_rating
                 and str(item.get("match_id") or "") not in avoid_ids
@@ -1382,6 +1400,312 @@ class FAEDailyAIAnalyzer:
             {},
         )
         return cls._historical_adjusted_profile(source, profile)
+
+    @classmethod
+    def _draw_radar_candidate(
+        cls,
+        match: Dict[str, Any],
+        selection: str,
+    ) -> Dict[str, Any]:
+        """Score draw outcomes independently from the match's final pick."""
+        analysis = match.get("analysis") or {}
+        source = match.get("input_snapshot") or {}
+        model_key = (
+            "ordinary_draw" if selection == "平局" else "handicap_draw"
+        )
+        metric = (
+            (source.get("historical_goal_margin_model") or {})
+            .get(model_key) or {}
+        )
+        profile = cls._play_value_profile(source, selection)
+        probability = (
+            _number(metric.get("blended_probability"))
+            if metric.get("eligible_for_adjustment")
+            else None
+        )
+        if probability is None:
+            probability = _number(profile.get("probability"))
+        market_probability = (
+            _number(metric.get("market_probability"))
+            if metric.get("market_probability") is not None
+            else _number(profile.get("market_implied_probability"))
+        )
+        historical_probability = _number(
+            metric.get("historical_probability")
+        )
+        odds = (
+            _number(metric.get("odds"))
+            if metric.get("odds") is not None
+            else _number(profile.get("odds"))
+        )
+        odds_value = _number(metric.get("value_edge"))
+        if odds_value is None:
+            expected_return = _number(profile.get("expected_return"))
+            odds_value = (
+                round((expected_return - 1) * 100, 2)
+                if expected_return is not None else None
+            )
+        confidence = (
+            (((source.get("fae_core") or {}).get("recommendation") or {})
+             .get("market_confidence") or {})
+        )
+        confidence_score = float(confidence.get("score") or 45)
+        role_signals = []
+        if analysis.get("primary_play") == selection:
+            role_signals.append("正式主选")
+        if analysis.get("secondary_play") == selection:
+            role_signals.append("同市场防选")
+        if (
+            selection == "让平"
+            and analysis.get("handicap_play") == selection
+        ):
+            role_signals.append("竞彩让球参考")
+        if (
+            selection == "平局"
+            and analysis.get("predicted_result") == selection
+        ):
+            role_signals.append("赛果倾向")
+
+        risk_ids = [
+            str(value) for value in (
+                (source.get("current_asian_risk") or {}).get("pattern_ids")
+                or []
+            )
+            if str(value) != "no_market_warning"
+        ]
+        draw_risk_ids = {
+            "handicap_retreat",
+            "upper_water_rise",
+            "water_drop_without_deepen",
+            "deepen_high_water",
+            "euro_asian_divergence",
+            "overheated_shallow",
+        }
+        relevant_risks = [
+            value for value in risk_ids if value in draw_risk_ids
+        ]
+        role_bonus = min(12, len(role_signals) * 6)
+        risk_bonus = min(5, len(relevant_risks) * 2)
+        value_adjustment = max(
+            -8.0, min(8.0, float(odds_value or 0) * 0.30)
+        )
+        historical_delta = (
+            historical_probability - market_probability
+            if (
+                historical_probability is not None
+                and market_probability is not None
+            )
+            else 0
+        )
+        history_adjustment = max(
+            -6.0, min(6.0, historical_delta * 0.8)
+        )
+        profile_score = float(
+            profile.get("bet_score") or profile.get("score") or 50
+        )
+        score = (
+            float(probability or 0) * 1.35
+            + confidence_score * 0.25
+            + (profile_score - 50) * 0.18
+            + role_bonus
+            + risk_bonus
+            + value_adjustment
+            + history_adjustment
+        )
+        if metric.get("confidence") == "高":
+            score += 3
+        elif not metric.get("eligible_for_adjustment"):
+            score -= 8
+
+        warnings = [str(value) for value in source.get("data_warnings") or []]
+        severe_data_risk = any(
+            "跳档" in value or "跳至" in value for value in warnings
+        )
+        current_asian = (source.get("asian") or {}).get("current") or []
+        waters = [
+            _number(current_asian[index])
+            for index in (0, 2) if len(current_asian) > index
+        ]
+        severe_data_risk = severe_data_risk or any(
+            value is not None and (value < 0.55 or value > 1.30)
+            for value in waters
+        )
+        if severe_data_risk:
+            score -= 8
+        score = round(max(0, min(99, score)))
+
+        minimum_probability = 26 if selection == "平局" else 23
+        core = bool(
+            metric.get("eligible_for_adjustment")
+            and probability is not None
+            and probability >= minimum_probability
+            and odds_value is not None
+            and odds_value >= 0
+            and score >= 70
+            and confidence_score >= 55
+            and not profile.get("no_bet")
+            and not severe_data_risk
+        )
+        watch = bool(
+            not core
+            and profile
+            and (
+                (
+                    metric.get("eligible_for_adjustment")
+                    and score >= 52
+                )
+                or role_signals
+            )
+        )
+        tier = "core" if core else "watch" if watch else "exclude"
+        if tier == "core":
+            rating = (
+                5.0 if score >= 88
+                else 4.5 if score >= 79
+                else 4.0
+            )
+        elif tier == "watch":
+            rating = 3.5 if score >= 61 else 3.0 if score >= 52 else 2.5
+        else:
+            rating = 2.5 if score >= 45 else 2.0
+        if odds_value is not None and odds_value < 0:
+            rating = min(rating, 3.5)
+
+        handicap = _number(
+            (source.get("sporttery_handicap") or {}).get("value")
+        )
+        target_difference = metric.get("target_goal_difference")
+        if selection == "平局":
+            definition = "双方90分钟战平（净胜球差0）"
+        elif target_difference is not None:
+            difference = int(float(target_difference))
+            definition = (
+                f"主队恰好赢{abs(difference)}球"
+                if difference > 0 else
+                f"客队恰好赢{abs(difference)}球"
+                if difference < 0 else "双方90分钟战平"
+            )
+        elif handicap is not None:
+            difference = int(-handicap)
+            definition = (
+                f"主队恰好赢{abs(difference)}球"
+                if difference > 0 else
+                f"客队恰好赢{abs(difference)}球"
+                if difference < 0 else "双方90分钟战平"
+            )
+            target_difference = difference
+        else:
+            definition = "让球数缺失，无法映射精确进球差"
+
+        reason_parts = []
+        if role_signals:
+            reason_parts.append("、".join(role_signals))
+        if probability is not None and market_probability is not None:
+            reason_parts.append(
+                f"模型{probability:g}% / 市场{market_probability:g}%"
+            )
+        if odds_value is not None:
+            reason_parts.append(
+                f"赔率价值{odds_value:+g}%"
+            )
+        if relevant_risks:
+            reason_parts.append("存在热门方不稳盘口信号")
+        if tier == "core":
+            reason_parts.append("达到独立核心门槛")
+        elif tier == "watch":
+            reason_parts.append("仅列观察，不进入组合")
+        else:
+            reason_parts.append("未达到展示与投注门槛")
+        return {
+            "match_id": str(match.get("match_id") or ""),
+            "match_number": match.get("match_number"),
+            "selection": selection,
+            "model_key": model_key,
+            "tier": tier,
+            "rating": cls._rating(rating),
+            "score": score,
+            "probability": round(probability, 2)
+            if probability is not None else None,
+            "historical_probability": round(historical_probability, 2)
+            if historical_probability is not None else None,
+            "market_probability": round(market_probability, 2)
+            if market_probability is not None else None,
+            "odds": round(odds, 3) if odds is not None else None,
+            "odds_value": round(odds_value, 2)
+            if odds_value is not None else None,
+            "effective_sample": metric.get("effective_sample"),
+            "confidence": metric.get("confidence") or "样本不足",
+            "eligible_for_adjustment": bool(
+                metric.get("eligible_for_adjustment")
+            ),
+            "role_signals": role_signals,
+            "risk_pattern_ids": relevant_risks,
+            "definition": definition,
+            "target_goal_difference": target_difference,
+            "reason": "；".join(reason_parts) + "。",
+        }
+
+    @classmethod
+    def apply_draw_radar(
+        cls, matches: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """Attach auditable draw candidates without changing the final pick."""
+        result = []
+        for item in matches:
+            row = dict(item or {})
+            analysis = dict(row.get("analysis") or {})
+            analysis["draw_radar"] = {
+                "ordinary_draw": cls._draw_radar_candidate(row, "平局"),
+                "handicap_draw": cls._draw_radar_candidate(row, "让平"),
+            }
+            row["analysis"] = analysis
+            result.append(row)
+        return result
+
+    @classmethod
+    def attach_draw_radar_summary(
+        cls,
+        summary: Dict[str, Any],
+        matches: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        """Expose core/watch radar rows even when official pools exclude them."""
+        result = dict(summary or {})
+        radar = {
+            "version": "draw-radar-v1",
+            "policy": (
+                "核心候选可参与组合；观察候选只记录和复盘，"
+                "负赔率价值不得升级为核心。"
+            ),
+            "ordinary_draw": [],
+            "handicap_draw": [],
+            "excluded_count": {
+                "ordinary_draw": 0,
+                "handicap_draw": 0,
+            },
+        }
+        for item in matches:
+            candidates = (
+                (item.get("analysis") or {}).get("draw_radar") or {}
+            )
+            for key in ("ordinary_draw", "handicap_draw"):
+                candidate = dict(candidates.get(key) or {})
+                if candidate.get("tier") == "exclude":
+                    radar["excluded_count"][key] += 1
+                    continue
+                if candidate.get("match_id"):
+                    radar[key].append(candidate)
+        for key in ("ordinary_draw", "handicap_draw"):
+            radar[key] = sorted(
+                radar[key],
+                key=lambda item: (
+                    item.get("tier") == "core",
+                    float(item.get("score") or 0),
+                    float(item.get("probability") or 0),
+                ),
+                reverse=True,
+            )[:6]
+        result["draw_radar"] = radar
+        return result
 
     @staticmethod
     def _predicted_result(source: Dict[str, Any]) -> str:
@@ -2628,6 +2952,14 @@ class FAEDailyAIAnalyzer:
             {**item, "reason": soften(item.get("reason"))}
             for item in result.get("recommended_combinations") or []
         ]
+        radar = dict(result.get("draw_radar") or {})
+        for key in ("ordinary_draw", "handicap_draw"):
+            radar[key] = [
+                {**item, "reason": soften(item.get("reason"))}
+                for item in radar.get(key) or []
+            ]
+        if radar:
+            result["draw_radar"] = radar
         return result
 
     @classmethod
@@ -2677,6 +3009,17 @@ class FAEDailyAIAnalyzer:
             }
             for item in result.get("recommended_combinations") or []
         ]
+        radar = dict(result.get("draw_radar") or {})
+        for key in ("ordinary_draw", "handicap_draw"):
+            radar[key] = [
+                {
+                    **item,
+                    "reason": humanize(item.get("reason")),
+                }
+                for item in radar.get(key) or []
+            ]
+        if radar:
+            result["draw_radar"] = radar
         return result
 
     @classmethod

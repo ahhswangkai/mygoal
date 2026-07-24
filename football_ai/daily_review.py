@@ -199,6 +199,13 @@ class FAEDailyAIReviewEngine:
             )]
             if result is not None
         ]
+        draw_radar_results = [
+            result
+            for item in matches
+            for result in self._settle_draw_radar(
+                item, matches_by_id.get(str(item.get("match_id"))) or {}
+            )
+        ]
         snapshot_by_id = {
             str(item.get("match_id")): item for item in matches
         }
@@ -285,11 +292,31 @@ class FAEDailyAIReviewEngine:
             "pending_matches": pending,
             "match_results": match_results,
             "handicap_results": handicap_results,
+            "draw_radar_results": draw_radar_results,
             "combo_results": combo_results,
             "conflicts": conflicts,
             "summary": {
                 "singles": summarize_ai_settled(match_results),
                 "handicap": summarize_ai_settled(handicap_results),
+                "draw_radar": {
+                    "overall": summarize_ai_settled(draw_radar_results),
+                    "ordinary_draw": summarize_ai_settled([
+                        row for row in draw_radar_results
+                        if row.get("selection") == "平局"
+                    ]),
+                    "handicap_draw": summarize_ai_settled([
+                        row for row in draw_radar_results
+                        if row.get("selection") == "让平"
+                    ]),
+                    "core": summarize_ai_settled([
+                        row for row in draw_radar_results
+                        if row.get("tier") == "core"
+                    ]),
+                    "watch": summarize_ai_settled([
+                        row for row in draw_radar_results
+                        if row.get("tier") == "watch"
+                    ]),
+                },
                 "handicap_by_selection": {
                     label: summarize_ai_settled([
                         row for row in handicap_results
@@ -346,6 +373,46 @@ class FAEDailyAIReviewEngine:
             result["no_bet"] = True
             result["no_bet_reasons"] = analysis.get("no_bet_reasons") or []
         return result
+
+    def _settle_draw_radar(
+        self, source: Dict[str, Any], match: Dict[str, Any]
+    ) -> List[Dict[str, Any]]:
+        """Settle core/watch draw radar rows without rewriting official ROI."""
+        radar = (source.get("analysis") or {}).get("draw_radar") or {}
+        rows = []
+        for key, selection in (
+            ("ordinary_draw", "平局"),
+            ("handicap_draw", "让平"),
+        ):
+            candidate = radar.get(key) or {}
+            tier = str(candidate.get("tier") or "exclude")
+            if tier not in {"core", "watch"}:
+                continue
+            result = self._settle_selection(source, match, selection)
+            rating = _number(candidate.get("rating")) or 0
+            result.update({
+                "result_type": "draw_radar",
+                "radar_key": key,
+                "tier": tier,
+                "official_bet": tier == "core",
+                "rating": rating,
+                "rating_bucket": (
+                    "4.5+" if rating >= 4.5
+                    else "4.0" if rating >= 4
+                    else "3.5" if rating >= 3.5
+                    else "<3.5"
+                ),
+                "radar_score": candidate.get("score"),
+                "probability": candidate.get("probability"),
+                "market_probability": candidate.get(
+                    "market_probability"
+                ),
+                "odds_value": candidate.get("odds_value"),
+                "effective_sample": candidate.get("effective_sample"),
+                "reason": candidate.get("reason"),
+            })
+            rows.append(result)
+        return rows
 
     def _settle_handicap_reference(
         self, source: Dict[str, Any], match: Dict[str, Any]
@@ -475,6 +542,7 @@ def aggregate_daily_ai_reviews(
     rows = list(reviews)
     matches: List[Dict[str, Any]] = []
     handicap_results: List[Dict[str, Any]] = []
+    draw_radar_results: List[Dict[str, Any]] = []
     combos: List[Dict[str, Any]] = []
     conflicts: List[Dict[str, Any]] = []
     for review in rows:
@@ -487,6 +555,10 @@ def aggregate_daily_ai_reviews(
             **row,
             "review_owner_date": owner_date,
         } for row in review.get("handicap_results") or [])
+        draw_radar_results.extend({
+            **row,
+            "review_owner_date": owner_date,
+        } for row in review.get("draw_radar_results") or [])
         combos.extend(review.get("combo_results") or [])
         conflicts.extend(review.get("conflicts") or [])
     labels = sorted({
@@ -511,6 +583,25 @@ def aggregate_daily_ai_reviews(
         ),
         "singles": summarize_ai_settled(matches),
         "handicap": summarize_ai_settled(handicap_results),
+        "draw_radar": {
+            "overall": summarize_ai_settled(draw_radar_results),
+            "ordinary_draw": summarize_ai_settled([
+                row for row in draw_radar_results
+                if row.get("selection") == "平局"
+            ]),
+            "handicap_draw": summarize_ai_settled([
+                row for row in draw_radar_results
+                if row.get("selection") == "让平"
+            ]),
+            "core": summarize_ai_settled([
+                row for row in draw_radar_results
+                if row.get("tier") == "core"
+            ]),
+            "watch": summarize_ai_settled([
+                row for row in draw_radar_results
+                if row.get("tier") == "watch"
+            ]),
+        },
         "handicap_by_selection": {
             label: summarize_ai_settled([
                 row for row in handicap_results

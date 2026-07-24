@@ -109,6 +109,53 @@
             </div>
           </div>
 
+          <section v-if="drawRadarGroups.length" class="draw-radar-panel">
+            <header>
+              <div>
+                <strong>平 / 让平雷达</strong>
+                <small>独立扫描副选与精确进球差，不再被主推荐过滤</small>
+              </div>
+              <span>核心可组单 · 观察只复盘</span>
+            </header>
+            <div class="draw-radar-groups">
+              <article v-for="group in drawRadarGroups" :key="group.key">
+                <div class="draw-radar-title">
+                  <strong>{{ group.title }}</strong>
+                  <small>排除 {{ group.excluded }} 场</small>
+                </div>
+                <button
+                  v-for="item in group.items"
+                  :key="`${group.key}-${item.match_id}`"
+                  type="button"
+                  @click="goToDetail(item.match_id)"
+                >
+                  <span class="draw-radar-match">
+                    <b>{{ dailyMatch(item.match_id).match_number }}</b>
+                    <span>
+                      {{ dailyMatch(item.match_id).home_team }}
+                      vs
+                      {{ dailyMatch(item.match_id).away_team }}
+                    </span>
+                    <small>{{ item.definition }}</small>
+                  </span>
+                  <span class="draw-radar-decision">
+                    <i :class="item.tier">{{ radarTierLabel(item.tier) }}</i>
+                    <b>{{ starText(item.rating) }}</b>
+                  </span>
+                  <span class="draw-radar-metrics">
+                    <i>概率 {{ radarPercent(item.probability) }}</i>
+                    <i>赔率 {{ item.odds ?? '--' }}</i>
+                    <i :class="metricClass(item.odds_value)">
+                      价值 {{ signedMetric(item.odds_value) }}%
+                    </i>
+                  </span>
+                  <small class="draw-radar-reason">{{ item.reason }}</small>
+                </button>
+              </article>
+            </div>
+            <p>{{ faeDailyAi.daily_summary?.draw_radar?.policy }}</p>
+          </section>
+
           <div v-if="dailyPoolGroups.length" class="daily-pools">
             <section v-for="group in dailyPoolGroups" :key="group.key">
               <h2>{{ group.title }}</h2>
@@ -228,6 +275,16 @@
                   :model="item.input_snapshot?.historical_goal_margin_model"
                   :calibration="item.analysis?.historical_calibration"
                 />
+                <div v-if="matchRadarRows(item).length" class="match-draw-radar">
+                  <strong>本场平 / 让平雷达</strong>
+                  <p v-for="radar in matchRadarRows(item)" :key="radar.model_key">
+                    <span>
+                      <b>{{ radar.selection }}</b>
+                      <i :class="radar.tier">{{ radarTierLabel(radar.tier) }}</i>
+                    </span>
+                    <em>{{ radar.reason }}</em>
+                  </p>
+                </div>
                 <div class="daily-market-grid">
                   <p v-for="market in dailyMarkets" :key="market.key">
                     <span>{{ market.label }}</span>
@@ -327,6 +384,22 @@
               <span>3串1命中</span>
               <strong>{{ faeStats.by_play?.['3串1']?.hit_rate || 0 }}%</strong>
               <small>{{ faeStats.by_play?.['3串1']?.hits || 0 }}/{{ faeStats.by_play?.['3串1']?.settled || 0 }}</small>
+            </article>
+            <article>
+              <span>平局雷达</span>
+              <strong>{{ faeStats.draw_radar?.ordinary_draw?.hit_rate || 0 }}%</strong>
+              <small>
+                {{ faeStats.draw_radar?.ordinary_draw?.hits || 0 }}/{{ faeStats.draw_radar?.ordinary_draw?.settled || 0 }}
+                核心与观察独立结算
+              </small>
+            </article>
+            <article>
+              <span>让平雷达</span>
+              <strong>{{ faeStats.draw_radar?.handicap_draw?.hit_rate || 0 }}%</strong>
+              <small>
+                {{ faeStats.draw_radar?.handicap_draw?.hits || 0 }}/{{ faeStats.draw_radar?.handicap_draw?.settled || 0 }}
+                核心与观察独立结算
+              </small>
             </article>
           </div>
 
@@ -829,6 +902,28 @@ const dailyPoolGroups = computed(() => {
 const dailyMatchMap = computed(() => Object.fromEntries(
   (faeDailyAi.value?.matches || []).map(item => [String(item.match_id), item])
 ))
+const drawRadarGroups = computed(() => {
+  const radar = faeDailyAi.value?.daily_summary?.draw_radar || {}
+  return [
+    {
+      key: 'ordinary_draw',
+      title: '普通平局',
+      excluded: radar.excluded_count?.ordinary_draw || 0,
+      items: radar.ordinary_draw || []
+    },
+    {
+      key: 'handicap_draw',
+      title: '竞彩让平',
+      excluded: radar.excluded_count?.handicap_draw || 0,
+      items: radar.handicap_draw || []
+    }
+  ].map(group => ({
+    ...group,
+    items: group.items.filter(item => (
+      !dailyMatch(item.match_id).retained_from_pregame
+    ))
+  })).filter(group => group.items.length)
+})
 const historicalModelCount = computed(() => (
   faeDailyAi.value?.matches || []
 ).filter(item => item.input_snapshot?.historical_goal_margin_model?.version).length)
@@ -934,6 +1029,23 @@ function starText(stars) {
 
 function dailyMatch(matchId) {
   return dailyMatchMap.value[String(matchId)] || {}
+}
+
+function radarTierLabel(tier) {
+  return tier === 'core' ? '核心' : tier === 'watch' ? '观察' : '排除'
+}
+
+function radarPercent(value) {
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed)) return '--'
+  return `${Number.isInteger(parsed) ? parsed : parsed.toFixed(1)}%`
+}
+
+function matchRadarRows(item) {
+  const radar = item?.analysis?.draw_radar || {}
+  return ['ordinary_draw', 'handicap_draw']
+    .map(key => radar[key])
+    .filter(row => row && row.tier !== 'exclude')
 }
 
 function displayDailyText(value) {
@@ -1520,6 +1632,224 @@ onBeforeUnmount(() => requestController?.abort())
   grid-column: 1 / 3;
   color: #7e958d;
   font-size: 9px;
+}
+
+.draw-radar-panel {
+  margin: 0 10px 10px;
+  overflow: hidden;
+  background: linear-gradient(145deg, #fffafb, #fff);
+  border: 1px solid #f0dfe3;
+  border-radius: 10px;
+}
+
+.draw-radar-panel > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 9px 10px;
+  border-bottom: 1px solid #f2e7e9;
+}
+
+.draw-radar-panel > header strong,
+.draw-radar-panel > header small {
+  display: block;
+}
+
+.draw-radar-panel > header strong {
+  color: #30343b;
+  font-size: 13px;
+}
+
+.draw-radar-panel > header small,
+.draw-radar-panel > header > span {
+  margin-top: 2px;
+  color: #9992a1;
+  font-size: 9px;
+}
+
+.draw-radar-panel > header > span {
+  flex: 0 0 auto;
+  color: #b9792e;
+}
+
+.draw-radar-groups {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  padding: 9px;
+}
+
+.draw-radar-groups article {
+  min-width: 0;
+  padding: 0 8px;
+  background: #fafafa;
+  border: 1px solid #eee7e9;
+  border-radius: 8px;
+}
+
+.draw-radar-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 0 5px;
+}
+
+.draw-radar-title strong {
+  color: #e53955;
+  font-size: 12px;
+}
+
+.draw-radar-title small {
+  color: #aaa;
+  font-size: 9px;
+}
+
+.draw-radar-groups button {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px 7px;
+  width: 100%;
+  padding: 8px 0;
+  text-align: left;
+  background: none;
+  border: 0;
+  border-top: 1px dashed #e9dfe2;
+}
+
+.draw-radar-match {
+  min-width: 0;
+}
+
+.draw-radar-match > b,
+.draw-radar-match > span,
+.draw-radar-match > small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.draw-radar-match > b {
+  color: #333;
+  font-size: 11px;
+}
+
+.draw-radar-match > span {
+  margin-top: 2px;
+  color: #555;
+  font-size: 10px;
+}
+
+.draw-radar-match > small {
+  margin-top: 2px;
+  color: #a19aa0;
+  font-size: 9px;
+}
+
+.draw-radar-decision {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 3px;
+}
+
+.draw-radar-decision i,
+.match-draw-radar i {
+  padding: 2px 5px;
+  color: #9d6a20;
+  font-size: 9px;
+  font-style: normal;
+  background: #fff4db;
+  border-radius: 5px;
+}
+
+.draw-radar-decision i.core,
+.match-draw-radar i.core {
+  color: #fff;
+  background: #e53955;
+}
+
+.draw-radar-decision b {
+  color: #e53955;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.draw-radar-metrics {
+  display: flex;
+  grid-column: 1 / 3;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+}
+
+.draw-radar-metrics i {
+  color: #777;
+  font-size: 9px;
+  font-style: normal;
+}
+
+.draw-radar-metrics i.positive {
+  color: #19966c;
+}
+
+.draw-radar-metrics i.negative {
+  color: #e53955;
+}
+
+.draw-radar-reason {
+  grid-column: 1 / 3;
+  color: #8f878d;
+  font-size: 9px;
+  line-height: 1.45;
+}
+
+.draw-radar-panel > p {
+  margin: 0;
+  padding: 0 10px 9px;
+  color: #a09aa0;
+  font-size: 9px;
+  line-height: 1.4;
+}
+
+.match-draw-radar {
+  margin-top: 10px;
+  padding: 9px;
+  background: #fff9fa;
+  border: 1px solid #f0dfe3;
+  border-radius: 8px;
+}
+
+.match-draw-radar > strong {
+  color: #343841;
+  font-size: 12px;
+}
+
+.match-draw-radar p {
+  display: grid;
+  grid-template-columns: 82px minmax(0, 1fr);
+  gap: 7px;
+  margin: 7px 0 0;
+  padding-top: 7px;
+  border-top: 1px dashed #ecdfe2;
+}
+
+.match-draw-radar p > span {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.match-draw-radar p b {
+  color: #e53955;
+  font-size: 11px;
+}
+
+.match-draw-radar p em {
+  color: #777;
+  font-size: 10px;
+  font-style: normal;
+  line-height: 1.5;
 }
 
 .daily-pools {
@@ -3257,6 +3587,10 @@ onBeforeUnmount(() => requestController?.abort())
   }
 
   .daily-pools {
+    grid-template-columns: 1fr;
+  }
+
+  .draw-radar-groups {
     grid-template-columns: 1fr;
   }
 }

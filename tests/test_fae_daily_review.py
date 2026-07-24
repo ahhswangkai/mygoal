@@ -216,6 +216,63 @@ class DailyAIReviewTests(unittest.TestCase):
         self.assertEqual(review["summary"]["handicap"]["hits"], 1)
         self.assertEqual(review["summary"]["handicap"]["hit_rate"], 50.0)
 
+    def test_settles_draw_radar_core_and_watch_rows_separately(self):
+        ordinary = source("202", "主胜")
+        ordinary["analysis"]["draw_radar"] = {
+            "ordinary_draw": {
+                "tier": "watch",
+                "rating": 3.5,
+                "score": 64,
+                "probability": 27.2,
+                "market_probability": 26.0,
+                "odds_value": -4.1,
+                "effective_sample": 62,
+                "reason": "副选平局，仅列观察。",
+            },
+            "handicap_draw": {"tier": "exclude"},
+        }
+        handicap = source("205", "主胜", handicap=-1)
+        handicap["analysis"]["draw_radar"] = {
+            "ordinary_draw": {"tier": "exclude"},
+            "handicap_draw": {
+                "tier": "core",
+                "rating": 4,
+                "score": 74,
+                "probability": 28.4,
+                "market_probability": 26.0,
+                "odds_value": 4.5,
+                "effective_sample": 70,
+                "reason": "让平达到核心门槛。",
+            },
+        }
+        snapshot = {
+            **self.snapshot,
+            "matches": [ordinary, handicap],
+            "daily_summary": {"recommended_combinations": []},
+        }
+        results = {
+            "202": {"status": 2, "home_score": 0, "away_score": 0},
+            "205": {"status": 2, "home_score": 1, "away_score": 0},
+        }
+
+        review = FAEDailyAIReviewEngine().review(snapshot, results)
+        rows = {
+            (item["match_id"], item["selection"]): item
+            for item in review["draw_radar_results"]
+        }
+
+        self.assertEqual(rows[("202", "平局")]["status"], "hit")
+        self.assertEqual(rows[("202", "平局")]["tier"], "watch")
+        self.assertFalse(rows[("202", "平局")]["official_bet"])
+        self.assertEqual(rows[("205", "让平")]["status"], "hit")
+        self.assertTrue(rows[("205", "让平")]["official_bet"])
+        self.assertEqual(
+            review["summary"]["draw_radar"]["core"]["hits"], 1
+        )
+        self.assertEqual(
+            review["summary"]["draw_radar"]["watch"]["hits"], 1
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
