@@ -15,7 +15,7 @@ from .provider import ArkNarrativeClient, FAEError, FAEOutputError
 from .version import ENGINE_VERSION
 
 
-DAILY_PROMPT_VERSION = "five-market-daily-v12-draw-radar"
+DAILY_PROMPT_VERSION = "five-market-daily-v13-historical-market-rules"
 
 HANDICAP_VALUES = {
     "平手": 0.0, "平/半": 0.25, "平手/半球": 0.25,
@@ -282,6 +282,22 @@ def build_daily_match_input(
             "score_candidates": analysis.get("score_candidates"),
             "market_types": analysis.get("market_types"),
             "rule_signals": core.get("rule_signals"),
+            "historical_odds_rules": core.get("historical_odds_rules"),
+        },
+        "historical_odds_rules": core.get("historical_odds_rules") or {
+            "version": "historical-market-rules-v1",
+            "matched_rule_ids": [],
+            "ordinary_draw": {
+                "eligible_for_adjustment": False,
+                "adjustment_pp": 0,
+                "signals": [],
+            },
+            "handicap_draw": {
+                "eligible_for_adjustment": False,
+                "adjustment_pp": 0,
+                "signals": [],
+            },
+            "favorite_risks": [],
         },
         "league_history_profile": league_profile or {
             "league": match.get("league"),
@@ -864,6 +880,9 @@ class FAEDailyAIAnalyzer:
             "historical_goal_margin_model按欧赔强弱、亚盘深度、大小球、竞彩让球数、联赛和时间衰减寻找相似完赛场次；ordinary_draw统计0球分差，handicap_draw统计当前让球数对应的精确净胜球差，两者严禁混用。",
             "只有historical_goal_margin_model中eligible_for_adjustment=true的结果才可参与校准；必须同时比较effective_sample、confidence、market_probability、blended_probability、odds和value_edge，样本不足时只允许写观察。",
             "历史相似模型以市场去水概率为先验并限制修正幅度，仍不是真实胜率或因果规律；若历史与市场明显冲突，降低星级或不下注，禁止用历史频率制造必出平局/让平的结论。",
+            "historical_odds_rules是固定历史回放得到的赔率区间、竞彩让球数、联赛和初即时变化规则；只能使用matched_rule_ids中的已命中项，并按adjustment_pp做有限修正。",
+            "历史赔率规则必须引用sample、hit_rate、market_probability和confidence；它是条件概率倾斜而非必买信号，禁止跳过当天五市场一致性与数据质量。",
+            "主队+1且让平赔2.70-3.19时，让平严格表示客队恰好赢1球；最低欧赔1.70-1.89只提高普通平局权重，两条规则不得混用。",
             "联赛画像market_surprise表示临场欧赔存在明确热门时热门方未赢球的历史频率；favorite_fail_rate必须拆看favorite_draw_rate和underdog_win_rate，不能把两者混成同一投注结论。",
             "若当前热门赔率所在favorite_odds_bands样本不少于20，且联赛热门失手率或不穿盘率显著高于全库，只能降低热门方向置信度并增加平局、弱方不败或让球防选，不得脱离当天盘口直接反买。",
             "current_asian_risk表示当前比赛赛前触发的水位与盘口结构；league_history_profile.asian_risk_patterns表示该联赛同类结构的历史不穿率。只有当前模式一致、该模式样本不少于20且联赛画像可调权时，才可作为低到中权重风险证据。",
@@ -939,6 +958,8 @@ class FAEDailyAIAnalyzer:
             "联赛历史画像只在eligible_for_adjustment=true时作为低到中权重基线；赔率分段样本不足时不得使用。",
             "历史联赛频率不是真实概率，必须让位于本场欧赔、亚盘、竞彩、大小球和市场一致性。",
             "historical_goal_margin_model将普通平局定义为0球分差，将让平定义为当前竞彩让球数对应的精确净胜球差；两种玩法必须分开引用。仅eligible_for_adjustment=true且effective_sample达标时允许参与校准。",
+            "historical_odds_rules是固定历史回放的有限修正规则；只能引用matched_rule_ids中已命中项及其sample、hit_rate、market_probability和adjustment_pp，不得写成必出规律。",
+            "主队+1且让平赔2.70-3.19对应客队恰好赢1球；最低欧赔1.70-1.89只作用于普通平局，两者不得混用。",
             "引用相似历史模型时必须同时比较market_probability、blended_probability、odds与value_edge；它以市场为先验且不是因果规律，不得写成必出或真实胜率。",
             "market_surprise是明确热门方未赢球的历史频率，必须拆分热门打平和弱方爆冷；仅当当前赔率分段样本不少于20时用于降低热门置信度或增加防选，禁止单独据此反买。",
             "current_asian_risk只描述本场赛前水位结构；只有联赛画像中相同asian_risk_patterns模式样本不少于20时才能辅助降级或增加防选，禁止把市场预警写成赛果真实原因。",
@@ -1418,13 +1439,13 @@ class FAEDailyAIAnalyzer:
             .get(model_key) or {}
         )
         profile = cls._play_value_profile(source, selection)
-        probability = (
-            _number(metric.get("blended_probability"))
-            if metric.get("eligible_for_adjustment")
-            else None
-        )
+        probability = _number(profile.get("probability"))
         if probability is None:
-            probability = _number(profile.get("probability"))
+            probability = (
+                _number(metric.get("blended_probability"))
+                if metric.get("eligible_for_adjustment")
+                else None
+            )
         market_probability = (
             _number(metric.get("market_probability"))
             if metric.get("market_probability") is not None
@@ -1438,13 +1459,54 @@ class FAEDailyAIAnalyzer:
             if metric.get("odds") is not None
             else _number(profile.get("odds"))
         )
-        odds_value = _number(metric.get("value_edge"))
-        if odds_value is None:
-            expected_return = _number(profile.get("expected_return"))
-            odds_value = (
-                round((expected_return - 1) * 100, 2)
-                if expected_return is not None else None
+        historical_rule_key = (
+            "ordinary_draw" if selection == "平局" else "handicap_draw"
+        )
+        historical_rule_profile = (
+            (source.get("historical_odds_rules") or {})
+            .get(historical_rule_key) or {}
+        )
+        historical_rule_adjustment = float(
+            historical_rule_profile.get("adjustment_pp") or 0
+        )
+        matched_historical_rules = [
+            str(value)
+            for value in historical_rule_profile.get("matched_rule_ids") or []
+        ]
+        expected_return = _number(profile.get("expected_return"))
+        profile_odds_value = (
+            round((expected_return - 1) * 100, 2)
+            if expected_return is not None else None
+        )
+        metric_odds_value = _number(metric.get("value_edge"))
+        odds_value = (
+            profile_odds_value
+            if matched_historical_rules and profile_odds_value is not None
+            else metric_odds_value
+            if metric_odds_value is not None
+            else profile_odds_value
+        )
+        historical_rule_samples = [
+            int(item.get("sample") or 0)
+            for item in historical_rule_profile.get("signals") or []
+            if item.get("sample")
+        ]
+        historical_rule_confidences = [
+            str(item.get("confidence") or "")
+            for item in historical_rule_profile.get("signals") or []
+        ]
+        historical_rule_confidence = (
+            "高" if "高" in historical_rule_confidences
+            else "中" if "中" in historical_rule_confidences
+            else None
+        )
+        history_eligible = bool(
+            metric.get("eligible_for_adjustment")
+            or (
+                historical_rule_profile.get("eligible_for_adjustment")
+                and matched_historical_rules
             )
+        )
         confidence = (
             (((source.get("fae_core") or {}).get("recommendation") or {})
              .get("market_confidence") or {})
@@ -1511,6 +1573,7 @@ class FAEDailyAIAnalyzer:
             + risk_bonus
             + value_adjustment
             + history_adjustment
+            + max(-4.0, min(6.0, historical_rule_adjustment * 1.2))
         )
         if metric.get("confidence") == "高":
             score += 3
@@ -1536,7 +1599,7 @@ class FAEDailyAIAnalyzer:
 
         minimum_probability = 26 if selection == "平局" else 23
         core = bool(
-            metric.get("eligible_for_adjustment")
+            history_eligible
             and probability is not None
             and probability >= minimum_probability
             and odds_value is not None
@@ -1551,7 +1614,7 @@ class FAEDailyAIAnalyzer:
             and profile
             and (
                 (
-                    metric.get("eligible_for_adjustment")
+                    history_eligible
                     and score >= 52
                 )
                 or role_signals
@@ -1610,6 +1673,13 @@ class FAEDailyAIAnalyzer:
             )
         if relevant_risks:
             reason_parts.append("存在热门方不稳盘口信号")
+        if matched_historical_rules:
+            reason_parts.append(
+                "历史赔率规则{}项，概率修正{:+g}个百分点".format(
+                    len(matched_historical_rules),
+                    historical_rule_adjustment,
+                )
+            )
         if tier == "core":
             reason_parts.append("达到独立核心门槛")
         elif tier == "watch":
@@ -1633,11 +1703,24 @@ class FAEDailyAIAnalyzer:
             "odds": round(odds, 3) if odds is not None else None,
             "odds_value": round(odds_value, 2)
             if odds_value is not None else None,
-            "effective_sample": metric.get("effective_sample"),
-            "confidence": metric.get("confidence") or "样本不足",
-            "eligible_for_adjustment": bool(
-                metric.get("eligible_for_adjustment")
+            "effective_sample": (
+                metric.get("effective_sample")
+                if metric.get("effective_sample") is not None
+                else max(historical_rule_samples, default=None)
             ),
+            "historical_odds_rule_adjustment_pp": round(
+                historical_rule_adjustment, 2
+            ),
+            "historical_odds_rule_ids": matched_historical_rules,
+            "historical_odds_rule_signals": (
+                historical_rule_profile.get("signals") or []
+            ),
+            "confidence": (
+                metric.get("confidence")
+                if metric.get("eligible_for_adjustment")
+                else historical_rule_confidence or "样本不足"
+            ),
+            "eligible_for_adjustment": history_eligible,
             "role_signals": role_signals,
             "risk_pattern_ids": relevant_risks,
             "definition": definition,
@@ -2030,6 +2113,28 @@ class FAEDailyAIAnalyzer:
                     adjustments.append(
                         "当前水位模式与联赛历史高样本风险匹配，热门穿盘方向最高3.5星"
                     )
+            historical_odds_rules = source.get("historical_odds_rules") or {}
+            favorite_history_risks = [
+                dict(item)
+                for item in historical_odds_rules.get("favorite_risks") or []
+                if isinstance(item, dict)
+            ]
+            away_favorite_risk = next(
+                (
+                    item for item in favorite_history_risks
+                    if item.get("rule_id")
+                    == "history-away-favorite-150-209-risk"
+                ),
+                None,
+            )
+            if away_favorite_risk and effective_primary_play == "客胜":
+                cap = min(cap, 3.5)
+                adjustments.append(
+                    "客胜1.50-2.09历史表现低于市场预期，客胜方向最高3.5星"
+                )
+                historical_risk_notes.append(
+                    str(away_favorite_risk.get("reason") or "")
+                )
             if len(source.get("missing_fundamentals") or []) >= 3:
                 cap = min(cap, 4.0)
                 adjustments.append("基本面缺失较多，不允许评为五星")
@@ -2097,6 +2202,7 @@ class FAEDailyAIAnalyzer:
                 "historical_calibration": value_profile.get(
                     "historical_calibration"
                 ),
+                "historical_odds_rules": historical_odds_rules,
                 "league_asian_risk_evidence": matched_pattern_evidence,
                 "no_bet": no_bet,
                 "no_bet_reasons": list(dict.fromkeys(no_bet_reasons)),

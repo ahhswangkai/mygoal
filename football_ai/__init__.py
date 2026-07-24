@@ -14,6 +14,10 @@ from .daily_review import (
 )
 from .draw_review import FAEDrawReviewEngine, aggregate_draw_reviews
 from .learning import FAEReviewEngine
+from .market_rules import (
+    HISTORICAL_MARKET_RULES_VERSION,
+    evaluate_historical_market_rules,
+)
 from .parlay import build_draw_parlays
 from .provider import (
     ArkNarrativeClient,
@@ -41,6 +45,7 @@ __all__ = [
     "FAEProviderError",
     "REVIEW_MEMORY_VERSION",
     "FAEReviewEngine",
+    "HISTORICAL_MARKET_RULES_VERSION",
     "FAEDrawReviewEngine",
     "FAEDailyAIAnalyzer",
     "FAEDailyAIReviewEngine",
@@ -48,6 +53,7 @@ __all__ = [
     "FootballAIEngine",
     "DAILY_PROMPT_VERSION",
     "build_daily_match_input",
+    "evaluate_historical_market_rules",
     "build_review_memory",
     "aggregate_daily_ai_reviews",
     "summarize_ai_settled",

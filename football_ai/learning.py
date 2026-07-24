@@ -22,7 +22,11 @@ class FAEReviewEngine:
         core = analysis.get("core") or {}
         recommendation = core.get("recommendation") or (analysis.get("analysis") or {}).get("recommendation") or {}
         primary = str(recommendation.get("primary") or "")
-        handicap = self._number(match.get("handicap"))
+        handicap = self._number(
+            match.get("hi_handicap_value")
+            if match.get("hi_handicap_value") not in (None, "")
+            else match.get("handicap")
+        )
         total_line = ((core.get("probabilities") or {}).get("total_line"))
         recommendation_result = (
             "skipped"
@@ -42,6 +46,21 @@ class FAEReviewEngine:
                     hit = recommendation_result == "miss"
             elif market == "outcome" and prediction in {"home", "draw", "away"}:
                 hit = prediction == actual_outcome
+            elif (
+                market == "historical_outcome"
+                and prediction in {"home", "draw", "away"}
+            ):
+                hit = prediction == actual_outcome
+            elif market == "hhad" and prediction in {"win", "draw", "lose"}:
+                signal_handicap = self._number(signal.get("handicap"))
+                if signal_handicap is not None:
+                    adjusted = home_goals + signal_handicap - away_goals
+                    actual_hhad = (
+                        "win" if adjusted > 0
+                        else "draw" if adjusted == 0
+                        else "lose"
+                    )
+                    hit = prediction == actual_hhad
             elif market == "total" and prediction in {"over", "under"} and total_line is not None:
                 actual_total = home_goals + away_goals
                 if actual_total != float(total_line):

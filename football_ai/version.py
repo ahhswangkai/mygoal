@@ -2,8 +2,8 @@
 
 ENGINE_NAME = "Football AI Engine"
 ENGINE_CODE = "FAE"
-ENGINE_VERSION = "2.6.0"
-SCHEMA_VERSION = "2.4"
+ENGINE_VERSION = "2.7.0"
+SCHEMA_VERSION = "2.5"
 
 DIMENSION_WEIGHTS = {
     "handicap": 0.20,
@@ -39,6 +39,16 @@ DEFAULT_RULE_WEIGHTS = {
     "deep-high-water": 1.00,
     "cup-variance": 1.00,
     "data-quality": 1.00,
+    "history-draw-favorite-170-189": 1.00,
+    "history-draw-strong-favorite-filter": 1.00,
+    "history-draw-odds-400-499-filter": 1.00,
+    "history-away-favorite-150-209-risk": 1.00,
+    "history-draw-league-prior": 1.00,
+    "history-hhad-plus1-draw-270-319": 1.00,
+    "history-hhad-minus1-draw-320-399": 1.00,
+    "history-hhad-draw-small-rise": 1.00,
+    "history-hhad-draw-400-499-filter": 1.00,
+    "history-hhad-draw-league-prior": 1.00,
 }
 
 VERSION_MANIFEST = {
@@ -61,6 +71,7 @@ VERSION_MANIFEST = {
         "联赛历史画像、时间衰减基线及历史隐性偏移",
         "上盘水位风险归因、联赛同类模式不穿率及研判复盘闭环",
         "普通平局与竞彩让平独立雷达、核心/观察分层及赛后单独结算",
+        "历史赔率区间、让球数、联赛与初即时变化的保守概率校准",
     ],
     "learning_policy": {
         "minimum_samples": 10,

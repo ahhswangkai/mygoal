@@ -9,6 +9,7 @@ import math
 import re
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
+from .market_rules import evaluate_historical_market_rules
 from .provider import ArkNarrativeClient, FAEError, FAEOutputError
 from .version import (
     DEFAULT_RULE_WEIGHTS,
@@ -144,7 +145,11 @@ class FootballAIEngine:
             "match": match_data,
             "markets": {
                 "movement": self._odds_movement(match),
-                "sporttery_handicap": self._number(match.get("handicap")),
+                "sporttery_handicap": self._number(
+                    match.get("hi_handicap_value")
+                    if match.get("hi_handicap_value") not in (None, "")
+                    else match.get("handicap")
+                ),
             },
             "fundamentals": {
                 "source": source.get("source"),
@@ -185,6 +190,13 @@ class FootballAIEngine:
             except (TypeError, ValueError):
                 continue
 
+        context = dict(context or {})
+        markets = dict(context.get("markets") or {})
+        markets["historical_odds_rules"] = evaluate_historical_market_rules(
+            context.get("match") or {},
+            weights,
+        )
+        context["markets"] = markets
         core = self._analyze_core(context, weights)
         narrative = self._deterministic_narrative(context, core)
         provider_meta: Dict[str, Any] = {"mode": "deterministic"}
@@ -236,12 +248,13 @@ class FootballAIEngine:
             "overall_stars": core["overall_stars"],
             "probabilities": core["probabilities"],
             "probability_basis": core["probability_basis"],
+            "historical_odds_rules": core["historical_odds_rules"],
             "recommendation": core["recommendation"],
             "risk": core["risk"],
             "modules": [
                 "data-layer", "market-classifier", "scoring-engine",
                 "probability-engine", "recommendation-engine", "risk-control",
-                "review-learning", "version-control",
+                "historical-market-rules", "review-learning", "version-control",
             ],
             "disclaimer": "仅基于现有数据进行分析，不构成投注建议",
         }
@@ -299,6 +312,9 @@ class FootballAIEngine:
         base_probabilities = self._implied_probabilities(context)
         signals = self._rule_signals(context, base_probabilities, weights)
         probabilities = self._adjust_probabilities(base_probabilities, signals)
+        probabilities = self._apply_historical_draw_adjustment(
+            context, probabilities
+        )
         market_types = self._classify_market(context, probabilities)
         risk = self._risk_profile(context, market_types, signals)
         dimensions = self._dimension_scores(context, probabilities, signals)
@@ -323,7 +339,7 @@ class FootballAIEngine:
             "overall_stars": self._stars(overall_score),
             "probabilities": market_probabilities,
             "probability_basis": {
-                "label": "市场去水概率 + FAE规则调整",
+                "label": "市场去水概率 + FAE规则 + 历史赔率区间校准",
                 "calibrated": False,
                 "market_implied_no_vig": {
                     "home_win": round(base_probabilities["home"] * 100, 1),
@@ -332,12 +348,22 @@ class FootballAIEngine:
                 },
                 "note": (
                     "由欧赔去除返还率后归一化，并结合已录入盘口信号调整；"
-                    "尚未经过长期赛果校准，不等同于真实发生概率。"
+                    "历史赔率规则只做有限幅度修正；尚未经过长期独立赛果校准，"
+                    "不等同于真实发生概率。"
+                ),
+                "historical_market_rules": (
+                    (context.get("markets") or {}).get(
+                        "historical_odds_rules"
+                    ) or {}
                 ),
             },
             "recommendation": recommendation,
             "risk": risk,
             "rule_signals": signals,
+            "historical_odds_rules": (
+                (context.get("markets") or {}).get("historical_odds_rules")
+                or {}
+            ),
             "score_candidates": score_candidates,
             "data_quality": context.get("data_quality") or {},
         }
@@ -543,6 +569,58 @@ class FootballAIEngine:
         if issue_count:
             add("data-quality", "risk", "risk", None, min(95, 25 + issue_count * 10),
                 f"存在{issue_count}项数据缺口或质量问题", True)
+
+        historical_rules = (
+            (context.get("markets") or {}).get("historical_odds_rules") or {}
+        )
+        grouped_rules = (
+            ("ordinary_draw", "historical_outcome", "draw"),
+            ("handicap_draw", "hhad", "draw"),
+        )
+        for group_key, market, prediction in grouped_rules:
+            for rule in (
+                (historical_rules.get(group_key) or {}).get("signals") or []
+            ):
+                adjustment = float(rule.get("adjustment_pp") or 0)
+                add(
+                    str(rule.get("rule_id") or ""),
+                    "history",
+                    market,
+                    prediction,
+                    35 + min(55, abs(adjustment) * 18),
+                    str(rule.get("reason") or ""),
+                    bool(rule.get("risk")),
+                )
+                signals[-1].update({
+                    "historical_rule": True,
+                    "selection": rule.get("selection"),
+                    "adjustment_pp": adjustment,
+                    "sample": rule.get("sample"),
+                    "historical_hit_rate": rule.get("hit_rate"),
+                    "market_probability": rule.get("market_probability"),
+                    "historical_roi": rule.get("roi"),
+                    "evidence_confidence": rule.get("confidence"),
+                    "handicap": (
+                        (historical_rules.get("handicap_draw") or {})
+                        .get("handicap")
+                    ) if group_key == "handicap_draw" else None,
+                })
+        for rule in historical_rules.get("favorite_risks") or []:
+            add(
+                str(rule.get("rule_id") or ""),
+                "risk", "risk", None, 72,
+                str(rule.get("reason") or ""),
+                True,
+            )
+            signals[-1].update({
+                "historical_rule": True,
+                "selection": rule.get("selection"),
+                "sample": rule.get("sample"),
+                "historical_hit_rate": rule.get("hit_rate"),
+                "market_probability": rule.get("market_probability"),
+                "historical_roi": rule.get("roi"),
+                "evidence_confidence": rule.get("confidence"),
+            })
         return signals
 
     def _adjust_probabilities(
@@ -558,6 +636,51 @@ class FootballAIEngine:
         values = {key: math.exp(value) for key, value in logits.items()}
         total = sum(values.values())
         return {key: value / total for key, value in values.items()}
+
+    @staticmethod
+    def _shift_draw_probability(
+        probabilities: Dict[str, float],
+        adjustment_pp: float,
+        *,
+        draw_key: str,
+        other_keys: Tuple[str, str],
+    ) -> Dict[str, float]:
+        result = dict(probabilities)
+        current_draw = float(result.get(draw_key) or 0)
+        target_draw = max(
+            0.05,
+            min(0.55, current_draw + float(adjustment_pp or 0) / 100),
+        )
+        current_other = sum(float(result.get(key) or 0) for key in other_keys)
+        target_other = max(0, 1 - target_draw)
+        if current_other > 0:
+            scale = target_other / current_other
+            for key in other_keys:
+                result[key] = float(result.get(key) or 0) * scale
+        else:
+            for key in other_keys:
+                result[key] = target_other / len(other_keys)
+        result[draw_key] = target_draw
+        return result
+
+    def _apply_historical_draw_adjustment(
+        self,
+        context: Dict[str, Any],
+        probabilities: Dict[str, float],
+    ) -> Dict[str, float]:
+        profile = (
+            ((context.get("markets") or {}).get("historical_odds_rules") or {})
+            .get("ordinary_draw") or {}
+        )
+        adjustment = float(profile.get("adjustment_pp") or 0)
+        if not profile.get("eligible_for_adjustment") or not adjustment:
+            return probabilities
+        return self._shift_draw_probability(
+            probabilities,
+            adjustment,
+            draw_key="draw",
+            other_keys=("home", "away"),
+        )
 
     def _classify_market(
         self, context: Dict[str, Any], probabilities: Dict[str, float]
@@ -849,6 +972,23 @@ class FootballAIEngine:
                 adjusted_home = row["home"] + handicap
                 key = "win" if adjusted_home > row["away"] else "draw" if adjusted_home == row["away"] else "lose"
                 hhad[key] += row["probability"]
+            historical_hhad = (
+                ((context.get("markets") or {}).get("historical_odds_rules") or {})
+                .get("handicap_draw") or {}
+            )
+            hhad_adjustment = float(
+                historical_hhad.get("adjustment_pp") or 0
+            )
+            if (
+                historical_hhad.get("eligible_for_adjustment")
+                and hhad_adjustment
+            ):
+                hhad = self._shift_draw_probability(
+                    hhad,
+                    hhad_adjustment,
+                    draw_key="draw",
+                    other_keys=("win", "lose"),
+                )
 
         total_line = self._number((context.get("match") or {}).get("ou_current_total"))
         totals = {"over": 0.0, "push": 0.0, "under": 0.0}

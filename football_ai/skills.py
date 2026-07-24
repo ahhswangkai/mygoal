@@ -72,6 +72,26 @@ SKILL_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         "guidance": "只影响平局与让平候选的排序，不改变单场 FAE 核心概率。",
         "parameter_kind": "strategy_weights",
     },
+    "historical-market-patterns": {
+        "label": "历史赔率区间规律",
+        "description": "按赔率区间、竞彩让球数、联赛与初即时变化校准平局和让平。",
+        "rule_ids": (
+            "history-draw-favorite-170-189",
+            "history-draw-strong-favorite-filter",
+            "history-draw-odds-400-499-filter",
+            "history-away-favorite-150-209-risk",
+            "history-draw-league-prior",
+            "history-hhad-plus1-draw-270-319",
+            "history-hhad-minus1-draw-320-399",
+            "history-hhad-draw-small-rise",
+            "history-hhad-draw-400-499-filter",
+            "history-hhad-draw-league-prior",
+        ),
+        "guidance": (
+            "历史条件频率只做有限概率修正与风险过滤；"
+            "必须展示样本量和市场去水概率，不得表述成必出规律。"
+        ),
+    },
 }
 
 
