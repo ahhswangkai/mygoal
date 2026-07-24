@@ -41,7 +41,10 @@
               class="ticket-upload-trigger"
               :disabled="loading || ticketUploadLoading"
               @click="openTicketUpload"
-            >上传票据</button>
+            >
+              <span v-if="ticketUploadLoading" class="ticket-upload-trigger--loading" aria-hidden="true"></span>
+              {{ ticketUploadLoading ? '识别中…' : '上传票据' }}
+            </button>
             <button type="button" :disabled="loading" @click="fetchRecords">{{ loading ? '刷新中…' : '刷新' }}</button>
           </div>
         </div>
@@ -242,7 +245,10 @@
           <button type="button" class="ticket-import-close" @click="closeTicketImportModal">×</button>
         </header>
         <div class="ticket-import-body">
-          <div v-if="ticketUploadLoading" class="ticket-import-loading">正在识别票据，请稍候…</div>
+          <div v-if="ticketUploadLoading" class="ticket-import-loading">
+            <span class="ticket-loading-spinner" aria-hidden="true"></span>
+            <p>正在识别票据，请稍候…</p>
+          </div>
           <template v-else>
             <p class="ticket-import-tip">
               请核对结果后提交入库。你可以手动修改 JSON（需保留字段结构）。
@@ -433,6 +439,7 @@ const handleTicketFileUpload = async (event) => {
   if (!file) return
   if (ticketUploadLoading.value) return
   ticketUploadLoading.value = true
+  ticketImportModal.value = true
   ticketImportError.value = ''
   ticketImportWarnings.value = []
   ticketNotice.value = ''

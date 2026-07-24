@@ -4367,6 +4367,16 @@ a { text-decoration: none; color: inherit; }
   border: 0;
 }
 
+.ticket-upload-trigger--loading {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.45);
+  border-top-color: #ffffff;
+  animation: ticket-spin 0.9s linear infinite;
+  display: inline-flex;
+}
+
 .records-filter {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -4504,6 +4514,12 @@ a { text-decoration: none; color: inherit; }
   color: #333;
   font-size: 15px;
   font-weight: 500;
+}
+
+@keyframes ticket-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .record-meta {
@@ -4749,6 +4765,26 @@ a { text-decoration: none; color: inherit; }
   text-align: center;
   color: #999;
   font-size: 13px;
+}
+
+.ticket-loading-spinner {
+  width: 22px;
+  height: 22px;
+  border: 2px solid #ddd;
+  border-top-color: #f33b48;
+  border-radius: 50%;
+  display: inline-flex;
+  animation: ticket-spin 0.9s linear infinite;
+  margin-right: 8px;
+  vertical-align: -2px;
+}
+
+.ticket-import-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
 }
 
 .ticket-import-warnings {
