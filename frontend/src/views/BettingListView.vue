@@ -35,8 +35,24 @@
             <h2>我的方案</h2>
             <p>仅当前账号可见</p>
           </div>
-          <button type="button" :disabled="loading" @click="fetchRecords">{{ loading ? '刷新中…' : '刷新' }}</button>
+          <div class="records-toolbar-actions">
+            <button
+              type="button"
+              class="ticket-upload-trigger"
+              :disabled="loading || ticketUploadLoading"
+              @click="openTicketUpload"
+            >上传票据</button>
+            <button type="button" :disabled="loading" @click="fetchRecords">{{ loading ? '刷新中…' : '刷新' }}</button>
+          </div>
         </div>
+        <p v-if="ticketNotice" class="ticket-upload-notice">{{ ticketNotice }}</p>
+        <input
+          ref="ticketFileInput"
+          class="ticket-file-input"
+          type="file"
+          accept="image/png,image/jpeg,image/webp"
+          @change="handleTicketFileUpload"
+        />
 
         <div class="records-filter" aria-label="方案筛选">
           <button
@@ -102,7 +118,7 @@
       <div v-else class="page-loading">正在确认登录状态…</div>
     </main>
 
-    <div v-if="selectedRecord" class="record-detail-overlay" @click.self="selectedRecord = null">
+        <div v-if="selectedRecord" class="record-detail-overlay" @click.self="selectedRecord = null">
       <section class="record-detail-modal">
         <header>
           <div>
@@ -218,6 +234,45 @@
         <div v-if="recordShareNotice" class="record-share-notice">{{ recordShareNotice }}</div>
       </section>
     </div>
+
+    <div v-if="ticketImportModal" class="ticket-import-overlay" @click.self="closeTicketImportModal">
+      <section class="ticket-import-modal">
+        <header>
+          <h2>识别票据</h2>
+          <button type="button" class="ticket-import-close" @click="closeTicketImportModal">×</button>
+        </header>
+        <div class="ticket-import-body">
+          <div v-if="ticketUploadLoading" class="ticket-import-loading">正在识别票据，请稍候…</div>
+          <template v-else>
+            <p class="ticket-import-tip">
+              请核对结果后提交入库。你可以手动修改 JSON（需保留字段结构）。
+            </p>
+            <textarea
+              v-model="ticketImportJson"
+              rows="16"
+              class="ticket-import-textarea"
+            />
+            <div v-if="ticketImportWarnings.length" class="ticket-import-warnings">
+              <strong>识别提示</strong>
+              <ul>
+                <li v-for="item in ticketImportWarnings" :key="item">{{ item }}</li>
+              </ul>
+            </div>
+            <div v-if="ticketImportError" class="ticket-import-error">{{ ticketImportError }}</div>
+          </template>
+        </div>
+        <footer class="ticket-import-actions">
+          <button type="button" @click="closeTicketImportModal">取消</button>
+          <button
+            type="button"
+            :disabled="ticketUploadLoading || ticketImportLoading || !ticketImportJson"
+            @click="confirmTicketImport"
+          >
+            {{ ticketImportLoading ? '入库中…' : '确认入库' }}
+          </button>
+        </footer>
+      </section>
+    </div>
   </div>
 </template>
 
@@ -237,6 +292,15 @@ const recordShareBlob = ref(null)
 const preparingRecordShare = ref(false)
 const sharingRecord = ref(false)
 const recordShareNotice = ref('')
+const ticketFileInput = ref(null)
+const ticketImportModal = ref(false)
+const ticketImportJson = ref('')
+const ticketUploadLoading = ref(false)
+const ticketImportLoading = ref(false)
+const ticketImportError = ref('')
+const ticketImportWarnings = ref([])
+const ticketNotice = ref('')
+const ticketNoticeTimer = ref(null)
 let recordShareToken = 0
 let recordShareNoticeTimer = null
 
@@ -314,6 +378,106 @@ const showRecordShareNotice = (message) => {
   recordShareNoticeTimer = window.setTimeout(() => {
     recordShareNotice.value = ''
   }, 2800)
+}
+
+const showTicketNotice = (message) => {
+  ticketNotice.value = message
+  if (ticketNoticeTimer.value) window.clearTimeout(ticketNoticeTimer.value)
+  ticketNoticeTimer.value = window.setTimeout(() => {
+    ticketNotice.value = ''
+  }, 3000)
+}
+
+const closeTicketImportModal = () => {
+  ticketImportModal.value = false
+  ticketImportJson.value = ''
+  ticketImportWarnings.value = []
+  ticketImportError.value = ''
+  ticketUploadLoading.value = false
+  ticketImportLoading.value = false
+}
+
+const openTicketUpload = () => {
+  if (ticketUploadLoading.value) return
+  if (ticketFileInput.value) ticketFileInput.value.value = ''
+  ticketImportError.value = ''
+  ticketFileInput.value?.click()
+}
+
+const parseTicketImportResponse = (responseText) => {
+  try {
+    return JSON.parse(responseText)
+  } catch {
+    throw new Error('票据识别结果不是合法 JSON，请检查文本格式')
+  }
+}
+
+const submitTicketRecognize = async (file) => {
+  const formData = new FormData()
+  formData.append('file', file)
+  const response = await fetch('/api/user/bets/recognize-ticket', {
+    method: 'POST',
+    credentials: 'same-origin',
+    body: formData,
+  })
+  const payload = await response.json().catch(() => ({}))
+  if (!response.ok || payload.success === false) {
+    throw new Error(payload.message || '识别失败')
+  }
+  return payload
+}
+
+const handleTicketFileUpload = async (event) => {
+  const files = event?.target?.files
+  const file = files && files.length > 0 ? files[0] : null
+  if (!file) return
+  if (ticketUploadLoading.value) return
+  ticketUploadLoading.value = true
+  ticketImportError.value = ''
+  ticketImportWarnings.value = []
+  ticketNotice.value = ''
+
+  try {
+    const result = await submitTicketRecognize(file)
+    ticketImportJson.value = JSON.stringify(result.data || {}, null, 2)
+    ticketImportWarnings.value = Array.isArray(result.data?.warnings) ? result.data.warnings : []
+    ticketImportModal.value = true
+  } catch (error) {
+    showTicketNotice(error.message || '票据识别失败')
+  } finally {
+    ticketUploadLoading.value = false
+    if (ticketFileInput.value) ticketFileInput.value.value = ''
+  }
+}
+
+const confirmTicketImport = async () => {
+  if (ticketImportLoading.value) return
+  let payload
+  try {
+    payload = parseTicketImportResponse(ticketImportJson.value)
+  } catch (error) {
+    ticketImportError.value = error.message
+    return
+  }
+
+  ticketImportError.value = ''
+  ticketImportLoading.value = true
+  try {
+    const result = await apiRequest('/api/user/bets/import-ticket', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })
+    if (!result?.success || !result?.data) {
+      throw new Error('保存失败')
+    }
+    await fetchRecords()
+    closeTicketImportModal()
+    showTicketNotice('票据已入库')
+  } catch (error) {
+    ticketImportError.value = error.message || '保存失败'
+  } finally {
+    ticketImportLoading.value = false
+  }
 }
 
 const imageBlobFromCanvas = canvas => new Promise((resolve, reject) => {

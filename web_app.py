@@ -7,6 +7,9 @@ from flask import Flask, render_template, jsonify, request, Response, stream_wit
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import wraps
+import base64
+import hashlib
+import json
 from bet_settlement import (
     available_bet_results,
     merge_database_results,
@@ -54,6 +57,7 @@ from wecom_notifier import (
     format_live_alert_message,
     format_review_message,
 )
+from json_repair import repair_json
 
 
 
@@ -3467,6 +3471,25 @@ POOL_NAMES = {
     'hafu': '半全场',
 }
 
+TICKET_IMAGE_MAX_BYTES = int(os.getenv('TICKET_IMAGE_MAX_BYTES', '8000000'))
+TICKET_IMAGE_MIME_TYPES = {
+    'image/png',
+    'image/jpeg',
+    'image/jpg',
+    'image/webp',
+}
+TICKET_RECOGNITION_PROMPT = (
+    '你是足彩竞彩票据结构化解析助手。只返回JSON，不要输出其他文字。'
+    '识别票据中的每一场投注，并输出：'
+    '{"selected_items":[...], "pass_counts":[...], "multiplier": 数字, "warnings":[...]}.'
+    ' selected_items中每项应为：'
+    '{"pool":"had|hhad|score|goals|hafu", "opt":"win|draw|lose 或对应玩法选项", '
+    '"label":"投注标签", "odd":赔率, "match":{"match_num":"周X001", "league":"联赛", '
+    '"home_team":"主队", "away_team":"客队", "date":"YYYY-MM-DD", "time":"HH:MM", "handicap":让球值}, '
+    '"match_num":"周X001"}'
+    ' pass_counts支持 1,2,3,4,5,6,7,8 与如“2串1/3串1”中的数字。'
+)
+
 
 def _settle_pending_calculator_bets(user_id=None):
     with settlement_lock:
@@ -3545,6 +3568,528 @@ def _attach_pending_database_results(records):
             'total': int(record.get('match_count') or 0),
         }
     return records
+
+
+def _safe_int(value, default=None):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _safe_float(value, default=None):
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _safe_text(value):
+    text = str(value or '').strip()
+    return text[:128]
+
+
+def _normalize_pass_count_value(value):
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    if '串' in text:
+        text = text.split('串')[0]
+    digits = re.findall(r'\d+', text)
+    if not digits:
+        return None
+    return _safe_int(digits[0], None)
+
+
+def _normalize_pool(value):
+    pool = str(value or '').strip().lower()
+    if not pool:
+        return ''
+    aliases = {
+        '胜平负': 'had',
+        '主流赛果': 'had',
+        'spf': 'had',
+        '胜平负赔率': 'had',
+        '让球胜平负': 'hhad',
+        '让胜平负': 'hhad',
+        '让球': 'hhad',
+        '让球胜平负赔率': 'hhad',
+        'hhad': 'hhad',
+        '比分': 'score',
+        '比 分': 'score',
+        'crs': 'score',
+        '总进球': 'goals',
+        '总进球数': 'goals',
+        'ttg': 'goals',
+        '半全场': 'hafu',
+        '半场胜平负': 'hafu',
+        '半全场胜平负': 'hafu',
+        'hafu': 'hafu',
+    }
+    if pool in aliases:
+        return aliases[pool]
+    return pool
+
+
+def _normalize_option(value, pool):
+    option = str(value or '').strip()
+    if not option:
+        return ''
+    clean = option.replace(' ', '').replace('\u3000', '')
+    if pool in {'had', 'hhad'}:
+        if clean in {'win', '主胜', '胜', '赢', 'W'}:
+            return 'win'
+        if clean in {'draw', '平', '和', 'D'}:
+            return 'draw'
+        if clean in {'lose', '客胜', '负', 'L'}:
+            return 'lose'
+        if pool == 'hhad' and '让' in clean:
+            if '平' in clean:
+                return 'draw'
+            if '负' in clean:
+                return 'lose'
+            if '胜' in clean:
+                return 'win'
+        return clean
+    if pool == 'goals':
+        if clean in {'7+', '7+球', '7', '7球'}:
+            return '7+'
+        if clean.endswith('球'):
+            clean = clean[:-1]
+        return clean
+    if pool == 'score':
+        if clean.endswith('球'):
+            clean = clean[:-1]
+        if clean and '胜其他' in clean:
+            return '胜其他'
+        if clean and '平其他' in clean:
+            return '平其他'
+        if clean and '负其他' in clean:
+            return '负其他'
+        return clean
+    if pool == 'hafu':
+        return clean
+    return option[:32]
+
+
+def _normalize_match_text(value):
+    return re.sub(r'\s+', '', str(value or '').strip().lower())
+
+
+def _extract_ark_text(response_data):
+    if isinstance(response_data.get('output_text'), str) and response_data.get('output_text').strip():
+        return response_data['output_text'].strip()
+    parts = []
+    for item in response_data.get('output') or []:
+        if not isinstance(item, dict):
+            continue
+        for content in item.get('content') or []:
+            if isinstance(content, dict):
+                value = content.get('text') or content.get('output_text')
+                if isinstance(value, str):
+                    parts.append(value)
+    if parts:
+        return '\n'.join(parts).strip()
+    choices = response_data.get('choices') or []
+    if choices and isinstance(choices[0], dict):
+        message = choices[0].get('message') or {}
+        if isinstance(message.get('content'), str):
+            return message['content'].strip()
+    return ''
+
+
+def _extract_json(payload_text):
+    text = str(payload_text or '').strip()
+    if text.startswith('```'):
+        text = re.sub(r'^```(?:json)?\s*', '', text, flags=re.I)
+        text = re.sub(r'\s*```$', '', text)
+    start, end = text.find('{'), text.rfind('}')
+    if start < 0 or end <= start:
+        raise FAEError('AI返回不是JSON对象')
+    source = text[start:end + 1]
+    try:
+        data = json.loads(source)
+    except json.JSONDecodeError as exc:
+        try:
+            data = repair_json(source, return_objects=True)
+        except Exception as exc2:
+            raise FAEError(f'AI输出JSON解析失败: {exc.msg}') from exc2
+    if not isinstance(data, dict):
+        raise FAEError('AI输出应为JSON对象')
+    return data
+
+
+def _collect_match_candidates(match_num, match_info):
+    if not mongo_storage:
+        return []
+    candidates = []
+    if match_num:
+        # 优先按场次匹配，通常场次（周X001）最稳定
+        candidates.extend(mongo_storage.get_matches({'match_number': match_num}))
+    if not candidates:
+        candidates.extend(mongo_storage.get_matches())
+    if not candidates:
+        return []
+
+    date_text = _safe_text(match_info.get('date'))
+    if date_text:
+        by_date = [item for item in candidates if _safe_text(item.get('owner_date'))[:10] == date_text[:10]]
+        if by_date:
+            candidates = by_date
+    return candidates
+
+
+def _build_ticket_match_id(item):
+    home_team = _normalize_match_text(item.get('home_team') or item.get('homeTeam') or '')
+    away_team = _normalize_match_text(item.get('away_team') or item.get('awayTeam') or '')
+    date_text = _safe_text(item.get('date') or '')
+    match_num = _normalize_match_text(item.get('match_num') or item.get('num') or '')
+    seed = '|'.join(filter(None, [date_text, match_num, home_team, away_team])) or str(uuid.uuid4())
+    return hashlib.sha1(seed.encode('utf-8')).hexdigest()[:24]
+
+
+def _resolve_ticket_match(item, warnings):
+    match_num = _safe_text((item.get('match') or {}).get('match_num') or item.get('match_num'))
+    match_info = {
+        'home_team': (item.get('match') or {}).get('home_team') or item.get('home_team'),
+        'away_team': (item.get('match') or {}).get('away_team') or item.get('away_team'),
+        'date': (item.get('match') or {}).get('date') or item.get('date'),
+    }
+    candidates = _collect_match_candidates(match_num, match_info)
+    if not candidates:
+        return item.get('match') if isinstance(item.get('match'), dict) else None
+
+    home_key = _normalize_match_text(match_info['home_team'])
+    away_key = _normalize_match_text(match_info['away_team'])
+    exact = []
+    if home_key and away_key:
+        for candidate in candidates:
+            candidate_home = _normalize_match_text(candidate.get('home_team'))
+            candidate_away = _normalize_match_text(candidate.get('away_team'))
+            if not candidate_home or not candidate_away:
+                continue
+            if (home_key == candidate_home and away_key == candidate_away):
+                exact.append((candidate, 100))
+            elif home_key == candidate_away and away_key == candidate_home:
+                exact.append((candidate, 60))
+
+    if exact:
+        best, score = sorted(exact, key=lambda it: it[1], reverse=True)[0]
+        if score == 100:
+            return best
+        if score < 100:
+            warnings.append('检测到主客队可能反向，请核对')
+            return best
+
+    scored = []
+    for candidate in candidates:
+        score = 0
+        if match_num and _normalize_match_text(candidate.get('match_number')) == _normalize_match_text(match_num):
+            score += 8
+        if match_num and _normalize_match_text(candidate.get('round_id')) == _normalize_match_text(match_num):
+            score += 8
+        if match_info['date'] and _safe_text(candidate.get('owner_date'))[:10] == _safe_text(match_info['date'])[:10]:
+            score += 5
+        home_candidate = _normalize_match_text(candidate.get('home_team'))
+        away_candidate = _normalize_match_text(candidate.get('away_team'))
+        if home_key and home_key == home_candidate:
+            score += 6
+        elif home_key and home_candidate and home_key in home_candidate:
+            score += 2
+        if away_key and away_key == away_candidate:
+            score += 6
+        elif away_key and away_candidate and away_key in away_candidate:
+            score += 2
+        scored.append((candidate, score))
+
+    scored.sort(key=lambda item: item[1], reverse=True)
+    if scored:
+        best, score = scored[0]
+        if score <= 0:
+            warnings.append('未能匹配到对应场次，默认保留票据中的场次字段')
+            return {
+                'match_number': match_num,
+                'owner_date': match_info.get('date'),
+                'home_team': match_info.get('home_team'),
+                'away_team': match_info.get('away_team'),
+            }
+        if len(scored) > 1 and scored[1][1] == score:
+            warnings.append('存在同名场次匹配，已按最高置信度匹配，建议核对')
+        return best
+    return {
+        'match_number': match_num,
+        'owner_date': match_info.get('date'),
+        'home_team': match_info.get('home_team'),
+        'away_team': match_info.get('away_team'),
+    }
+
+
+def _normalize_ticket_payload(data):
+    raw_items = data.get('selected_items') or []
+    if not isinstance(raw_items, list):
+        raise ValueError('识别结果缺少 selected_items')
+    if not raw_items:
+        raise ValueError('票据中未解析到投注项')
+
+    normalized_items = []
+    option_counts = {}
+    total_odds = 1.0
+    warnings = list(data.get('warnings') or [])
+
+    for item in raw_items:
+        if not isinstance(item, dict):
+            warnings.append('存在非结构化投注项，已跳过')
+            continue
+        pool = _normalize_pool(item.get('pool'))
+        if pool not in POOL_NAMES:
+            warnings.append(f'投注项玩法[{item.get("pool")}]不支持，已忽略')
+            continue
+        option = _normalize_option(item.get('opt') or item.get('label'), pool)
+        if not option:
+            warnings.append(f'{pool} 找不到可识别投注选项，已忽略')
+            continue
+        odds = _safe_float(item.get('odd'))
+        if odds is None:
+            warnings.append(f'{pool}-{option} 未识别赔率，已忽略')
+            continue
+        if odds <= 0 or odds > 10000:
+            warnings.append(f'{pool}-{option} 赔率异常 {odds}，已忽略')
+            continue
+
+        match_info = item.get('match') if isinstance(item.get('match'), dict) else {}
+        resolved = _resolve_ticket_match(item, warnings)
+        if isinstance(resolved, dict):
+            date_value = (
+                resolved.get('owner_date')
+                or resolved.get('date')
+                or match_info.get('date')
+                or ''
+            )
+            handicap = resolved.get('handicap')
+            if handicap is None:
+                handicap = item.get('handicap')
+            match_num = resolved.get('match_num') or resolved.get('match_number') or resolved.get('num') or match_info.get('match_num')
+            league = resolved.get('league') or match_info.get('league', '')
+            home_team = resolved.get('home_team') or resolved.get('homeTeam') or match_info.get('home_team') or item.get('home_team')
+            away_team = resolved.get('away_team') or resolved.get('awayTeam') or match_info.get('away_team') or item.get('away_team')
+            time_value = resolved.get('time') or match_info.get('time')
+            match_id = (
+                str(resolved.get('match_id') or '')
+                .strip()
+                or (
+                    str(resolved.get('id') or '').strip()
+                    if isinstance(resolved, dict) else ''
+                )
+            )
+        else:
+            date_value = item.get('date') or match_info.get('date')
+            handicap = item.get('handicap') or match_info.get('handicap')
+            match_num = match_info.get('match_num') or item.get('match_num')
+            league = match_info.get('league') or ''
+            home_team = match_info.get('home_team') or item.get('home_team') or ''
+            away_team = match_info.get('away_team') or item.get('away_team') or ''
+            time_value = match_info.get('time') or ''
+            match_id = ''
+
+        normalized_match = dict(resolved) if isinstance(resolved, dict) else {}
+        if not match_id:
+            match_id = _build_ticket_match_id({
+                'date': date_value,
+                'match_num': match_num,
+                'home_team': home_team,
+                'away_team': away_team,
+            })
+            warnings.append(f'场次{match_num or ""}未匹配到数据库比赛ID，已临时生成本地ID')
+        match_payload = {
+            'match_id': str(match_id)[:64],
+            'pool': pool,
+            'pool_name': POOL_NAMES[pool],
+            'opt': option[:32],
+            'label': str(item.get('label') or option)[:32],
+            'odd': round(odds, 2),
+            'match_num': str(normalized_match.get('match_num') or normalized_match.get('num') or match_num or '')[:32],
+            'league': _safe_text(league)[:64],
+            'home_team': _safe_text(home_team)[:64],
+            'away_team': _safe_text(away_team)[:64],
+            'date': _safe_text(date_value)[:16],
+            'time': _safe_text(time_value)[:16],
+            'handicap': _safe_float(handicap),
+            'match': {
+                'num': match_num,
+                'league': league,
+                'homeTeam': home_team,
+                'awayTeam': away_team,
+                'date': date_value,
+                'time': time_value,
+                'handicap': handicap,
+            },
+        }
+        normalized_items.append(match_payload)
+        option_counts[match_id] = option_counts.get(match_id, 0) + 1
+        total_odds *= odds
+
+    if not normalized_items:
+        raise ValueError('票据解析后未得到有效投注项')
+
+    try:
+        multiplier = _safe_int(data.get('multiplier'), 1) or 1
+    except Exception:
+        multiplier = 1
+    if multiplier < 1 or multiplier > 9999:
+        warnings.append('倍投超出范围，已重置为1')
+        multiplier = 1
+
+    raw_pass_counts = data.get('pass_counts') or []
+    if not isinstance(raw_pass_counts, list):
+        raise ValueError('过关方式格式错误')
+    normalized_pass_counts = []
+    for count in raw_pass_counts:
+        normalized = _normalize_pass_count_value(count)
+        if normalized is None:
+            continue
+        normalized_pass_counts.append(normalized)
+    normalized_pass_counts = sorted(set(normalized_pass_counts))
+    if not normalized_pass_counts:
+        raise ValueError('未识别到过关方式')
+    match_count = len(option_counts)
+    if not match_count:
+        raise ValueError('未识别到场次')
+    if any(count < 1 or count > match_count or count > 8 for count in normalized_pass_counts):
+        warnings.append('识别到的过关方式与场次不匹配，按实际场次数自动修正')
+        normalized_pass_counts = [count for count in normalized_pass_counts if 1 <= count <= match_count]
+        if not normalized_pass_counts:
+            raise ValueError('过关方式与场次不匹配')
+
+    notes = calculate_notes(normalized_items, normalized_pass_counts)
+    if notes < 1:
+        raise ValueError('无法计算注数，请手动核对票据')
+    stake = round(notes * 2 * multiplier, 2)
+    max_bonus = calculate_max_bonus(normalized_items, normalized_pass_counts, multiplier)
+    return {
+        'id': str(uuid.uuid4()),
+        'status': 'pending',
+        'multiplier': multiplier,
+        'pass_counts': normalized_pass_counts,
+        'selected_items': normalized_items,
+        'match_count': match_count,
+        'option_count': len(normalized_items),
+        'notes': notes,
+        'stake': stake,
+        'total_odds': round(total_odds, 2),
+        'max_bonus': max_bonus,
+        'description': '{}场 · {} · {}倍'.format(
+            match_count,
+            '，'.join(
+                '单关' if count == 1 else '{}串'.format(count)
+                for count in normalized_pass_counts
+            ),
+            multiplier,
+        ),
+        'created_at': datetime.utcnow().replace(microsecond=0).isoformat() + 'Z',
+        'warnings': warnings,
+    }
+
+
+def _call_ticket_vision(file_bytes, mime_type):
+    if not fae_ai_review_analyzer.client.configured:
+        raise ValueError('ARK 未配置，暂不支持图片识别')
+    data_url = 'data:{};base64,{}'.format(
+        mime_type or 'image/jpeg',
+        base64.b64encode(file_bytes).decode('ascii'),
+    )
+    payloads = []
+    client = fae_ai_review_analyzer.client
+    if client.api_mode == 'chat_completions':
+        payloads.append({
+            'url': f"{client.base_url}/chat/completions",
+            'payload': {
+                'model': client.model,
+                'messages': [{
+                    'role': 'user',
+                    'content': [
+                        {'type': 'text', 'text': TICKET_RECOGNITION_PROMPT},
+                        {'type': 'image_url', 'image_url': {'url': data_url}},
+                    ],
+                }],
+                'temperature': 0.1,
+                'response_format': {'type': 'json_object'},
+            },
+        })
+        payloads.append({
+            'url': f"{client.base_url}/chat/completions",
+            'payload': {
+                'model': client.model,
+                'messages': [{
+                    'role': 'user',
+                    'content': [
+                        {'type': 'text', 'text': TICKET_RECOGNITION_PROMPT},
+                        {'type': 'image_url', 'image_url': {'url': data_url, 'detail': 'high'}},
+                    ],
+                }],
+                'temperature': 0.1,
+            },
+        })
+    else:
+        payloads.append({
+            'url': f"{client.base_url}/responses",
+            'payload': {
+                'model': client.model,
+                'input': [{
+                    'role': 'user',
+                    'content': [
+                        {'type': 'input_text', 'text': TICKET_RECOGNITION_PROMPT},
+                        {'type': 'input_image', 'image_url': data_url},
+                    ],
+                }],
+                'temperature': 0.1,
+            },
+        })
+        payloads.append({
+            'url': f"{client.base_url}/responses",
+            'payload': {
+                'model': client.model,
+                'input': [{
+                    'role': 'user',
+                    'content': [
+                        {'type': 'input_text', 'text': TICKET_RECOGNITION_PROMPT},
+                        {'type': 'input_image', 'image_url': {'url': data_url}},
+                    ],
+                }],
+                'temperature': 0.1,
+            },
+        })
+
+    headers = {
+        'Authorization': f'Bearer {client.api_key}',
+        'Content-Type': 'application/json',
+    }
+    last_error = None
+    for item in payloads:
+        try:
+            resp = requests.post(
+                item['url'],
+                headers=headers,
+                json=item['payload'],
+                timeout=max(30, int(os.getenv('AI_REQUEST_TIMEOUT', '90'))),
+            )
+            if resp.status_code >= 400:
+                last_error = 'HTTP {}'.format(resp.status_code)
+                continue
+            text_data = resp.json()
+            text = _extract_ark_text(text_data)
+            if not text:
+                last_error = '模型返回为空'
+                continue
+            parsed = _extract_json(text)
+            if not isinstance(parsed, dict):
+                last_error = '模型返回非对象'
+                continue
+            return parsed
+        except Exception as exc:
+            last_error = str(exc)
+    raise ValueError('票据识别失败：{}'.format(last_error or '模型调用异常'))
 
 
 def _calculator_bet_payload(data):
@@ -3659,6 +4204,59 @@ def create_user_bet():
         bet = _calculator_bet_payload(request.get_json(silent=True) or {})
     except ValueError as exc:
         return jsonify({'success': False, 'message': str(exc)}), 400
+    saved = user_storage.create_bet(session['user_id'], bet)
+    return jsonify({'success': True, 'data': saved}), 201
+
+
+@app.route('/api/user/bets/recognize-ticket', methods=['POST'])
+@login_required
+def recognize_user_ticket():
+    """识别彩票图片，返回可入库的标准化投注单。"""
+    if 'file' not in request.files and 'image' not in request.files and 'ticket' not in request.files:
+        return jsonify({'success': False, 'message': '未检测到上传文件'}), 400
+
+    file = request.files.get('file') or request.files.get('image') or request.files.get('ticket')
+    if not file:
+        return jsonify({'success': False, 'message': '未检测到有效文件字段（支持 file/image/ticket）'}), 400
+
+    try:
+        mime_type = str(file.mimetype or '').lower()
+        file_bytes = file.read()
+    except Exception:
+        return jsonify({'success': False, 'message': '读取上传文件失败'}), 400
+
+    if not file_bytes:
+        return jsonify({'success': False, 'message': '文件为空'}), 400
+    if len(file_bytes) > TICKET_IMAGE_MAX_BYTES:
+        return jsonify({
+            'success': False,
+            'message': '图片过大，建议小于 {}MB'.format(TICKET_IMAGE_MAX_BYTES // 1024 // 1024),
+        }), 413
+    if mime_type and mime_type not in TICKET_IMAGE_MIME_TYPES:
+        return jsonify({
+            'success': False,
+            'message': '不支持的图片格式（支持 png/jpg/webp）',
+        }), 415
+
+    try:
+        parsed = _call_ticket_vision(file_bytes, mime_type or 'image/jpeg')
+        normalized = _normalize_ticket_payload(parsed)
+    except Exception as exc:
+        return jsonify({'success': False, 'message': f'票据识别失败：{str(exc)}'}), 502
+
+    return jsonify({'success': True, 'data': normalized})
+
+
+@app.route('/api/user/bets/import-ticket', methods=['POST'])
+@login_required
+def import_user_ticket_bet():
+    """将识别后的票据数据入库为投注记录。"""
+    try:
+        bet = _normalize_ticket_payload(request.get_json(silent=True) or {})
+    except ValueError as exc:
+        return jsonify({'success': False, 'message': str(exc)}), 400
+    except Exception as exc:
+        return jsonify({'success': False, 'message': f'入库数据异常：{str(exc)}'}), 400
     saved = user_storage.create_bet(session['user_id'], bet)
     return jsonify({'success': True, 'data': saved}), 201
 

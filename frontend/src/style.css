@@ -4337,6 +4337,11 @@ a { text-decoration: none; color: inherit; }
   margin: 18px 2px 10px;
 }
 
+.records-toolbar-actions {
+  display: flex;
+  gap: 6px;
+}
+
 .records-toolbar h2 {
   color: #333;
   font-size: 16px;
@@ -4354,6 +4359,12 @@ a { text-decoration: none; color: inherit; }
   background: #fff;
   border: 1px solid #f1b0b5;
   border-radius: 6px;
+}
+
+.ticket-upload-trigger {
+  color: #fff !important;
+  background: linear-gradient(90deg, #ff7079, #f23f4f) !important;
+  border: 0;
 }
 
 .records-filter {
@@ -4475,6 +4486,17 @@ a { text-decoration: none; color: inherit; }
   font-size: 20px;
   background: transparent;
   border: 0;
+}
+
+.ticket-upload-notice {
+  margin: -4px 2px 10px;
+  padding: 8px 12px;
+  color: #6b7178;
+  font-size: 12px;
+  text-align: center;
+  background: #f6f8f9;
+  border: 1px solid #e8eaec;
+  border-radius: 7px;
 }
 
 .record-description {
@@ -4639,6 +4661,157 @@ a { text-decoration: none; color: inherit; }
   background: rgb(34 34 34 / 88%);
   border-radius: 18px;
   box-shadow: 0 4px 14px rgb(0 0 0 / 18%);
+}
+
+.ticket-file-input {
+  display: none;
+}
+
+.ticket-import-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(0, 0, 0, 0.5);
+}
+
+.ticket-import-modal {
+  width: min(680px, 100%);
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: #fff;
+  border-radius: 10px;
+}
+
+.ticket-import-modal > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 12px 10px;
+  color: #333;
+  border-bottom: 1px solid #eee;
+}
+
+.ticket-import-modal > header h2 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.ticket-import-close {
+  width: 28px;
+  height: 28px;
+  color: #888;
+  font-size: 22px;
+  line-height: 1;
+  border: 0;
+  background: transparent;
+}
+
+.ticket-import-body {
+  flex: 1;
+  overflow: auto;
+  padding: 12px;
+}
+
+.ticket-import-tip {
+  margin-bottom: 8px;
+  color: #666;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.ticket-import-textarea {
+  width: 100%;
+  min-height: 280px;
+  padding: 10px;
+  color: #333;
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre;
+  border: 1px solid #e8eaec;
+  border-radius: 7px;
+  background: #fafbfc;
+}
+
+.ticket-import-textarea:focus {
+  outline: none;
+  border-color: #f33b48;
+  box-shadow: 0 0 0 3px rgba(243, 59, 72, 0.1);
+}
+
+.ticket-import-loading {
+  padding: 26px 6px;
+  text-align: center;
+  color: #999;
+  font-size: 13px;
+}
+
+.ticket-import-warnings {
+  margin-top: 10px;
+  padding: 10px;
+  border: 1px solid #f0d8a1;
+  border-radius: 7px;
+  background: #fff7e8;
+}
+
+.ticket-import-warnings strong {
+  display: block;
+  margin-bottom: 6px;
+  color: #b07009;
+  font-size: 12px;
+}
+
+.ticket-import-warnings ul {
+  margin: 0;
+  padding-left: 16px;
+  color: #866005;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.ticket-import-error {
+  margin-top: 10px;
+  padding: 8px 10px;
+  border-radius: 7px;
+  color: #b3202f;
+  background: #fff1f2;
+  border: 1px solid #ffcdd2;
+  font-size: 12px;
+}
+
+.ticket-import-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  padding: 12px;
+  border-top: 1px solid #eee;
+}
+
+.ticket-import-actions button {
+  min-width: 88px;
+  height: 34px;
+  padding: 0 12px;
+  border: 1px solid #ef3544;
+  border-radius: 6px;
+}
+
+.ticket-import-actions button:first-child {
+  color: #666;
+  background: #fff;
+}
+
+.ticket-import-actions button:last-child {
+  color: #fff;
+  background: linear-gradient(90deg, #ff4b55, #f33143);
+}
+
+.ticket-import-actions button:disabled {
+  opacity: 0.5;
 }
 
 .record-ticket-scroll {
