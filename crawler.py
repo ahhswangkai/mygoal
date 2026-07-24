@@ -26,6 +26,16 @@ def clean_asian_handicap(value):
     return re.sub(r'(?:[↑↓]|升|降)+$', '', text)
 
 
+def is_pregame_match(match):
+    """Only pre-match fixtures may update the stored closing odds."""
+    if not isinstance(match, dict):
+        return False
+    try:
+        return int(match.get('status')) == 0
+    except (TypeError, ValueError):
+        return False
+
+
 class FootballCrawler:
     """足球比赛和赔率数据爬虫"""
     

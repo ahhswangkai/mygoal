@@ -14,7 +14,7 @@ from bet_settlement import (
     settle_bet,
 )
 from calculator_math import calculate_max_bonus, calculate_notes
-from crawler import FootballCrawler
+from crawler import FootballCrawler, is_pregame_match
 from match_time_utils import sort_matches_by_datetime
 from user_storage import UserStorage
 from football_ai import (
@@ -2086,7 +2086,7 @@ def crawl_stream():
                 i = 0
                 for m in matches:
                     mid = m.get('match_id')
-                    if not mid:
+                    if not mid or not is_pregame_match(m):
                         continue
                     i += 1
                     futures[executor.submit(fetch, mid)] = m
@@ -2164,7 +2164,7 @@ def crawl_new_data():
             futures = {}
             for m in matches:
                 mid = m.get('match_id')
-                if not mid:
+                if not mid or not is_pregame_match(m):
                     continue
                 futures[executor.submit(fetch, mid)] = mid
             for fut in as_completed(futures):
@@ -2195,6 +2195,17 @@ def crawl_new_data():
 def crawl_match_odds(match_id):
     """API - 爬取指定比赛的赔率"""
     try:
+        existing_match = (
+            mongo_storage.get_match_by_id(match_id)
+            if mongo_storage else None
+        )
+        if existing_match and not is_pregame_match(existing_match):
+            return jsonify({
+                'success': False,
+                'message': '比赛已开赛，拒绝覆盖赛前即时盘',
+                'code': 'PREGAME_ODDS_LOCKED',
+            }), 409
+
         odds = crawler.crawl_match_odds(match_id)
         
         # 保存到MongoDB
@@ -2443,8 +2454,7 @@ def _crawl_latest():
             count = mongo_storage.save_matches(matches)
             print(f"✅ 定时任务: 已更新 {count} 场比赛基本信息")
         
-        # 3. 并发爬取赔率 (逻辑与 /api/crawl_stream 保持一致)
-        # 去掉时间限制，只要有未开始或进行中的比赛就爬取
+        # 3. 并发爬取赔率。开赛后锁定赛前即时盘，不再覆盖。
         workers = 8
         odds_count = 0
         
@@ -2455,10 +2465,8 @@ def _crawl_latest():
             futures = {}
             for m in matches:
                 mid = m.get('match_id')
-                status = m.get('status')
-                # 仅对未开始(0)或进行中(1)的比赛爬取赔率
-                # 相比 crawl_stream，这里保留了状态过滤，避免重复爬取已完场比赛的赔率
-                if mid and status in [0, 1]:
+                # 仅未开始比赛可更新；进行中和完场均保留赛前最后值。
+                if mid and is_pregame_match(m):
                     futures[executor.submit(fetch, mid)] = m
             
             for fut in as_completed(futures):

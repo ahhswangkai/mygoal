@@ -1,9 +1,17 @@
 import unittest
 
-from crawler import FootballCrawler
+from crawler import FootballCrawler, is_pregame_match
 
 
 class CrawlerResultTests(unittest.TestCase):
+    def test_only_status_zero_can_update_pregame_odds(self):
+        self.assertTrue(is_pregame_match({"status": 0}))
+        self.assertTrue(is_pregame_match({"status": "0"}))
+        self.assertFalse(is_pregame_match({"status": 1}))
+        self.assertFalse(is_pregame_match({"status": "1"}))
+        self.assertFalse(is_pregame_match({"status": 2}))
+        self.assertFalse(is_pregame_match({}))
+
     def test_json_match_parser_keeps_half_time_score(self):
         crawler = FootballCrawler()
         matches = crawler.parse_match_list_json({

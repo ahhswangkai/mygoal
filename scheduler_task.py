@@ -7,7 +7,7 @@
 from datetime import datetime, timedelta
 from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.cron import CronTrigger
-from crawler import FootballCrawler
+from crawler import FootballCrawler, is_pregame_match
 from db_storage import MongoDBStorage
 from utils import setup_logger
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -97,11 +97,14 @@ def smart_crawl_task():
         if fetch_odds and matches:
             logger.info(f"开始并发爬取详细赔率 (共 {len(matches)} 场)...")
             
-            # 过滤掉已完场且已有赔率的比赛，避免重复爬取？
-            # 暂时全量爬取以保证数据最新
-            
             with ThreadPoolExecutor(max_workers=5) as executor:
-                futures = {executor.submit(crawl_single_match_odds, m, logger, mongo_storage): m for m in matches}
+                futures = {
+                    executor.submit(
+                        crawl_single_match_odds, m, logger, mongo_storage
+                    ): m
+                    for m in matches
+                    if is_pregame_match(m)
+                }
                 
                 completed = 0
                 for future in as_completed(futures):
