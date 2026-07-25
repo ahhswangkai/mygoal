@@ -127,6 +127,16 @@ def _number(value: Any) -> Optional[float]:
         return None
 
 
+def _total_line_number(value: Any) -> Optional[float]:
+    text = re.sub(r"[↑↓升降]", "", str(value or "")).strip()
+    if not text:
+        return None
+    parts = [_number(item.strip()) for item in text.split("/")]
+    if not parts or any(item is None for item in parts):
+        return None
+    return round(sum(parts) / len(parts), 3)
+
+
 def _clean_handicap(value: Any) -> str:
     return re.sub(r"(?:[↑↓]|升|降)+$", "", str(value or "").strip())
 
@@ -247,8 +257,8 @@ def build_daily_match_input(
     """Create a compact, auditable input for the daily Ark request."""
     analysis = (fae_result or {}).get("analysis") or {}
     core = (fae_result or {}).get("core") or {}
-    initial_total = _number(match.get("ou_initial_total"))
-    current_total = _number(match.get("ou_current_total"))
+    initial_total = _total_line_number(match.get("ou_initial_total"))
+    current_total = _total_line_number(match.get("ou_current_total"))
     handicap_source = (
         match.get("hi_handicap_value")
         if match.get("hi_handicap_value") not in (None, "")

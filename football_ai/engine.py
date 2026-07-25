@@ -773,7 +773,7 @@ class FootballAIEngine:
         spread = max(probabilities.values()) - min(probabilities.values())
         euro_score = 30 if not euro_available else 55 + min(36, spread * 105 + len(movement.get("euro") or {}) * 2)
 
-        total_line = self._number(match.get("ou_current_total"))
+        total_line = self._total_line_number(match.get("ou_current_total"))
         total_signals = [s for s in signals if s["market"] == "total"]
         total_target = max(total_signals, key=lambda s: s["contribution"])["prediction"] if total_signals else None
         total_score = 30 if total_line is None else 54 + min(30, sum(s["strength"] for s in total_signals) * 0.18)
@@ -891,7 +891,7 @@ class FootballAIEngine:
         signals: List[Dict[str, Any]],
     ) -> List[Dict[str, Any]]:
         match = context.get("match") or {}
-        total_line = self._number(match.get("ou_current_total")) or 2.5
+        total_line = self._total_line_number(match.get("ou_current_total")) or 2.5
         total_shift = sum(
             (1 if s.get("prediction") == "over" else -1) * s["strength"] * s["weight"] / 1000
             for s in signals if s.get("market") == "total"
@@ -990,7 +990,7 @@ class FootballAIEngine:
                     other_keys=("win", "lose"),
                 )
 
-        total_line = self._number((context.get("match") or {}).get("ou_current_total"))
+        total_line = self._total_line_number((context.get("match") or {}).get("ou_current_total"))
         totals = {"over": 0.0, "push": 0.0, "under": 0.0}
         if total_line is not None:
             for row in distribution:
@@ -1309,7 +1309,7 @@ class FootballAIEngine:
         """Keep score suggestions consistent with the engine's primary market call."""
         primary = recommendation.get("primary")
         handicap = (context.get("markets") or {}).get("sporttery_handicap")
-        total_line = self._number((context.get("match") or {}).get("ou_current_total"))
+        total_line = self._total_line_number((context.get("match") or {}).get("ou_current_total"))
 
         def matches(row: Dict[str, Any]) -> bool:
             home, away = row["home"], row["away"]
@@ -1566,7 +1566,7 @@ class FootballAIEngine:
             movement["asian"] = asian
 
         total = {}
-        line_item = cls._numeric_change(match.get("ou_initial_total"), match.get("ou_current_total"))
+        line_item = cls._total_line_change(match.get("ou_initial_total"), match.get("ou_current_total"))
         if line_item:
             total["line"] = line_item
         for side in ("over", "under"):
@@ -1623,6 +1623,29 @@ class FootballAIEngine:
             "change": change,
             "direction": "升" if change > 0 else "降" if change < 0 else "不变",
         }
+
+    @classmethod
+    def _total_line_change(cls, initial: Any, current: Any) -> Optional[Dict[str, Any]]:
+        initial_number = cls._total_line_number(initial)
+        current_number = cls._total_line_number(current)
+        if initial_number is None or current_number is None:
+            return None
+        change = round(current_number - initial_number, 3)
+        return {
+            "initial": initial_number, "current": current_number,
+            "change": change,
+            "direction": "升" if change > 0 else "降" if change < 0 else "不变",
+        }
+
+    @classmethod
+    def _total_line_number(cls, value: Any) -> Optional[float]:
+        text = re.sub(r"[↑↓升降]", "", str(value or "")).strip()
+        if not text:
+            return None
+        parts = [cls._number(item.strip()) for item in text.split("/")]
+        if not parts or any(item is None for item in parts):
+            return None
+        return round(sum(parts) / len(parts), 3)
 
     @staticmethod
     def _number(value: Any) -> Optional[float]:

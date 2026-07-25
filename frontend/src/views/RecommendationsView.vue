@@ -261,7 +261,7 @@
                     <span>竞彩 {{ signedHandicap(item.input_snapshot?.sporttery_handicap?.value) }}</span>
                     <b>{{ triplet(item.input_snapshot?.sporttery_handicap?.current) }}</b>
                   </p>
-                  <p><span>大小球</span><b>{{ triplet(item.input_snapshot?.total?.current) }}</b></p>
+                  <p><span>大小球</span><b>{{ totalTriplet(item.input_snapshot?.total?.current) }}</b></p>
                 </div>
                 <div class="daily-value-grid">
                   <p><span>FAE概率</span><b>{{ item.analysis?.prediction_probability ?? '--' }}%</b></p>
@@ -1063,6 +1063,31 @@ function displayDailyText(value) {
 function triplet(values) {
   if (!Array.isArray(values)) return '--'
   return values.map(value => value ?? '--').join(' / ')
+}
+
+function totalTriplet(values) {
+  if (!Array.isArray(values)) return '--'
+  const normalized = [...values]
+  if (normalized.length > 1) normalized[1] = formatTotalLine(normalized[1])
+  return triplet(normalized)
+}
+
+function formatTotalLine(value) {
+  const raw = String(value ?? '').replace(/[↑↓升降]/g, '').trim()
+  if (!raw) return value ?? '--'
+  const slashParts = raw.split('/').map(item => Number(item.trim()))
+  if (slashParts.length > 1 && slashParts.every(Number.isFinite)) {
+    return Number((slashParts.reduce((sum, item) => sum + item, 0) / slashParts.length).toFixed(2))
+  }
+  const lowHigh = raw.match(/^([1-4])([1-4]\.5)$/)
+  if (lowHigh) {
+    return Number(((Number(lowHigh[1]) + Number(lowHigh[2])) / 2).toFixed(2))
+  }
+  const highLow = raw.match(/^([1-4]\.5)([1-4])$/)
+  if (highLow) {
+    return Number(((Number(highLow[1]) + Number(highLow[2])) / 2).toFixed(2))
+  }
+  return value ?? '--'
 }
 
 function signedHandicap(value) {
