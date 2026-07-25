@@ -866,9 +866,7 @@ const dateOptions = Array.from({ length: 7 }, (_, index) => {
 
 const dailyPoolLabels = {
   core: '重点推荐',
-  handicap_draw: '重点让平',
   handicap_lose: '重点让负',
-  draw: '普通平局',
   away_small_win: '客队小胜',
   avoid: '建议避开'
 }
