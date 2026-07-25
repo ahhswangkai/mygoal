@@ -50,7 +50,11 @@
               </div>
               <div class="daily-detail-result">
                 <div class="daily-detail-picks">
-                  <strong v-if="dailyAiContent.no_bet" class="daily-no-bet"><small>结论</small>不下注</strong>
+                  <strong v-if="dailyAiPrimaryRadar" class="daily-radar-main">
+                    <small>{{ radarTierLabel(dailyAiPrimaryRadar.tier) }}</small>{{ dailyAiPrimaryRadar.selection }}
+                  </strong>
+                  <strong v-else-if="dailyAiContent.no_bet" class="daily-no-bet"><small>结论</small>不下注</strong>
+                  <span v-if="dailyAiPrimaryRadar"><small>总盘结论</small>{{ dailyAiContent.decision || '观望' }}</span>
                   <span><small>赛果预测</small>{{ dailyAiContent.predicted_result || '观望' }}</span>
                   <strong><small>主选</small>{{ dailyAiContent.primary_play || '观望' }}</strong>
                   <span v-if="dailyAiContent.secondary_play && dailyAiContent.secondary_play !== '观望'">
@@ -60,7 +64,7 @@
                     <small>让球</small>{{ dailyAiContent.handicap_play }}
                   </span>
                 </div>
-                <b>{{ dailyAiContent.no_bet ? '方向观察' : (dailyAiContent.star_text || starText(dailyAiContent.rating)) }}</b>
+                <b>{{ dailyAiPrimaryRadar ? starText(dailyAiPrimaryRadar.rating) : dailyAiContent.no_bet ? '方向观察' : (dailyAiContent.star_text || starText(dailyAiContent.rating)) }}</b>
               </div>
               <div
                 v-if="dailyAiContent.consistency_guard?.triggered"
@@ -73,6 +77,28 @@
                 </span>
               </div>
               <p class="daily-detail-verdict">{{ dailyAiContent.verdict }}</p>
+              <div v-if="dailyAiRadarRows.length" class="daily-radar-detail">
+                <header>
+                  <strong>平 / 让平雷达</strong>
+                  <span>独立精确进球差扫描</span>
+                </header>
+                <p
+                  v-for="radar in dailyAiRadarRows"
+                  :key="radar.model_key"
+                  :class="radar.tier"
+                >
+                  <span>
+                    <b>{{ radar.selection }}</b>
+                    <i>{{ radarTierLabel(radar.tier) }}</i>
+                    <strong>{{ starText(radar.rating) }}</strong>
+                  </span>
+                  <small>
+                    {{ radar.definition }} · 概率 {{ percentText(radar.probability) }} ·
+                    赔率 {{ radar.odds ?? '--' }} · 价值 {{ signedMetric(radar.odds_value) }}%
+                  </small>
+                  <em>{{ radar.reason }}</em>
+                </p>
+              </div>
               <div class="daily-detail-odds">
                 <p><span>欧赔</span><b>{{ triplet(dailyAiSnapshot.euro?.current) }}</b></p>
                 <p><span>亚盘</span><b>{{ triplet(dailyAiSnapshot.asian?.current) }}</b></p>
@@ -88,7 +114,10 @@
                 <p><span>价值指数</span><b>{{ dailyAiContent.value_score ?? '--' }}分</b></p>
                 <p><span>盘口可信</span><b>{{ dailyAiContent.market_confidence?.score ?? '--' }}分</b></p>
                 <p><span>投注分</span><b>{{ dailyAiContent.bet_score ?? '--' }}分</b></p>
-                <p><span>投注结论</span><b :class="{ danger: dailyAiContent.no_bet }">{{ dailyAiContent.decision || '观望' }}</b></p>
+                <p>
+                  <span>{{ dailyAiPrimaryRadar ? '总盘结论' : '投注结论' }}</span>
+                  <b :class="{ danger: dailyAiContent.no_bet }">{{ dailyAiContent.decision || '观望' }}</b>
+                </p>
               </div>
               <HistoricalGoalMarginCard
                 :model="dailyAiSnapshot.historical_goal_margin_model"
@@ -379,6 +408,16 @@ let fetchVersion = 0
 const aiContent = computed(() => aiAnalysis.value?.analysis || null)
 const dailyAiContent = computed(() => dailyAiAnalysis.value?.analysis || null)
 const dailyAiSnapshot = computed(() => dailyAiAnalysis.value?.input_snapshot || {})
+const dailyAiRadarRows = computed(() => {
+  const radar = dailyAiContent.value?.draw_radar || {}
+  return ['handicap_draw', 'ordinary_draw']
+    .map(key => radar[key])
+    .filter(item => item && item.tier && item.tier !== 'exclude')
+    .sort((left, right) => radarTierWeight(right.tier) - radarTierWeight(left.tier))
+})
+const dailyAiPrimaryRadar = computed(() => (
+  dailyAiRadarRows.value.find(item => item.tier === 'core') || null
+))
 const dailyAiMarkets = [
   { key: 'euro', label: '欧赔方向' },
   { key: 'asian', label: '亚盘升深' },
@@ -606,6 +645,16 @@ const starText = value => {
   const stars = Math.floor(rating)
   const text = '★'.repeat(stars) + '☆'.repeat(5 - stars)
   return Number.isInteger(rating) ? text : `${text} · ${rating}星`
+}
+const radarTierWeight = tier => ({ core: 2, watch: 1 }[tier] || 0)
+const radarTierLabel = tier => ({ core: '核心', watch: '观察' }[tier] || '观察')
+const percentText = value => {
+  const number = Number(value)
+  return Number.isFinite(number) ? `${Number.isInteger(number) ? number : number.toFixed(1)}%` : '--'
+}
+const signedMetric = value => {
+  const number = Number(value || 0)
+  return `${number > 0 ? '+' : ''}${number}`
 }
 const triplet = values => Array.isArray(values)
   ? values.map(value => value ?? '--').join(' / ')
@@ -893,6 +942,18 @@ onMounted(fetchAll)
   border-radius: 6px;
 }
 
+.daily-detail-picks .daily-radar-main {
+  color: #fff;
+  padding: 4px 8px;
+  font-size: 15px;
+  background: linear-gradient(135deg, #ff5962, #ee2e42);
+  border-radius: 6px;
+}
+
+.daily-detail-picks .daily-radar-main small {
+  color: #ffe5e9;
+}
+
 .daily-detail-picks .daily-no-bet small {
   color: #d9dce1;
 }
@@ -953,6 +1014,86 @@ onMounted(fetchAll)
   font-size: 14px;
   line-height: 1.85;
   text-align: justify;
+}
+
+.daily-radar-detail {
+  margin-top: 11px;
+  padding: 10px;
+  background: #fff8f9;
+  border: 1px solid #f1e1e5;
+  border-radius: 8px;
+}
+
+.daily-radar-detail header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.daily-radar-detail header strong {
+  color: var(--detail-accent);
+  font-size: 13px;
+}
+
+.daily-radar-detail header span {
+  color: #a0a5ad;
+  font-size: 10px;
+}
+
+.daily-radar-detail p {
+  margin: 0;
+  padding: 8px 0;
+  border-top: 1px dashed #ead8dd;
+}
+
+.daily-radar-detail p:first-of-type {
+  border-top: 0;
+}
+
+.daily-radar-detail p > span {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.daily-radar-detail p b {
+  color: #333941;
+  font-size: 14px;
+}
+
+.daily-radar-detail p i {
+  padding: 2px 5px;
+  color: #8c641e;
+  font-size: 10px;
+  font-style: normal;
+  background: #fff4d8;
+  border-radius: 4px;
+}
+
+.daily-radar-detail p.core i {
+  color: #fff;
+  background: var(--detail-accent);
+}
+
+.daily-radar-detail p strong {
+  margin-left: auto;
+  color: var(--detail-accent);
+  font-size: 13px;
+}
+
+.daily-radar-detail small,
+.daily-radar-detail em {
+  display: block;
+  margin-top: 5px;
+  color: #777d85;
+  font-size: 11px;
+  line-height: 1.55;
+  font-style: normal;
+}
+
+.daily-radar-detail em {
+  color: #5f666f;
 }
 
 .daily-detail-odds {
