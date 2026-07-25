@@ -64,14 +64,31 @@
                 研判时间 {{ formatAiTime(faeDailyAi.generated_at) }}
               </small>
             </div>
-            <button
-              v-if="dailyAiCanManage"
-              type="button"
-              :disabled="dailyAiBusy"
-              @click="runDailyAi(true)"
-            >
-              {{ dailyAiBusy ? '研判中…' : '重新研判' }}
-            </button>
+            <div v-if="dailyAiCanManage" class="daily-ai-run-controls">
+              <label class="draw-policy-label" for="drawSelectionPolicy">
+                平/让平策略
+                <select
+                  id="drawSelectionPolicy"
+                  v-model="drawSelectionPolicy"
+                  :disabled="dailyAiBusy"
+                >
+                  <option
+                    v-for="option in drawSelectionPolicyOptions"
+                    :key="option.value"
+                    :value="option.value"
+                  >
+                    {{ option.label }}
+                  </option>
+                </select>
+              </label>
+              <button
+                type="button"
+                :disabled="dailyAiBusy"
+                @click="runDailyAi(true)"
+              >
+                {{ dailyAiBusy ? '研判中…' : '重新研判' }}
+              </button>
+            </div>
           </header>
 
           <div class="daily-ai-summary">
@@ -318,6 +335,22 @@
           <strong>当天还没有火山全日研判</strong>
           <p v-if="!dailyAiConfigured">请先在服务器配置 ARK_API_KEY。</p>
           <p v-else>系统会在每日定时时间自动运行，也可由管理账号立即生成。</p>
+          <label v-if="dailyAiCanManage" class="draw-policy-label draw-policy-label-inline" for="drawSelectionPolicyEmpty">
+            平/让平策略
+            <select
+              id="drawSelectionPolicyEmpty"
+              v-model="drawSelectionPolicy"
+              :disabled="dailyAiBusy"
+            >
+              <option
+                v-for="option in drawSelectionPolicyOptions"
+                :key="option.value"
+                :value="option.value"
+              >
+                {{ option.label }}
+              </option>
+            </select>
+          </label>
           <button
             v-if="dailyAiCanManage && dailyAiConfigured"
             type="button"
@@ -839,6 +872,13 @@ const skillBusy = ref(false)
 const skillMessage = ref('')
 const skillError = ref('')
 const skillConfirmation = ref(null)
+const drawSelectionPolicy = ref('conservative')
+const drawSelectionPolicyOptions = [
+  { value: 'conservative', label: '保守（更稳）' },
+  { value: 'balanced', label: '平衡（均衡）' },
+  { value: 'aggressive', label: '激进（更强）' }
+]
+const drawSelectionPolicyValues = drawSelectionPolicyOptions.map(item => item.value)
 let requestController = null
 
 const formatDateParam = date => {
@@ -985,6 +1025,14 @@ async function fetchData() {
     faeDailyAi.value = dailyAiResponse.ok && dailyAiPayload.success
       ? dailyAiPayload.data
       : null
+    const policyFromServer = (
+      dailyAiPayload.data?.draw_selection_policy
+      || dailyAiPayload.draw_selection_policy
+      || 'conservative'
+    )
+    if (drawSelectionPolicyValues.includes(policyFromServer)) {
+      drawSelectionPolicy.value = policyFromServer
+    }
     dailyAiConfigured.value = Boolean(
       dailyAiPayload.configured || reviewPayload.ai_review_configured
     )
@@ -1101,6 +1149,7 @@ async function runDailyAi(force) {
       body: JSON.stringify({
         date: selectedDate.value,
         force,
+        draw_selection_policy: drawSelectionPolicy.value,
         push_wecom: true
       })
     })
@@ -1520,7 +1569,40 @@ onBeforeUnmount(() => requestController?.abort())
   box-shadow: 0 5px 18px rgb(57 31 37 / 6%);
 }
 
-.daily-ai-heading > button,
+.daily-ai-run-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.draw-policy-label {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 10px;
+  color: #666;
+}
+
+.draw-policy-label select {
+  min-width: 96px;
+  max-width: 116px;
+  padding: 5px 8px;
+  color: #444;
+  font-size: 11px;
+  border: 1px solid #f0dbe0;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.draw-policy-label-inline {
+  margin-bottom: 8px;
+}
+
+.draw-policy-label-inline select {
+  max-width: 146px;
+}
+
+.daily-ai-run-controls > button,
 .daily-ai-empty > button {
   padding: 7px 10px;
   color: #fff;
@@ -1531,7 +1613,7 @@ onBeforeUnmount(() => requestController?.abort())
   border-radius: 15px;
 }
 
-.daily-ai-heading > button:disabled,
+.daily-ai-run-controls > button:disabled,
 .daily-ai-empty > button:disabled {
   opacity: .55;
 }

@@ -17,30 +17,95 @@ from .version import ENGINE_VERSION
 
 DAILY_PROMPT_VERSION = "five-market-daily-v13-historical-market-rules"
 
-DRAW_SELECTION_MIN_PROBABILITY = {
-    "平局": 29.0,
-    "让平": 29.0,
+DRAW_SELECTION_POLICY_DEFAULT = "conservative"
+
+# 通过可切换策略统一控制平/让平的门槛。便于AB测试、回测复盘和线上快速回退。
+DRAW_SELECTION_POLICIES = {
+    "conservative": {
+        "min_probability": {"平局": 29.0, "让平": 29.0},
+        "core_score": {"平局": 74.0, "让平": 76.0},
+        "watch_score": {"平局": 63.0, "让平": 66.0},
+        "min_value": {"平局": 0.0, "让平": 2.0},
+        "min_sample": {"平局": 24.0, "让平": 28.0},
+        "max_risk_ids": {"平局": 1, "让平": 2},
+        "draw_upgrade_gap_from_draw": {"平局": 15.0, "让平": 17.0},
+        "draw_upgrade_from_non_draw": {
+            "best_score_min": 72.0,
+            "best_value_min": 60.0,
+            "score_gap_min": 18.0,
+            "value_gap_min": 8.0,
+        },
+    },
+    "balanced": {
+        "min_probability": {"平局": 27.0, "让平": 28.0},
+        "core_score": {"平局": 72.0, "让平": 74.0},
+        "watch_score": {"平局": 62.0, "让平": 64.0},
+        "min_value": {"平局": 1.0, "让平": 1.5},
+        "min_sample": {"平局": 22.0, "让平": 24.0},
+        "max_risk_ids": {"平局": 2, "让平": 3},
+        "draw_upgrade_gap_from_draw": {"平局": 14.0, "让平": 16.0},
+        "draw_upgrade_from_non_draw": {
+            "best_score_min": 70.0,
+            "best_value_min": 58.0,
+            "score_gap_min": 16.0,
+            "value_gap_min": 6.0,
+        },
+    },
+    "aggressive": {
+        "min_probability": {"平局": 25.0, "让平": 26.0},
+        "core_score": {"平局": 68.0, "让平": 70.0},
+        "watch_score": {"平局": 60.0, "让平": 62.0},
+        "min_value": {"平局": 0.8, "让平": 1.2},
+        "min_sample": {"平局": 18.0, "让平": 20.0},
+        "max_risk_ids": {"平局": 3, "让平": 4},
+        "draw_upgrade_gap_from_draw": {"平局": 12.0, "让平": 14.0},
+        "draw_upgrade_from_non_draw": {
+            "best_score_min": 66.0,
+            "best_value_min": 56.0,
+            "score_gap_min": 14.0,
+            "value_gap_min": 4.0,
+        },
+    },
 }
-DRAW_SELECTION_CORE_SCORE = {
-    "平局": 74.0,
-    "让平": 76.0,
-}
-DRAW_SELECTION_WATCH_SCORE = {
-    "平局": 63.0,
-    "让平": 66.0,
-}
-DRAW_SELECTION_MIN_VALUE = {
-    "平局": 0.0,
-    "让平": 2.0,
-}
-DRAW_SELECTION_MIN_SAMPLE = {
-    "平局": 24.0,
-    "让平": 28.0,
-}
-DRAW_SELECTION_MAX_RISK_IDS = {
-    "平局": 1,
-    "让平": 2,
-}
+
+DRAW_SELECTION_MIN_PROBABILITY = DRAW_SELECTION_POLICIES[
+    DRAW_SELECTION_POLICY_DEFAULT
+]["min_probability"]
+DRAW_SELECTION_CORE_SCORE = DRAW_SELECTION_POLICIES[
+    DRAW_SELECTION_POLICY_DEFAULT
+]["core_score"]
+DRAW_SELECTION_WATCH_SCORE = DRAW_SELECTION_POLICIES[
+    DRAW_SELECTION_POLICY_DEFAULT
+]["watch_score"]
+DRAW_SELECTION_MIN_VALUE = DRAW_SELECTION_POLICIES[
+    DRAW_SELECTION_POLICY_DEFAULT
+]["min_value"]
+DRAW_SELECTION_MIN_SAMPLE = DRAW_SELECTION_POLICIES[
+    DRAW_SELECTION_POLICY_DEFAULT
+]["min_sample"]
+DRAW_SELECTION_MAX_RISK_IDS = DRAW_SELECTION_POLICIES[
+    DRAW_SELECTION_POLICY_DEFAULT
+]["max_risk_ids"]
+
+
+def normalize_draw_selection_policy(value: Any) -> str:
+    policy = str(value or "").strip().lower().replace("-", "_")
+    if policy in {"", "default", "conserv", "strict", "safe"}:
+        return "conservative"
+    if policy in {"normal", "moderate", "balanced", "middle"}:
+        return "balanced"
+    if policy in {"aggressive", "high", "wide"}:
+        return "aggressive"
+    if policy not in DRAW_SELECTION_POLICIES:
+        return DRAW_SELECTION_POLICY_DEFAULT
+    return policy
+
+
+def draw_selection_policy_profile(policy: Any) -> Dict[str, Any]:
+    return DRAW_SELECTION_POLICIES.get(
+        normalize_draw_selection_policy(policy),
+        DRAW_SELECTION_POLICIES[DRAW_SELECTION_POLICY_DEFAULT],
+    )
 
 HANDICAP_VALUES = {
     "平手": 0.0, "平/半": 0.25, "平手/半球": 0.25,
@@ -177,6 +242,7 @@ def build_daily_match_input(
     league_profile: Optional[Dict[str, Any]] = None,
     goal_margin_model: Optional[Dict[str, Any]] = None,
     source_analysis: Optional[Dict[str, Any]] = None,
+    draw_selection_policy: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Create a compact, auditable input for the daily Ark request."""
     analysis = (fae_result or {}).get("analysis") or {}
@@ -241,6 +307,9 @@ def build_daily_match_input(
     return {
         "match_id": str(match.get("match_id") or ""),
         "match_number": match.get("match_number") or match.get("round_id"),
+        "draw_selection_policy": normalize_draw_selection_policy(
+            draw_selection_policy
+        ),
         "league": match.get("league"),
         "match_time": match.get("match_time"),
         "home_team": match.get("home_team"),
@@ -366,17 +435,20 @@ class FAEDailyAIAnalyzer:
         owner_date: str,
         match_inputs: Iterable[Dict[str, Any]],
         review_memory: Optional[Dict[str, Any]] = None,
+        draw_selection_policy: Optional[str] = None,
     ) -> str:
         """Stable cache key for one day's exact market snapshot."""
         rows = sorted(
             [dict(item) for item in match_inputs if item.get("match_id")],
             key=lambda item: str(item.get("match_id") or ""),
         )
+        policy = normalize_draw_selection_policy(draw_selection_policy)
         return sha256(json.dumps(
             {
                 "date": str(owner_date)[:10],
                 "prompt_version": DAILY_PROMPT_VERSION,
                 "model": self.client.model,
+                "draw_selection_policy": policy,
                 "matches": rows,
                 "review_memory": review_memory or {},
             },
@@ -457,8 +529,12 @@ class FAEDailyAIAnalyzer:
         batch_cache_get: Optional[Callable[[str], Optional[Dict[str, Any]]]] = None,
         batch_cache_save: Optional[Callable[[Dict[str, Any]], Any]] = None,
         review_memory: Optional[Dict[str, Any]] = None,
+        draw_selection_policy: Optional[str] = None,
     ) -> Dict[str, Any]:
         rows = [dict(item) for item in match_inputs if item.get("match_id")]
+        policy = normalize_draw_selection_policy(draw_selection_policy)
+        for item in rows:
+            item["draw_selection_policy"] = policy
         if not rows:
             raise FAEOutputError("当天没有可分析的比赛")
         if not self.configured:
@@ -660,7 +736,10 @@ class FAEDailyAIAnalyzer:
             daily_summary, stored_matches
         )
         input_hash = self.input_hash(
-            owner_date, rows, review_memory=memory
+            owner_date,
+            rows,
+            review_memory=memory,
+            draw_selection_policy=policy,
         )
         generated_at = datetime.now(timezone.utc).isoformat()
         run_id = f"{str(owner_date)[:10]}-{input_hash[:16]}"
@@ -676,6 +755,7 @@ class FAEDailyAIAnalyzer:
         return {
             "run_id": run_id,
             "owner_date": str(owner_date)[:10],
+            "draw_selection_policy": policy,
             "engine_version": ENGINE_VERSION,
             "model": self.client.model,
             "provider": "volcengine-ark",
@@ -1331,6 +1411,9 @@ class FAEDailyAIAnalyzer:
     ) -> Dict[str, Any]:
         """Conservatively calibrate draw plays with similar finished matches."""
         result = dict(profile or {})
+        policy = draw_selection_policy_profile(
+            (source or {}).get("draw_selection_policy")
+        )
         key = {
             "平局": "ordinary_draw",
             "让平": "handicap_draw",
@@ -1402,7 +1485,10 @@ class FAEDailyAIAnalyzer:
         ]
         metric_label = str(result.get("label") or "")
         effective_sample = _number(metric.get("effective_sample"))
-        minimum_sample = DRAW_SELECTION_MIN_SAMPLE.get(metric_label)
+        minimum_sample = (
+            _number(policy.get("min_sample", {}).get(metric_label))
+            or _number(DRAW_SELECTION_MIN_SAMPLE.get(metric_label))
+        )
         if minimum_sample is not None:
             if effective_sample is None or effective_sample < minimum_sample:
                 reasons.append("历史样本不足，不作为单场主推")
@@ -1633,11 +1719,30 @@ class FAEDailyAIAnalyzer:
             score -= 8
         score = round(max(0, min(99, score)))
 
-        min_probability = DRAW_SELECTION_MIN_PROBABILITY.get(selection, 23)
-        min_score = DRAW_SELECTION_CORE_SCORE.get(selection, 70)
-        min_watch_score = DRAW_SELECTION_WATCH_SCORE.get(selection, 52)
-        min_value = DRAW_SELECTION_MIN_VALUE.get(selection, 0)
-        max_risk_count = DRAW_SELECTION_MAX_RISK_IDS.get(selection, 2)
+        policy = draw_selection_policy_profile(
+            (source or {}).get("draw_selection_policy")
+        )
+        min_probability = (
+            _number(policy.get("min_probability", {}).get(selection))
+            or DRAW_SELECTION_MIN_PROBABILITY.get(selection, 23)
+        )
+        min_score = (
+            _number(policy.get("core_score", {}).get(selection))
+            or DRAW_SELECTION_CORE_SCORE.get(selection, 70)
+        )
+        min_watch_score = (
+            _number(policy.get("watch_score", {}).get(selection))
+            or DRAW_SELECTION_WATCH_SCORE.get(selection, 52)
+        )
+        min_value = (
+            _number(policy.get("min_value", {}).get(selection))
+            or DRAW_SELECTION_MIN_VALUE.get(selection, 0)
+        )
+        max_risk_count = (
+            int(policy.get("max_risk_ids", {}).get(selection, 2))
+            if isinstance(policy.get("max_risk_ids", {}).get(selection, 2), int)
+            else DRAW_SELECTION_MAX_RISK_IDS.get(selection, 2)
+        )
         core = bool(
             history_eligible
             and probability is not None
@@ -1911,6 +2016,7 @@ class FAEDailyAIAnalyzer:
         model_selection: str,
     ) -> tuple[str, Dict[str, Any]]:
         """Prefer a materially stronger bettable option over raw prediction."""
+        policy = draw_selection_policy_profile((source or {}).get("draw_selection_policy"))
         allowed = {"主胜", "平局", "客胜", "让胜", "让平", "让负"}
         categories = [
             cls._historical_adjusted_profile(source, dict(item))
@@ -2005,27 +2111,42 @@ class FAEDailyAIAnalyzer:
         if best_selection in {"平局", "让平"}:
             if model_selection in {"平局", "让平"}:
                 draw_upgrade = False
-                gap = 15 if best_selection == "平局" else 17
+                gap = float(
+                    policy.get("draw_upgrade_gap_from_draw", {}).get(
+                        best_selection, 15
+                    )
+                )
                 if (
                     base_triggered
                     and best_score - current_score >= gap
-                    and best_value_score >= 58
+                    and best_value_score >= float(
+                        policy.get("draw_upgrade_from_non_draw", {}).get(
+                            "best_value_min", 58
+                        )
+                    )
                     and best_odds_value is not None
-                    and best_odds_value >= DRAW_SELECTION_MIN_VALUE.get(
-                        best_selection, 0
+                    and best_odds_value >= (
+                        float(policy.get("min_value", {}).get(best_selection, 0))
+                        if best_selection in {"平局", "让平"}
+                        else 0
                     )
                 ):
                     draw_upgrade = True
                 triggered = draw_upgrade
             else:
+                upgrade_policy = policy.get("draw_upgrade_from_non_draw", {})
                 draw_upgrade = (
-                    best_score >= 72
-                    and best_value_score >= 60
-                    and best_value_score - current_value_profile >= 8
-                    and best_score - current_score >= 18
+                    best_score >= float(upgrade_policy.get("best_score_min", 72))
+                    and best_value_score >= float(upgrade_policy.get("best_value_min", 60))
+                    and best_value_score - current_value_profile >= float(
+                        upgrade_policy.get("value_gap_min", 8)
+                    )
+                    and best_score - current_score >= float(
+                        upgrade_policy.get("score_gap_min", 18)
+                    )
                     and best_odds_value is not None
-                    and best_odds_value >= DRAW_SELECTION_MIN_VALUE.get(
-                        best_selection, 0
+                    and best_odds_value >= float(
+                        policy.get("min_value", {}).get(best_selection, 0)
                     )
                     and "数据缺失" not in str(best_profile.get("no_bet_reasons") or "")
                 )
@@ -2037,7 +2158,9 @@ class FAEDailyAIAnalyzer:
             triggered
             and best_selection in {"平局", "让平"}
             and best_odds_value is not None
-            and best_odds_value < DRAW_SELECTION_MIN_VALUE.get(best_selection, 0)
+            and best_odds_value < float(
+                policy.get("min_value", {}).get(best_selection, 0)
+            )
         ):
             triggered = False
         if not triggered:

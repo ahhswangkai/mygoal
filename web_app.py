@@ -1093,6 +1093,7 @@ def _build_daily_ai_inputs(
     matches,
     league_profiles=None,
     goal_margin_models=None,
+    draw_selection_policy=None,
 ):
     """Build current deterministic FAE snapshots without making per-match LLM calls."""
     rule_weights = (
@@ -1133,11 +1134,16 @@ def _build_daily_ai_inputs(
                 str(match.get('match_id') or '')
             ),
             source_analysis=source_analysis,
+            draw_selection_policy=draw_selection_policy,
         ))
     return rows
 
 
-def _run_fae_daily_ai(owner_date, force=False):
+def _run_fae_daily_ai(
+    owner_date,
+    force=False,
+    draw_selection_policy=None,
+):
     """Send the whole day's current market snapshot to Ark and persist per match."""
     if not mongo_storage:
         raise FAEError('MongoDB不可用')
@@ -1192,12 +1198,14 @@ def _run_fae_daily_ai(owner_date, force=False):
         matches,
         league_profiles=league_profiles,
         goal_margin_models=goal_margin_models,
+        draw_selection_policy=draw_selection_policy,
     )
     review_memory = mongo_storage.get_fae_review_memory(date_str)
     input_hash = fae_daily_ai_analyzer.input_hash(
         date_str,
         match_inputs,
         review_memory=review_memory,
+        draw_selection_policy=draw_selection_policy,
     )
     cached = mongo_storage.get_fae_daily_ai_run(
         date_str, input_hash=input_hash
@@ -1233,6 +1241,7 @@ def _run_fae_daily_ai(owner_date, force=False):
             batch_cache_get=mongo_storage.get_fae_daily_ai_batch,
             batch_cache_save=mongo_storage.save_fae_daily_ai_batch,
             review_memory=review_memory,
+            draw_selection_policy=draw_selection_policy,
         )
         result = fae_daily_ai_analyzer.merge_retained_matches(
             result, retained_matches
@@ -1706,8 +1715,15 @@ def run_fae_daily_ai():
     date_str = str(
         payload.get('date') or datetime.now().strftime('%Y-%m-%d')
     )[:10]
+    draw_selection_policy = payload.get('draw_selection_policy')
+    if draw_selection_policy is None:
+        draw_selection_policy = payload.get('draw_policy')
     try:
-        data = _run_fae_daily_ai(date_str, force=bool(payload.get('force')))
+        data = _run_fae_daily_ai(
+            date_str,
+            force=bool(payload.get('force')),
+            draw_selection_policy=draw_selection_policy,
+        )
         wecom_delivery = (
             _push_wecom_daily_ai(data)
             if payload.get('push_wecom') is not False else None
@@ -1717,6 +1733,7 @@ def run_fae_daily_ai():
             'data': data,
             'cache_hit': bool(data.get('cache_hit')),
             'wecom_delivery': wecom_delivery,
+            'draw_selection_policy': data.get('draw_selection_policy'),
             'message': (
                 '赔率数据未变化，已返回上次全日研判'
                 if data.get('cache_hit')
