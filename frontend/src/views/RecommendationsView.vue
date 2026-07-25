@@ -112,10 +112,10 @@
           <section v-if="drawRadarGroups.length" class="draw-radar-panel">
             <header>
               <div>
-                <strong>平 / 让平雷达</strong>
-                <small>独立扫描副选与精确进球差，不再被主推荐过滤</small>
+                <strong>平 / 让平概率排行榜</strong>
+                <small>按 FAE 估算概率降序，独立展示普通平局与竞彩让平</small>
               </div>
-              <span>核心可组单 · 观察只复盘</span>
+              <span>核心优先 · 观察复盘</span>
             </header>
             <div class="draw-radar-groups">
               <article v-for="group in drawRadarGroups" :key="group.key">
@@ -124,11 +124,12 @@
                   <small>排除 {{ group.excluded }} 场</small>
                 </div>
                 <button
-                  v-for="item in group.items"
+                  v-for="(item, index) in group.items"
                   :key="`${group.key}-${item.match_id}`"
                   type="button"
                   @click="goToDetail(item.match_id)"
                 >
+                  <i class="draw-radar-rank">{{ index + 1 }}</i>
                   <span class="draw-radar-match">
                     <b>{{ dailyMatch(item.match_id).match_number }}</b>
                     <span>
@@ -908,13 +909,13 @@ const drawRadarGroups = computed(() => {
   return [
     {
       key: 'ordinary_draw',
-      title: '普通平局',
+      title: '最可能平局',
       excluded: radar.excluded_count?.ordinary_draw || 0,
       items: radar.ordinary_draw || []
     },
     {
       key: 'handicap_draw',
-      title: '竞彩让平',
+      title: '最可能让平',
       excluded: radar.excluded_count?.handicap_draw || 0,
       items: radar.handicap_draw || []
     }
@@ -922,6 +923,8 @@ const drawRadarGroups = computed(() => {
     ...group,
     items: group.items.filter(item => (
       !dailyMatch(item.match_id).retained_from_pregame
+    )).sort((left, right) => (
+      Number(right.probability || 0) - Number(left.probability || 0)
     ))
   })).filter(group => group.items.length)
 })
@@ -1743,7 +1746,7 @@ onBeforeUnmount(() => requestController?.abort())
 
 .draw-radar-groups button {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: 24px minmax(0, 1fr) auto;
   gap: 4px 7px;
   width: 100%;
   padding: 8px 0;
@@ -1751,6 +1754,20 @@ onBeforeUnmount(() => requestController?.abort())
   background: none;
   border: 0;
   border-top: 1px dashed #e9dfe2;
+}
+
+.draw-radar-rank {
+  display: inline-grid;
+  width: 20px;
+  height: 20px;
+  place-items: center;
+  color: #e53955;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 700;
+  background: #fff1f4;
+  border: 1px solid #f4d8de;
+  border-radius: 50%;
 }
 
 .draw-radar-match {
@@ -1814,7 +1831,7 @@ onBeforeUnmount(() => requestController?.abort())
 
 .draw-radar-metrics {
   display: flex;
-  grid-column: 1 / 3;
+  grid-column: 2 / 4;
   flex-wrap: wrap;
   gap: 4px 8px;
 }
@@ -1834,7 +1851,7 @@ onBeforeUnmount(() => requestController?.abort())
 }
 
 .draw-radar-reason {
-  grid-column: 1 / 3;
+  grid-column: 2 / 4;
   color: #8f878d;
   font-size: 9px;
   line-height: 1.45;
