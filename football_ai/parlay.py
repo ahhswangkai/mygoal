@@ -47,7 +47,9 @@ def _prepare_candidates(
             risk_score = _number((raw.get("risk") or {}).get("score")) or 0
             odds = _number(raw.get("odds"))
             implied_probability = 100 / odds if odds and odds > 1 else None
-            if implied_probability is not None and probability <= implied_probability:
+            if implied_probability is not None and (
+                probability - implied_probability < 2.0
+            ):
                 continue
             strategy_weight = max(
                 0.70, min(1.30, _number(weights.get(category)) or 1.0)

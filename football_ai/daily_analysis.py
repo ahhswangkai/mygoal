@@ -18,28 +18,28 @@ from .version import ENGINE_VERSION
 DAILY_PROMPT_VERSION = "five-market-daily-v13-historical-market-rules"
 
 DRAW_SELECTION_MIN_PROBABILITY = {
-    "平局": 27.0,
-    "让平": 27.0,
+    "平局": 29.0,
+    "让平": 29.0,
 }
 DRAW_SELECTION_CORE_SCORE = {
-    "平局": 72.0,
-    "让平": 74.0,
+    "平局": 74.0,
+    "让平": 76.0,
 }
 DRAW_SELECTION_WATCH_SCORE = {
-    "平局": 62.0,
-    "让平": 64.0,
+    "平局": 63.0,
+    "让平": 66.0,
 }
 DRAW_SELECTION_MIN_VALUE = {
     "平局": 0.0,
-    "让平": 1.5,
+    "让平": 2.0,
 }
 DRAW_SELECTION_MIN_SAMPLE = {
-    "平局": 20.0,
-    "让平": 24.0,
+    "平局": 24.0,
+    "让平": 28.0,
 }
 DRAW_SELECTION_MAX_RISK_IDS = {
-    "平局": 2,
-    "让平": 3,
+    "平局": 1,
+    "让平": 2,
 }
 
 HANDICAP_VALUES = {
@@ -2005,7 +2005,7 @@ class FAEDailyAIAnalyzer:
         if best_selection in {"平局", "让平"}:
             if model_selection in {"平局", "让平"}:
                 draw_upgrade = False
-                gap = 14 if best_selection == "平局" else 16
+                gap = 15 if best_selection == "平局" else 17
                 if (
                     base_triggered
                     and best_score - current_score >= gap
@@ -2019,10 +2019,10 @@ class FAEDailyAIAnalyzer:
                 triggered = draw_upgrade
             else:
                 draw_upgrade = (
-                    best_score >= 70
-                    and best_value_score >= 58
-                    and best_value_score - current_value_profile >= 7
-                    and best_score - current_score >= 16
+                    best_score >= 72
+                    and best_value_score >= 60
+                    and best_value_score - current_value_profile >= 8
+                    and best_score - current_score >= 18
                     and best_odds_value is not None
                     and best_odds_value >= DRAW_SELECTION_MIN_VALUE.get(
                         best_selection, 0
