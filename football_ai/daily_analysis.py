@@ -15,7 +15,7 @@ from .provider import ArkNarrativeClient, FAEError, FAEOutputError
 from .version import ENGINE_VERSION
 
 
-DAILY_PROMPT_VERSION = "five-market-daily-v13-historical-market-rules"
+DAILY_PROMPT_VERSION = "five-market-daily-v14-draw-miss-correction"
 
 DRAW_SELECTION_POLICY_DEFAULT = "conservative"
 
@@ -1554,6 +1554,84 @@ class FAEDailyAIAnalyzer:
         )
         return cls._historical_adjusted_profile(source, profile)
 
+    @staticmethod
+    def _favorite_market_profile(source: Dict[str, Any]) -> Dict[str, Any]:
+        """Return the current 1X2 favorite used by draw radar context rules."""
+        current = ((source.get("euro") or {}).get("current") or [])
+        if len(current) < 3:
+            return {}
+        odds = [_number(value) for value in current[:3]]
+        if any(value is None or value <= 1 for value in odds):
+            return {}
+        index = min(range(3), key=lambda item: odds[item])
+        return {
+            "side": ("home", "draw", "away")[index],
+            "odds": odds[index],
+            "draw_odds": odds[1],
+        }
+
+    @classmethod
+    def _draw_radar_context_signal(
+        cls,
+        source: Dict[str, Any],
+        selection: str,
+        risk_ids: Iterable[str],
+    ) -> Dict[str, Any]:
+        """Add context for strong-favorite non-cover spots.
+
+        Historical odds-band filters are useful, but they were too blunt for
+        cases like 203/204: a low-priced favorite combined with shallow or
+        unstable handicap movement should stay visible in the draw radar
+        instead of being filtered only because the favorite is short-priced.
+        """
+        risk_set = {str(value) for value in risk_ids or []}
+        unstable_risks = {
+            "handicap_retreat",
+            "upper_water_rise",
+            "water_drop_without_deepen",
+            "euro_asian_divergence",
+            "overheated_shallow",
+        }
+        if not (risk_set & unstable_risks):
+            return {}
+
+        favorite = cls._favorite_market_profile(source)
+        favorite_side = favorite.get("side")
+        favorite_odds = _number(favorite.get("odds"))
+        if favorite_side not in {"home", "away"} or favorite_odds is None:
+            return {}
+
+        handicap = _number(
+            (source.get("sporttery_handicap") or {}).get("value")
+        )
+        if selection == "让平":
+            favorite_matches_exact_margin = (
+                (
+                    favorite_side == "away"
+                    and handicap is not None
+                    and handicap > 0
+                )
+                or (
+                    favorite_side == "home"
+                    and handicap is not None
+                    and handicap < 0
+                )
+            )
+            if favorite_matches_exact_margin and favorite_odds <= 1.70:
+                return {
+                    "role": "强热门只赢一球风险",
+                    "score_bonus": 8.0 if favorite_odds < 1.50 else 6.0,
+                    "note": "强热门方向占优但盘口不稳，按只赢一球纳入让平雷达",
+                }
+
+        if selection == "平局" and favorite_odds < 1.50:
+            return {
+                "role": "热门不穿平局风险",
+                "score_bonus": 12.0,
+                "note": "低赔热门遇到不稳盘口，普通平不得被强热门过滤规则直接压掉",
+            }
+        return {}
+
     @classmethod
     def _draw_radar_candidate(
         cls,
@@ -1678,6 +1756,15 @@ class FAEDailyAIAnalyzer:
         relevant_risks = [
             value for value in risk_ids if value in draw_risk_ids
         ]
+        context_signal = cls._draw_radar_context_signal(
+            source, selection, relevant_risks
+        )
+        context_note = ""
+        if context_signal:
+            role = str(context_signal.get("role") or "").strip()
+            if role:
+                role_signals.append(role)
+            context_note = str(context_signal.get("note") or "").strip()
         role_bonus = min(12, len(role_signals) * 6)
         risk_bonus = min(5, len(relevant_risks) * 2)
         value_adjustment = max(
@@ -1706,6 +1793,7 @@ class FAEDailyAIAnalyzer:
             + value_adjustment
             + history_adjustment
             + max(-4.0, min(6.0, historical_rule_adjustment * 1.2))
+            + float(context_signal.get("score_bonus") or 0)
         )
         if metric.get("confidence") == "高":
             score += 3
@@ -1829,6 +1917,8 @@ class FAEDailyAIAnalyzer:
             )
         if relevant_risks:
             reason_parts.append("存在热门方不稳盘口信号")
+        if context_note:
+            reason_parts.append(context_note)
         if matched_historical_rules:
             reason_parts.append(
                 "历史赔率规则{}项，概率修正{:+g}个百分点".format(

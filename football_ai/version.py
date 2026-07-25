@@ -2,7 +2,7 @@
 
 ENGINE_NAME = "Football AI Engine"
 ENGINE_CODE = "FAE"
-ENGINE_VERSION = "2.7.0"
+ENGINE_VERSION = "2.7.1"
 SCHEMA_VERSION = "2.5"
 
 DIMENSION_WEIGHTS = {
@@ -72,6 +72,7 @@ VERSION_MANIFEST = {
         "上盘水位风险归因、联赛同类模式不穿率及研判复盘闭环",
         "普通平局与竞彩让平独立雷达、核心/观察分层及赛后单独结算",
         "历史赔率区间、让球数、联赛与初即时变化的保守概率校准",
+        "强热门不穿场景下的普通平/竞彩让平雷达纠偏",
     ],
     "learning_policy": {
         "minimum_samples": 10,
