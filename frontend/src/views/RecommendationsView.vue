@@ -157,6 +157,157 @@
             <p>{{ faeDailyAi.daily_summary?.draw_radar?.policy }}</p>
           </section>
 
+          <section v-if="upsetWarningItems.length" class="draw-radar-panel upset-warning-panel">
+            <header>
+              <div>
+                <strong>爆冷预警榜</strong>
+                <small>先识别热门不稳，再决定是否防平/让平</small>
+              </div>
+              <span>80+ 重点防冷</span>
+            </header>
+            <div class="draw-radar-groups upset-warning-list">
+              <article>
+                <button
+                  v-for="(item, index) in upsetWarningItems"
+                  :key="`upset-${item.match_id}`"
+                  type="button"
+                  @click="goToDetail(item.match_id)"
+                >
+                  <i class="draw-radar-rank">{{ index + 1 }}</i>
+                  <span class="draw-radar-match">
+                    <b>{{ dailyMatch(item.match_id).match_number }}</b>
+                    <span>
+                      {{ dailyMatch(item.match_id).home_team }}
+                      vs
+                      {{ dailyMatch(item.match_id).away_team }}
+                    </span>
+                    <small>
+                      热门 {{ item.favorite_team || '--' }} ·
+                      防 {{ item.suggested_defenses?.join(' / ') || '--' }}
+                    </small>
+                  </span>
+                  <span class="draw-radar-decision league-index-value">
+                    <i :class="upsetLevelClass(item.score)">爆冷</i>
+                    <b>{{ item.score ?? '--' }}分</b>
+                  </span>
+                  <span class="draw-radar-metrics">
+                    <i v-for="label in item.factor_labels || []" :key="label">
+                      {{ label }}
+                    </i>
+                  </span>
+                  <small class="draw-radar-reason">{{ item.reason || item.level }}</small>
+                </button>
+              </article>
+            </div>
+            <p>{{ faeDailyAi.daily_summary?.upset_warning?.policy }}</p>
+          </section>
+
+          <section v-if="oddsBandGroups.length" class="draw-radar-panel odds-band-panel">
+            <header>
+              <div>
+                <strong>赔率区间指标</strong>
+                <small>热门过热、下盘爆冷、让平价值</small>
+              </div>
+              <span>区间扫描 · 不直接投注</span>
+            </header>
+            <div class="draw-radar-groups">
+              <article v-for="group in oddsBandGroups" :key="group.key">
+                <div class="draw-radar-title">
+                  <strong>{{ group.title }}</strong>
+                  <small>Top {{ group.items.length }}</small>
+                </div>
+                <button
+                  v-for="(item, index) in group.items"
+                  :key="`${group.key}-${item.match_id}`"
+                  type="button"
+                  @click="goToDetail(item.match_id)"
+                >
+                  <i class="draw-radar-rank">{{ index + 1 }}</i>
+                  <span class="draw-radar-match">
+                    <b>{{ dailyMatch(item.match_id).match_number }}</b>
+                    <span>
+                      {{ dailyMatch(item.match_id).home_team }}
+                      vs
+                      {{ dailyMatch(item.match_id).away_team }}
+                    </span>
+                    <small>
+                      热门 {{ item.favorite_team || '--' }}
+                      <template v-if="item.favorite_odds">
+                        · {{ item.favorite_odds }}
+                      </template>
+                      <template v-if="item.favorite_band">
+                        · {{ item.favorite_band }}
+                      </template>
+                    </small>
+                  </span>
+                  <span class="draw-radar-decision league-index-value">
+                    <i :class="leagueIndexClass(item.index)">{{ item.level || '指数' }}</i>
+                    <b>{{ item.index ?? '--' }}分</b>
+                  </span>
+                  <span class="draw-radar-metrics">
+                    <i>平赔 {{ item.draw_odds ?? '--' }}</i>
+                    <i>让平 {{ item.handicap_draw_odds ?? '--' }}</i>
+                    <i v-if="item.suggested_focus?.length">
+                      {{ item.suggested_focus.join(' / ') }}
+                    </i>
+                  </span>
+                  <small class="draw-radar-reason">{{ item.reason }}</small>
+                </button>
+              </article>
+            </div>
+            <p>{{ faeDailyAi.daily_summary?.odds_band_indicators?.policy }}</p>
+          </section>
+
+          <section v-if="leagueModelGroups.length" class="draw-radar-panel league-model-panel">
+            <header>
+              <div>
+                <strong>联赛模板指数榜</strong>
+                <small>平局、让平、大小球、冷门四个筛选指数</small>
+              </div>
+              <span>只作筛选 · 不直接投注</span>
+            </header>
+            <div class="draw-radar-groups">
+              <article v-for="group in leagueModelGroups" :key="group.key">
+                <div class="draw-radar-title">
+                  <strong>{{ group.title }}</strong>
+                  <small>Top {{ group.items.length }}</small>
+                </div>
+                <button
+                  v-for="(item, index) in group.items"
+                  :key="`${group.key}-${item.match_id}`"
+                  type="button"
+                  @click="goToDetail(item.match_id)"
+                >
+                  <i class="draw-radar-rank">{{ index + 1 }}</i>
+                  <span class="draw-radar-match">
+                    <b>{{ dailyMatch(item.match_id).match_number }}</b>
+                    <span>
+                      {{ dailyMatch(item.match_id).home_team }}
+                      vs
+                      {{ dailyMatch(item.match_id).away_team }}
+                    </span>
+                    <small>
+                      {{ item.league_label || item.league }} · {{ item.selection }}
+                      <template v-if="item.score_templates?.length">
+                        · {{ item.score_templates.join(' / ') }}
+                      </template>
+                    </small>
+                  </span>
+                  <span class="draw-radar-decision league-index-value">
+                    <i :class="leagueIndexClass(item.index)">指数</i>
+                    <b>{{ item.index ?? '--' }}分</b>
+                  </span>
+                  <span class="draw-radar-metrics">
+                    <i>{{ item.style }}</i>
+                    <i v-if="item.conditions?.length">{{ item.conditions[0] }}</i>
+                  </span>
+                  <small class="draw-radar-reason">{{ item.reason }}</small>
+                </button>
+              </article>
+            </div>
+            <p>{{ faeDailyAi.daily_summary?.league_model_rankings?.policy }}</p>
+          </section>
+
           <div v-if="dailyPoolGroups.length" class="daily-pools">
             <section v-for="group in dailyPoolGroups" :key="group.key">
               <h2>{{ group.title }}</h2>
@@ -926,6 +1077,44 @@ const drawRadarGroups = computed(() => {
     ))
   })).filter(group => group.items.length)
 })
+const leagueModelGroups = computed(() => {
+  const source = faeDailyAi.value?.daily_summary?.league_model_rankings || {}
+  return [
+    { key: 'handicap_draw', title: '让平指数', items: source.handicap_draw || [] },
+    { key: 'draw', title: '平局指数', items: source.draw || [] },
+    { key: 'total', title: '大小球指数', items: source.total || [] },
+    { key: 'upset', title: '冷门指数', items: source.upset || [] }
+  ].map(group => ({
+    ...group,
+    items: group.items.filter(item => (
+      !dailyMatch(item.match_id).retained_from_pregame
+    )).sort((left, right) => (
+      Number(right.index || 0) - Number(left.index || 0)
+    ))
+  })).filter(group => group.items.length)
+})
+const upsetWarningItems = computed(() => (
+  faeDailyAi.value?.daily_summary?.upset_warning?.items || []
+).filter(item => (
+  !dailyMatch(item.match_id).retained_from_pregame
+)).sort((left, right) => (
+  Number(right.score || 0) - Number(left.score || 0)
+)))
+const oddsBandGroups = computed(() => {
+  const source = faeDailyAi.value?.daily_summary?.odds_band_indicators || {}
+  return [
+    { key: 'favorite_heat', title: '热门过热指数', items: source.favorite_heat || [] },
+    { key: 'underdog_upset', title: '下盘爆冷指数', items: source.underdog_upset || [] },
+    { key: 'handicap_draw_value', title: '让平价值指数', items: source.handicap_draw_value || [] }
+  ].map(group => ({
+    ...group,
+    items: group.items.filter(item => (
+      !dailyMatch(item.match_id).retained_from_pregame
+    )).sort((left, right) => (
+      Number(right.index || 0) - Number(left.index || 0)
+    ))
+  })).filter(group => group.items.length)
+})
 const historicalModelCount = computed(() => (
   faeDailyAi.value?.matches || []
 ).filter(item => item.input_snapshot?.historical_goal_margin_model?.version).length)
@@ -1197,6 +1386,20 @@ function signedMetric(value) {
 function metricClass(value) {
   const number = Number(value || 0)
   return number > 0 ? 'positive' : number < 0 ? 'negative' : ''
+}
+
+function leagueIndexClass(value) {
+  const number = Number(value || 0)
+  if (number >= 75) return 'core'
+  if (number >= 65) return 'watch'
+  return ''
+}
+
+function upsetLevelClass(value) {
+  const number = Number(value || 0)
+  if (number >= 80) return 'core'
+  if (number >= 60) return 'watch'
+  return ''
 }
 
 function strategyWeight(selection) {
@@ -1725,6 +1928,10 @@ onBeforeUnmount(() => requestController?.abort())
   border-radius: 8px;
 }
 
+.upset-warning-list article {
+  grid-column: 1 / -1;
+}
+
 .draw-radar-title {
   display: flex;
   align-items: center;
@@ -1821,10 +2028,19 @@ onBeforeUnmount(() => requestController?.abort())
   background: #e53955;
 }
 
+.league-index-value i.watch {
+  color: #c67812;
+  background: #fff0d7;
+}
+
 .draw-radar-decision b {
   color: #e53955;
   font-size: 10px;
   white-space: nowrap;
+}
+
+.league-model-panel .draw-radar-decision b {
+  color: #30343b;
 }
 
 .draw-radar-metrics {

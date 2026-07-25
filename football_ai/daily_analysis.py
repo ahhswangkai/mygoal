@@ -15,7 +15,7 @@ from .provider import ArkNarrativeClient, FAEError, FAEOutputError
 from .version import ENGINE_VERSION
 
 
-DAILY_PROMPT_VERSION = "five-market-daily-v14-draw-miss-correction"
+DAILY_PROMPT_VERSION = "five-market-daily-v18-odds-band-upset-scanner"
 
 DRAW_SELECTION_POLICY_DEFAULT = "conservative"
 
@@ -139,6 +139,1198 @@ def _total_line_number(value: Any) -> Optional[float]:
 
 def _clean_handicap(value: Any) -> str:
     return re.sub(r"(?:[↑↓]|升|降)+$", "", str(value or "").strip())
+
+
+LEAGUE_TACTICAL_MODEL_VERSION = "league-tactical-model-v1"
+UPSET_WARNING_MODEL_VERSION = "upset-warning-v1"
+ODDS_BAND_MODEL_VERSION = "odds-band-model-v1"
+
+LEAGUE_TACTICAL_TEMPLATES = {
+    "k_league": {
+        "aliases": ("K1联赛", "K联赛", "韩K联", "韩职"),
+        "label": "K联赛",
+        "style": "节奏慢、防守强、平局多",
+        "draw_base": 72,
+        "handicap_draw_base": 74,
+        "over_base": 38,
+        "under_base": 72,
+        "upset_base": 58,
+        "total_direction": "小球",
+        "score_templates": ["1:1", "1:0", "0:0"],
+    },
+    "finland_veikkausliiga": {
+        "aliases": ("芬超", "芬兰超"),
+        "label": "芬超",
+        "style": "开放、进球多、强弱明显",
+        "draw_base": 50,
+        "handicap_draw_base": 62,
+        "over_base": 64,
+        "under_base": 42,
+        "upset_base": 48,
+        "total_direction": "大球",
+        "score_templates": ["2:1", "2:2", "3:1"],
+    },
+    "sweden_allsvenskan": {
+        "aliases": ("瑞典超",),
+        "label": "瑞典超",
+        "style": "攻防开放、主场强",
+        "draw_base": 56,
+        "handicap_draw_base": 64,
+        "over_base": 68,
+        "under_base": 40,
+        "upset_base": 50,
+        "total_direction": "大球",
+        "score_templates": ["2:1", "1:1", "3:1"],
+    },
+    "norway_eliteserien": {
+        "aliases": ("挪超",),
+        "label": "挪超",
+        "style": "高节奏、高进球",
+        "draw_base": 44,
+        "handicap_draw_base": 70,
+        "over_base": 72,
+        "under_base": 36,
+        "upset_base": 52,
+        "total_direction": "大球",
+        "score_templates": ["2:1", "3:1", "2:2"],
+    },
+    "brazil_serie_a": {
+        "aliases": ("巴甲",),
+        "label": "巴甲",
+        "style": "平局多、防守博弈",
+        "draw_base": 74,
+        "handicap_draw_base": 58,
+        "over_base": 36,
+        "under_base": 74,
+        "upset_base": 60,
+        "total_direction": "小球",
+        "score_templates": ["1:1", "1:0", "0:0"],
+    },
+    "mls": {
+        "aliases": ("美职联", "MLS"),
+        "label": "MLS",
+        "style": "开放、进球多、盘口容易深",
+        "draw_base": 58,
+        "handicap_draw_base": 68,
+        "over_base": 76,
+        "under_base": 34,
+        "upset_base": 54,
+        "total_direction": "大球",
+        "score_templates": ["2:1", "2:2", "3:2"],
+    },
+}
+
+
+def _league_tactical_template(league: Any) -> Optional[Dict[str, Any]]:
+    text = str(league or "").strip()
+    if not text:
+        return None
+    for key, template in LEAGUE_TACTICAL_TEMPLATES.items():
+        if any(alias and alias in text for alias in template["aliases"]):
+            return {"key": key, **template}
+    return None
+
+
+def _clamp_index(value: Any) -> int:
+    return int(round(max(0, min(99, float(value or 0)))))
+
+
+def _market_no_vig(values: Iterable[Any]) -> List[Optional[float]]:
+    numbers = [_number(value) for value in values]
+    if any(value is None or value <= 1 for value in numbers):
+        return [None for _ in numbers]
+    inverse = [1 / float(value) for value in numbers]  # type: ignore[arg-type]
+    total = sum(inverse)
+    if not total:
+        return [None for _ in numbers]
+    return [round(value / total * 100, 2) for value in inverse]
+
+
+def _rank_gap(rank: Dict[str, Any]) -> Optional[float]:
+    home = _number(rank.get("home"))
+    away = _number(rank.get("away"))
+    if home is None or away is None:
+        return None
+    return abs(home - away)
+
+
+def _handicap_value_from_text(value: Any) -> Optional[float]:
+    text = re.sub(r"\s+", "", _clean_handicap(value))
+    if not text:
+        return None
+    numeric = _number(text)
+    if numeric is not None and re.fullmatch(r"[+-]?\d+(?:\.\d+)?", text):
+        return numeric
+    receiving = text.startswith("受")
+    key = text[1:] if receiving else text
+    if key not in HANDICAP_VALUES:
+        return None
+    return -HANDICAP_VALUES[key] if receiving else HANDICAP_VALUES[key]
+
+
+def _build_league_tactical_model(
+    match: Dict[str, Any],
+    probabilities: Dict[str, Any],
+    sporttery_handicap: Optional[float],
+    current_total: Optional[float],
+    current_asian_risk: Dict[str, Any],
+    rank: Dict[str, Any],
+) -> Dict[str, Any]:
+    template = _league_tactical_template(match.get("league"))
+    if not template:
+        return {
+            "version": LEAGUE_TACTICAL_MODEL_VERSION,
+            "matched": False,
+            "league": match.get("league"),
+            "message": "当前联赛暂无固定模板，仅使用盘口和历史样本模型",
+        }
+
+    euro_probs = _market_no_vig([
+        match.get("euro_current_win"),
+        match.get("euro_current_draw"),
+        match.get("euro_current_lose"),
+    ])
+    hhad = probabilities.get("hhad") or {}
+    totals = probabilities.get("over_under") or {}
+    draw_probability = _number(probabilities.get("draw")) or (
+        euro_probs[1] if len(euro_probs) > 1 else None
+    )
+    handicap_draw_probability = _number(hhad.get("draw"))
+    over_probability = _number(totals.get("over"))
+    under_probability = _number(totals.get("under"))
+    total_direction = str(template.get("total_direction") or "大球")
+    total_probability = (
+        over_probability if total_direction == "大球" else under_probability
+    )
+
+    risk_ids = {
+        str(value)
+        for value in current_asian_risk.get("pattern_ids") or []
+    }
+    unstable_risks = {
+        "deepen_high_water",
+        "upper_water_rise",
+        "water_drop_without_deepen",
+        "handicap_retreat",
+        "euro_asian_divergence",
+        "overheated_shallow",
+    }
+    favorite_side = current_asian_risk.get("favorite_side")
+    ranking_gap = _rank_gap(rank)
+    asian_line_value = _handicap_value_from_text(
+        match.get("asian_current_handicap")
+    )
+    asian_depth = abs(asian_line_value) if asian_line_value is not None else None
+
+    reasons: List[str] = [str(template["style"])]
+    draw_index = float(template["draw_base"])
+    if draw_probability is not None:
+        draw_index += max(-10, min(10, (draw_probability - 27) * 1.2))
+    if asian_depth is not None and asian_depth <= 0.25:
+        draw_index += 8
+        reasons.append("亚盘浅盘，平局指数加权")
+    if current_total is not None and current_total <= 2.5:
+        draw_index += 5
+    if ranking_gap is not None and ranking_gap <= 4:
+        draw_index += 5
+        reasons.append("排名接近，平局指数加权")
+    if risk_ids & unstable_risks:
+        draw_index += 4
+
+    handicap_draw_index = float(template["handicap_draw_base"])
+    if handicap_draw_probability is not None:
+        handicap_draw_index += max(
+            -8, min(12, (handicap_draw_probability - 24) * 1.15)
+        )
+    if sporttery_handicap is not None and abs(sporttery_handicap) == 1:
+        handicap_draw_index += 6
+        reasons.append("竞彩让1球，精确一球差纳入让平模板")
+    if asian_depth is not None and 0.5 <= asian_depth <= 1.0:
+        handicap_draw_index += 6
+    if risk_ids & unstable_risks:
+        handicap_draw_index += 5
+    if favorite_side and sporttery_handicap:
+        if (
+            (favorite_side == "away" and sporttery_handicap > 0)
+            or (favorite_side == "home" and sporttery_handicap < 0)
+        ):
+            handicap_draw_index += 4
+
+    over_index = float(template["over_base"])
+    under_index = float(template["under_base"])
+    if over_probability is not None:
+        over_index += max(-10, min(10, (over_probability - 50) * 0.8))
+    if under_probability is not None:
+        under_index += max(-10, min(10, (under_probability - 50) * 0.8))
+    if total_probability is not None:
+        # Keep the selected league-side total direction sensitive to the
+        # current market probability without letting it fully override market.
+        total_index_hint = max(-8, min(8, (total_probability - 50) * 0.55))
+        if total_direction == "大球":
+            over_index += total_index_hint
+        else:
+            under_index += total_index_hint
+    if current_total is not None:
+        if current_total >= 2.75:
+            over_index += 4
+        if current_total <= 2.5:
+            under_index += 4
+    total_index = over_index if total_direction == "大球" else under_index
+    counter_total_index = under_index if total_direction == "大球" else over_index
+
+    upset_index = float(template["upset_base"])
+    if risk_ids & unstable_risks:
+        upset_index += 10
+        reasons.append("热门方盘口/水位不稳，冷门指数加权")
+    if (_number(current_asian_risk.get("upper_water_change")) or 0) >= 0.08:
+        upset_index += 6
+    if ranking_gap is not None and ranking_gap <= 5:
+        upset_index += 4
+
+    return {
+        "version": LEAGUE_TACTICAL_MODEL_VERSION,
+        "matched": True,
+        "league": match.get("league"),
+        "league_family": template["key"],
+        "league_label": template["label"],
+        "style": template["style"],
+        "indexes": {
+            "draw": _clamp_index(draw_index),
+            "handicap_draw": _clamp_index(handicap_draw_index),
+            "total": _clamp_index(total_index),
+            "over": _clamp_index(over_index),
+            "under": _clamp_index(under_index),
+            "upset": _clamp_index(upset_index),
+        },
+        "total_direction": total_direction,
+        "counter_total_index": _clamp_index(counter_total_index),
+        "score_templates": template["score_templates"],
+        "priority": {
+            "first": (
+                "平" if template["draw_base"] >= 70
+                else total_direction if template["over_base"] >= 60
+                else "观望"
+            ),
+            "second": "让平",
+        },
+        "matched_conditions": list(dict.fromkeys(reasons))[:6],
+        "governance": (
+            "联赛模板只作低到中权重先验；必须让位于当场欧赔、"
+            "亚盘、竞彩让球、大小球、价值指数和数据质量。"
+        ),
+    }
+
+
+def _index_level(value: Any) -> str:
+    score = float(_number(value) or 0)
+    if score >= 80:
+        return "高危"
+    if score >= 65:
+        return "重点观察"
+    if score >= 50:
+        return "提示"
+    return "正常"
+
+
+def _favorite_team_name(match: Dict[str, Any], favorite_side: Any) -> Optional[str]:
+    if favorite_side == "home":
+        return match.get("home_team")
+    if favorite_side == "away":
+        return match.get("away_team")
+    return None
+
+
+def _build_odds_band_model(
+    match: Dict[str, Any],
+    sporttery_handicap: Optional[float],
+    current_asian_risk: Dict[str, Any],
+) -> Dict[str, Any]:
+    euro_initial = [
+        _number(match.get("euro_initial_win")),
+        _number(match.get("euro_initial_draw")),
+        _number(match.get("euro_initial_lose")),
+    ]
+    euro_current = [
+        _number(match.get("euro_current_win")),
+        _number(match.get("euro_current_draw")),
+        _number(match.get("euro_current_lose")),
+    ]
+    if any(value is None or value <= 1 for value in euro_current):
+        return {
+            "version": ODDS_BAND_MODEL_VERSION,
+            "available": False,
+            "message": "欧赔数据不足，无法计算赔率区间指标",
+            "indexes": {
+                "favorite_heat": 0,
+                "underdog_upset": 0,
+                "handicap_draw_value": 0,
+            },
+            "signals": [],
+        }
+
+    favorite_index = min(range(3), key=lambda index: euro_current[index])
+    favorite_side = ("home", "draw", "away")[favorite_index]
+    draw_current = euro_current[1]
+    draw_initial = euro_initial[1] if len(euro_initial) > 1 else None
+    favorite_current = euro_current[favorite_index]
+    favorite_initial = (
+        euro_initial[favorite_index]
+        if len(euro_initial) > favorite_index else None
+    )
+    risk_ids = {
+        str(value)
+        for value in current_asian_risk.get("pattern_ids") or []
+    }
+    current_line = _handicap_value_from_text(match.get("asian_current_handicap"))
+    initial_line = _handicap_value_from_text(match.get("asian_initial_handicap"))
+    current_depth = None
+    initial_depth = None
+    if favorite_side == "home":
+        current_depth = current_line
+        initial_depth = initial_line
+    elif favorite_side == "away":
+        current_depth = -current_line if current_line is not None else None
+        initial_depth = -initial_line if initial_line is not None else None
+    current_depth = abs(current_depth) if current_depth is not None else None
+    initial_depth = abs(initial_depth) if initial_depth is not None else None
+    hhad_current = [
+        _number(match.get("hi_current_home_odds")),
+        _number(match.get("hi_current_draw_odds")),
+        _number(match.get("hi_current_away_odds")),
+    ]
+    hhad_draw_odds = hhad_current[1] if len(hhad_current) > 1 else None
+
+    signals: List[Dict[str, Any]] = []
+    favorite_heat = 25.0
+    underdog_upset = 20.0
+    handicap_draw_value = 20.0
+
+    def add_signal(
+        key: str,
+        label: str,
+        heat_delta: float,
+        upset_delta: float,
+        handicap_draw_delta: float,
+        reason: str,
+        evidence: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        nonlocal favorite_heat, underdog_upset, handicap_draw_value
+        favorite_heat += heat_delta
+        underdog_upset += upset_delta
+        handicap_draw_value += handicap_draw_delta
+        signals.append({
+            "key": key,
+            "label": label,
+            "heat_delta": round(heat_delta, 2),
+            "upset_delta": round(upset_delta, 2),
+            "handicap_draw_delta": round(handicap_draw_delta, 2),
+            "reason": reason,
+            "evidence": evidence or {},
+        })
+
+    favorite_band = "unknown"
+    favorite_band_label = "未知"
+    if favorite_side == "draw":
+        favorite_band = "draw_favorite"
+        favorite_band_label = "平赔最低"
+        add_signal(
+            "draw_lowest_odds",
+            "平赔最低",
+            -5,
+            8,
+            4,
+            "欧赔无明确胜负热门，优先按均势和普通平处理",
+            {"current": euro_current},
+        )
+    elif favorite_current is not None:
+        if favorite_current <= 1.30:
+            favorite_band = "extreme_hot"
+            favorite_band_label = "1.30以下极热低赔"
+            add_signal(
+                "favorite_extreme_hot_band",
+                "极热低赔",
+                30,
+                8,
+                5,
+                "热门赔率极低，爆冷基础概率不高，但需防轮换/赛程导致的平局",
+                {"favorite_odds": favorite_current},
+            )
+        elif favorite_current < 1.40:
+            favorite_band = "hot_transition"
+            favorite_band_label = "1.31-1.39强势过渡"
+            add_signal(
+                "favorite_hot_transition_band",
+                "强势低赔",
+                24,
+                12,
+                8,
+                "热门明显占优，但赔率未到碾压区，需看盘口是否给足深度",
+                {"favorite_odds": favorite_current},
+            )
+        elif favorite_current <= 1.70:
+            favorite_band = "danger"
+            favorite_band_label = "1.40-1.70热门危险区"
+            add_signal(
+                "favorite_danger_band",
+                "热门危险区",
+                22,
+                25,
+                14,
+                "热门赔率看似稳定但未形成碾压，是下盘和让平重点观察区",
+                {"favorite_odds": favorite_current},
+            )
+        elif favorite_current < 1.80:
+            favorite_band = "danger_edge"
+            favorite_band_label = "1.71-1.79危险边缘"
+            add_signal(
+                "favorite_danger_edge_band",
+                "危险边缘",
+                14,
+                18,
+                10,
+                "热门优势有限，若盘口升水或平赔下降，热门不稳权重上升",
+                {"favorite_odds": favorite_current},
+            )
+        elif favorite_current <= 2.20:
+            favorite_band = "balanced"
+            favorite_band_label = "1.80-2.20均势盘"
+            add_signal(
+                "favorite_balanced_band",
+                "均势盘",
+                4,
+                10,
+                5,
+                "胜负差距不大，普通平局价值高于单纯追热门",
+                {"favorite_odds": favorite_current},
+            )
+        elif favorite_current <= 2.50:
+            favorite_band = "spread"
+            favorite_band_label = "2.21-2.50分散均势"
+            add_signal(
+                "favorite_spread_band",
+                "分散均势",
+                0,
+                6,
+                2,
+                "欧赔较分散，爆冷定义弱化，重点看平赔和盘口",
+                {"favorite_odds": favorite_current},
+            )
+        else:
+            favorite_band = "weak_favorite"
+            favorite_band_label = "2.50以上弱热门"
+            add_signal(
+                "favorite_weak_band",
+                "弱热门",
+                -6,
+                0,
+                0,
+                "无明确强热门，爆冷模型降权，按均势盘处理",
+                {"favorite_odds": favorite_current},
+            )
+
+    if (
+        favorite_side == "away"
+        and favorite_current is not None
+        and 1.70 <= favorite_current <= 2.20
+    ):
+        add_signal(
+            "away_favorite_trap_band",
+            "强队客场陷阱",
+            8,
+            14,
+            5,
+            "客胜处在1.70-2.20区间，客场热门不胜风险高于主场同赔率",
+            {"favorite_odds": favorite_current},
+        )
+
+    draw_band = "unknown"
+    if draw_current is not None:
+        if draw_current <= 3.00:
+            draw_band = "very_low"
+            add_signal(
+                "draw_odds_very_low_band",
+                "平赔低于3.00",
+                0,
+                15,
+                8,
+                "平赔处在强防范区，爆冷优先考虑平局路径",
+                {"draw_odds": draw_current},
+            )
+        elif draw_current <= 3.20:
+            draw_band = "low"
+            add_signal(
+                "draw_odds_low_band",
+                "平赔3.00-3.20",
+                0,
+                10,
+                6,
+                "平赔偏低，庄家对平局有防范",
+                {"draw_odds": draw_current},
+            )
+        elif draw_current <= 3.50:
+            draw_band = "normal"
+            add_signal(
+                "draw_odds_normal_band",
+                "平赔3.20-3.50",
+                0,
+                4,
+                2,
+                "平赔正常区，需结合盘口和让球赔率判断",
+                {"draw_odds": draw_current},
+            )
+        elif draw_current >= 4.00:
+            draw_band = "high"
+            add_signal(
+                "draw_odds_high_band",
+                "平赔4.00以上",
+                4,
+                -8,
+                -4,
+                "平赔偏高，普通平局基础权重下降",
+                {"draw_odds": draw_current},
+            )
+        else:
+            draw_band = "upper_normal"
+
+    if (
+        draw_initial is not None
+        and draw_current is not None
+        and draw_initial - draw_current >= 0.10
+    ):
+        add_signal(
+            "draw_odds_drop_band",
+            "平赔下降",
+            0,
+            15,
+            8,
+            "平赔从初盘到即时明显下降，热门不胜路径增强",
+            {
+                "initial": draw_initial,
+                "current": draw_current,
+                "change": round(draw_current - draw_initial, 3),
+            },
+        )
+
+    if (
+        favorite_initial is not None
+        and favorite_current is not None
+        and favorite_current - favorite_initial >= 0.06
+    ):
+        add_signal(
+            "favorite_odds_rise_band",
+            "热门胜赔上升",
+            -2,
+            20,
+            8,
+            "热门胜赔上升，市场对热门打出信心下降",
+            {
+                "initial": favorite_initial,
+                "current": favorite_current,
+                "change": round(favorite_current - favorite_initial, 3),
+            },
+        )
+    elif (
+        favorite_initial is not None
+        and favorite_current is not None
+        and favorite_initial - favorite_current >= 0.08
+    ):
+        add_signal(
+            "favorite_odds_drop_no_deepen_watch",
+            "热门降赔",
+            10,
+            0,
+            3,
+            "热门胜赔下降，若盘口不升深则按热门过热处理",
+            {
+                "initial": favorite_initial,
+                "current": favorite_current,
+                "change": round(favorite_current - favorite_initial, 3),
+            },
+        )
+
+    unstable_risks = {
+        "handicap_retreat",
+        "upper_water_rise",
+        "water_drop_without_deepen",
+        "deepen_high_water",
+        "euro_asian_divergence",
+        "overheated_shallow",
+    }
+    if risk_ids & unstable_risks:
+        add_signal(
+            "asian_unstable_band",
+            "盘口不配合",
+            8,
+            18,
+            12,
+            "盘口/水位存在热门不稳信号，赔率危险区需要额外降级热门",
+            {"risk_ids": sorted(risk_ids & unstable_risks)},
+        )
+
+    depth_drop = (
+        current_depth is not None
+        and initial_depth is not None
+        and current_depth < initial_depth - 0.20
+    )
+    shallow_danger = (
+        favorite_current is not None
+        and favorite_current <= 1.80
+        and current_depth is not None
+        and current_depth <= 0.50
+    )
+    if depth_drop or shallow_danger:
+        add_signal(
+            "favorite_shallow_support",
+            "热门盘口偏浅",
+            8,
+            18,
+            8,
+            "热门赔率占优，但亚洲盘深度不给足支持",
+            {
+                "initial_depth": initial_depth,
+                "current_depth": current_depth,
+            },
+        )
+
+    deep_line = (
+        (current_depth is not None and current_depth >= 1.25)
+        or (sporttery_handicap is not None and abs(sporttery_handicap) >= 2)
+    )
+    if (
+        deep_line
+        and favorite_current is not None
+        and favorite_current >= 1.35
+    ):
+        add_signal(
+            "handicap_too_deep_band",
+            "盘口过深",
+            14,
+            20,
+            14,
+            "盘口深度高于赔率碾压程度，优先防赢球输盘或下盘",
+            {
+                "favorite_odds": favorite_current,
+                "sporttery_handicap": sporttery_handicap,
+                "asian_depth": current_depth,
+            },
+        )
+
+    if sporttery_handicap is not None:
+        if abs(sporttery_handicap) == 1:
+            add_signal(
+                "sporttery_one_goal_line",
+                "竞彩让1球",
+                0,
+                3,
+                15,
+                "竞彩让1球天然对应强队恰好赢1球的让平路径",
+                {"sporttery_handicap": sporttery_handicap},
+            )
+        elif abs(sporttery_handicap) == 2:
+            add_signal(
+                "sporttery_two_goal_line",
+                "竞彩让2球",
+                2,
+                2,
+                8,
+                "竞彩让2球可观察强队赢两球的让平路径",
+                {"sporttery_handicap": sporttery_handicap},
+            )
+
+    if hhad_draw_odds is not None:
+        if 3.20 <= hhad_draw_odds <= 3.90:
+            add_signal(
+                "handicap_draw_odds_value_band",
+                "让平赔率价值区",
+                0,
+                2,
+                18,
+                "竞彩让平赔率处在可博价值区，需结合盘口深度和历史样本",
+                {"hhad_draw_odds": hhad_draw_odds},
+            )
+        elif 2.80 <= hhad_draw_odds < 3.20:
+            add_signal(
+                "handicap_draw_odds_low_band",
+                "让平低赔防范区",
+                0,
+                4,
+                8,
+                "让平赔率偏低，市场有防范但赔付价值有限",
+                {"hhad_draw_odds": hhad_draw_odds},
+            )
+        elif 3.90 < hhad_draw_odds <= 4.50:
+            add_signal(
+                "handicap_draw_odds_high_band",
+                "让平高赔观察区",
+                0,
+                0,
+                5,
+                "让平赔率偏高，只作观察，需更强盘口证据支撑",
+                {"hhad_draw_odds": hhad_draw_odds},
+            )
+
+    if favorite_side == "draw":
+        suggested_focus = ["平局"]
+    else:
+        suggested_focus = []
+        if underdog_upset >= 65:
+            suggested_focus.append("平局")
+        if handicap_draw_value >= 65:
+            suggested_focus.append("让平")
+        if not suggested_focus:
+            suggested_focus.append("观察")
+
+    return {
+        "version": ODDS_BAND_MODEL_VERSION,
+        "available": True,
+        "favorite": {
+            "side": favorite_side,
+            "team": _favorite_team_name(match, favorite_side),
+            "initial_odds": favorite_initial,
+            "current_odds": favorite_current,
+            "band": favorite_band,
+            "band_label": favorite_band_label,
+        },
+        "draw_odds": {
+            "initial": draw_initial,
+            "current": draw_current,
+            "band": draw_band,
+        },
+        "handicap_draw_odds": hhad_draw_odds,
+        "asian_depth": {
+            "initial": initial_depth,
+            "current": current_depth,
+        },
+        "indexes": {
+            "favorite_heat": _clamp_index(favorite_heat),
+            "underdog_upset": _clamp_index(underdog_upset),
+            "handicap_draw_value": _clamp_index(handicap_draw_value),
+        },
+        "levels": {
+            "favorite_heat": _index_level(favorite_heat),
+            "underdog_upset": _index_level(underdog_upset),
+            "handicap_draw_value": _index_level(handicap_draw_value),
+        },
+        "signals": signals[:10],
+        "suggested_focus": list(dict.fromkeys(suggested_focus))[:3],
+        "governance": (
+            "赔率区间指标只用于识别危险赔率带、热门过热和让平价值；"
+            "不能单独覆盖五市场结论，必须结合亚盘、水位、竞彩让球和数据质量。"
+        ),
+    }
+
+
+def _odds_band_match_from_input(source: Dict[str, Any]) -> Dict[str, Any]:
+    euro = source.get("euro") or {}
+    asian = source.get("asian") or {}
+    hhad = source.get("sporttery_handicap") or {}
+    euro_initial = euro.get("initial") or []
+    euro_current = euro.get("current") or []
+    asian_initial = asian.get("initial") or []
+    asian_current = asian.get("current") or []
+    hhad_initial = hhad.get("initial") or []
+    hhad_current = hhad.get("current") or []
+
+    def at(values: List[Any], index: int) -> Any:
+        return values[index] if len(values) > index else None
+
+    return {
+        "league": source.get("league"),
+        "home_team": source.get("home_team"),
+        "away_team": source.get("away_team"),
+        "euro_initial_win": at(euro_initial, 0),
+        "euro_initial_draw": at(euro_initial, 1),
+        "euro_initial_lose": at(euro_initial, 2),
+        "euro_current_win": at(euro_current, 0),
+        "euro_current_draw": at(euro_current, 1),
+        "euro_current_lose": at(euro_current, 2),
+        "asian_initial_home_odds": at(asian_initial, 0),
+        "asian_initial_handicap": at(asian_initial, 1),
+        "asian_initial_away_odds": at(asian_initial, 2),
+        "asian_current_home_odds": at(asian_current, 0),
+        "asian_current_handicap": at(asian_current, 1),
+        "asian_current_away_odds": at(asian_current, 2),
+        "hi_handicap_value": hhad.get("value"),
+        "hi_initial_home_odds": at(hhad_initial, 0),
+        "hi_initial_draw_odds": at(hhad_initial, 1),
+        "hi_initial_away_odds": at(hhad_initial, 2),
+        "hi_current_home_odds": at(hhad_current, 0),
+        "hi_current_draw_odds": at(hhad_current, 1),
+        "hi_current_away_odds": at(hhad_current, 2),
+    }
+
+
+def _score_pair(value: Any) -> Optional[tuple[int, int]]:
+    parsed = re.search(r"(\d{1,2})\s*[:\-]\s*(\d{1,2})", str(value or ""))
+    if not parsed:
+        return None
+    return int(parsed.group(1)), int(parsed.group(2))
+
+
+def _team_recent_stats(rows: Iterable[Dict[str, Any]], team: Any) -> Dict[str, Any]:
+    team_text = str(team or "").strip()
+    total = 0
+    scored = 0
+    wins = 0
+    narrow_wins = 0
+    cover_losses = 0
+    goals_for = 0
+    for row in rows or []:
+        score = _score_pair((row or {}).get("score"))
+        if not score:
+            continue
+        home_name = str((row or {}).get("home_team") or "")
+        away_name = str((row or {}).get("away_team") or "")
+        if team_text and team_text in home_name:
+            team_goals, opponent_goals = score
+        elif team_text and team_text in away_name:
+            opponent_goals, team_goals = score
+        else:
+            # 500 的近期战绩表通常已按当前球队分侧展示；若无法
+            # 识别主客，保守使用左侧比分作为该队代理。
+            team_goals, opponent_goals = score
+        total += 1
+        goals_for += team_goals
+        if team_goals > 0:
+            scored += 1
+        if team_goals > opponent_goals:
+            wins += 1
+            if team_goals - opponent_goals <= 1:
+                narrow_wins += 1
+        handicap_result = str((row or {}).get("handicap_result") or "")
+        if "输" in handicap_result:
+            cover_losses += 1
+    return {
+        "sample": total,
+        "scored": scored,
+        "scored_rate": round(scored / total * 100, 1) if total else None,
+        "wins": wins,
+        "narrow_wins": narrow_wins,
+        "cover_losses": cover_losses,
+        "avg_goals_for": round(goals_for / total, 2) if total else None,
+    }
+
+
+def _build_upset_warning_model(
+    match: Dict[str, Any],
+    sporttery_handicap: Optional[float],
+    current_asian_risk: Dict[str, Any],
+    fundamentals: Dict[str, Any],
+    odds_band_model: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    euro_initial = [
+        _number(match.get("euro_initial_win")),
+        _number(match.get("euro_initial_draw")),
+        _number(match.get("euro_initial_lose")),
+    ]
+    euro_current = [
+        _number(match.get("euro_current_win")),
+        _number(match.get("euro_current_draw")),
+        _number(match.get("euro_current_lose")),
+    ]
+    if any(value is None or value <= 1 for value in euro_current):
+        return {
+            "version": UPSET_WARNING_MODEL_VERSION,
+            "score": 0,
+            "level": "数据不足",
+            "favorite_side": None,
+            "factors": [],
+            "suggested_defenses": [],
+            "message": "欧赔数据不足，无法计算爆冷预警",
+        }
+    favorite_index = min(range(3), key=lambda index: euro_current[index])
+    favorite_side = ("home", "draw", "away")[favorite_index]
+    if favorite_side == "draw":
+        return {
+            "version": UPSET_WARNING_MODEL_VERSION,
+            "score": 0,
+            "level": "无明确热门",
+            "favorite_side": favorite_side,
+            "factors": [],
+            "suggested_defenses": ["平局"],
+            "message": "当前欧赔无明确胜负热门",
+        }
+
+    factors = []
+
+    def add(
+        key: str,
+        label: str,
+        points: int,
+        reason: str,
+        evidence: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        factors.append({
+            "key": key,
+            "label": label,
+            "points": points,
+            "reason": reason,
+            "evidence": evidence or {},
+        })
+
+    risk_ids = {
+        str(value)
+        for value in current_asian_risk.get("pattern_ids") or []
+    }
+    current_line = _handicap_value_from_text(match.get("asian_current_handicap"))
+    initial_line = _handicap_value_from_text(match.get("asian_initial_handicap"))
+    current_depth = None
+    initial_depth = None
+    if current_line is not None:
+        current_depth = current_line if favorite_side == "home" else -current_line
+    if initial_line is not None:
+        initial_depth = initial_line if favorite_side == "home" else -initial_line
+    favorite_current_odds = euro_current[favorite_index]
+    favorite_initial_odds = (
+        euro_initial[favorite_index]
+        if len(euro_initial) > favorite_index else None
+    )
+    shallow_strong_favorite = (
+        favorite_current_odds is not None
+        and favorite_current_odds <= 1.75
+        and current_depth is not None
+        and current_depth <= 0.50
+    )
+    handicap_downgrade = (
+        "handicap_retreat" in risk_ids
+        or "euro_asian_divergence" in risk_ids
+        or "deepen_high_water" in risk_ids
+        or "upper_water_rise" in risk_ids
+        or "water_drop_without_deepen" in risk_ids
+        or "overheated_shallow" in risk_ids
+        or (
+            current_depth is not None
+            and initial_depth is not None
+            and current_depth < initial_depth - 0.20
+        )
+        or shallow_strong_favorite
+    )
+    if handicap_downgrade:
+        add(
+            "handicap_downgrade",
+            "盘口降级/偏浅",
+            25,
+            "热门方实力或赔率占优，但盘口深度不给足支持",
+            {
+                "initial_depth": initial_depth,
+                "current_depth": current_depth,
+                "risk_ids": sorted(risk_ids),
+            },
+        )
+
+    if (
+        favorite_initial_odds is not None
+        and favorite_current_odds is not None
+        and favorite_current_odds - favorite_initial_odds >= 0.06
+    ):
+        add(
+            "favorite_odds_rise",
+            "热门胜赔升",
+            20,
+            "热门方胜赔抬升，市场对热门打出信心下降",
+            {
+                "initial": favorite_initial_odds,
+                "current": favorite_current_odds,
+                "change": round(favorite_current_odds - favorite_initial_odds, 3),
+            },
+        )
+
+    odds_indexes = (odds_band_model or {}).get("indexes") or {}
+    odds_favorite = (odds_band_model or {}).get("favorite") or {}
+    odds_signals = [
+        item for item in (odds_band_model or {}).get("signals") or []
+        if isinstance(item, dict)
+    ]
+    favorite_band = str(odds_favorite.get("band") or "")
+    if favorite_band == "danger":
+        add(
+            "favorite_odds_danger_band",
+            "赔率危险区",
+            25,
+            "热门胜赔处在1.40-1.70危险区，看似稳但容易走下盘或让平",
+            {
+                "favorite_odds": odds_favorite.get("current_odds"),
+                "band": odds_favorite.get("band_label"),
+            },
+        )
+    elif favorite_band == "danger_edge":
+        add(
+            "favorite_odds_danger_edge",
+            "赔率危险边缘",
+            16,
+            "热门胜赔处在1.71-1.79边缘区，需要结合盘口升水和平赔判断",
+            {
+                "favorite_odds": odds_favorite.get("current_odds"),
+                "band": odds_favorite.get("band_label"),
+            },
+        )
+    elif favorite_band == "balanced":
+        add(
+            "favorite_odds_balanced_band",
+            "均势赔率区",
+            10,
+            "胜赔处在1.80-2.20均势区，普通平局权重应高于追热门",
+            {
+                "favorite_odds": odds_favorite.get("current_odds"),
+                "band": odds_favorite.get("band_label"),
+            },
+        )
+    if any(item.get("key") == "away_favorite_trap_band" for item in odds_signals):
+        add(
+            "away_favorite_trap_band",
+            "强队客场陷阱",
+            14,
+            "客场热门处在1.70-2.20赔率区间，强队客场不胜风险上升",
+            {
+                "favorite_odds": odds_favorite.get("current_odds"),
+            },
+        )
+    if any(item.get("key") == "handicap_too_deep_band" for item in odds_signals):
+        add(
+            "handicap_too_deep",
+            "盘口过深",
+            20,
+            "盘口深度高于赔率碾压程度，优先防赢球输盘或下盘",
+            {
+                "favorite_odds": odds_favorite.get("current_odds"),
+                "underdog_upset_index": odds_indexes.get("underdog_upset"),
+            },
+        )
+
+    initial_draw = euro_initial[1] if len(euro_initial) > 1 else None
+    current_draw = euro_current[1] if len(euro_current) > 1 else None
+    if (
+        initial_draw is not None
+        and current_draw is not None
+        and initial_draw - current_draw >= 0.10
+    ):
+        add(
+            "draw_odds_drop",
+            "平赔下降",
+            20,
+            "平赔明显压低，爆冷更可能先走向平局",
+            {
+                "initial": initial_draw,
+                "current": current_draw,
+                "change": round(current_draw - initial_draw, 3),
+            },
+        )
+
+    protected_selection = None
+    cover_selection = None
+    cover_index = None
+    if sporttery_handicap is not None:
+        if favorite_side == "home" and sporttery_handicap < 0:
+            cover_selection, cover_index = "让胜", 0
+            protected_selection = "让负"
+        elif favorite_side == "away" and sporttery_handicap > 0:
+            cover_selection, cover_index = "让负", 2
+            protected_selection = "让胜"
+    hhad_odds = (
+        [
+            _number(match.get("hi_current_home_odds")),
+            _number(match.get("hi_current_draw_odds")),
+            _number(match.get("hi_current_away_odds")),
+        ]
+    )
+    if cover_selection and cover_index is not None:
+        cover_odds = hhad_odds[cover_index]
+        valid_hhad_odds = [value for value in hhad_odds if value is not None]
+        lowest = min(valid_hhad_odds) if valid_hhad_odds else None
+        if (
+            cover_odds is not None
+            and (
+                cover_odds >= 2.30
+                or (lowest is not None and cover_odds > lowest + 0.40)
+            )
+        ):
+            add(
+                "favorite_cover_odds_high",
+                "热门穿盘赔率偏高",
+                15,
+                "竞彩让球不支持热门方轻松穿盘",
+                {
+                    "cover_selection": cover_selection,
+                    "cover_odds": cover_odds,
+                    "lowest_hhad_odds": lowest,
+                    "protected_selection": protected_selection,
+                },
+            )
+
+    recent = fundamentals.get("recent") or {}
+    favorite_team = (
+        match.get("home_team") if favorite_side == "home"
+        else match.get("away_team")
+    )
+    underdog_team = (
+        match.get("away_team") if favorite_side == "home"
+        else match.get("home_team")
+    )
+    favorite_recent = recent.get("home" if favorite_side == "home" else "away") or []
+    underdog_recent = recent.get("away" if favorite_side == "home" else "home") or []
+    favorite_stats = _team_recent_stats(favorite_recent, favorite_team)
+    underdog_stats = _team_recent_stats(underdog_recent, underdog_team)
+    if (
+        (favorite_stats.get("cover_losses") or 0) >= 3
+        or (
+            (favorite_stats.get("wins") or 0) >= 3
+            and (favorite_stats.get("narrow_wins") or 0) >= 2
+        )
+    ):
+        add(
+            "favorite_cover_weak_recent",
+            "强队赢盘率低",
+            10,
+            "热门近期存在赢球但难穿盘或盘口结果偏弱的迹象",
+            favorite_stats,
+        )
+    if (
+        (underdog_stats.get("sample") or 0) >= 4
+        and (
+            (underdog_stats.get("scored_rate") or 0) >= 70
+            or (underdog_stats.get("avg_goals_for") or 0) >= 1.1
+        )
+    ):
+        add(
+            "underdog_scoring_recent",
+            "弱队近期有球",
+            10,
+            "弱队近期进球能力不弱，热门穿盘难度上升",
+            underdog_stats,
+        )
+
+    score = min(100, sum(int(item.get("points") or 0) for item in factors))
+    if score >= 80:
+        level = "重点防冷"
+    elif score >= 60:
+        level = "防冷观察"
+    elif score >= 40:
+        level = "轻微预警"
+    else:
+        level = "正常"
+    suggested_defenses = []
+    if protected_selection:
+        suggested_defenses.append(protected_selection)
+    if any(item["key"] == "draw_odds_drop" for item in factors):
+        suggested_defenses.append("平局")
+    if sporttery_handicap is not None and abs(sporttery_handicap) == 1:
+        suggested_defenses.append("让平")
+    if not suggested_defenses:
+        suggested_defenses.append("平局")
+    return {
+        "version": UPSET_WARNING_MODEL_VERSION,
+        "score": score,
+        "level": level,
+        "favorite_side": favorite_side,
+        "favorite_team": favorite_team,
+        "favorite_odds": favorite_current_odds,
+        "factors": factors,
+        "suggested_defenses": list(dict.fromkeys(suggested_defenses))[:3],
+        "governance": (
+            "爆冷预警只用于热门降级和防选提示；不得单独反买冷门，"
+            "必须结合赔率价值、盘口一致性和数据质量。"
+        ),
+    }
 
 
 def _finished_fixtures(value: Any, limit: int = 6) -> List[Dict[str, Any]]:
@@ -314,6 +1506,32 @@ def build_daily_match_input(
         )
     if fundamentals.get("cache_status") == "stale":
         warnings.append("500基本面刷新失败，当前使用过期缓存并已降权")
+    rank_data = {
+        "home": available_rank("home"),
+        "away": available_rank("away"),
+    }
+    probabilities = analysis.get("probabilities") or {}
+    current_asian_risk = classify_asian_risk_patterns(match)
+    league_tactical_model = _build_league_tactical_model(
+        match,
+        probabilities,
+        sporttery_handicap,
+        current_total,
+        current_asian_risk,
+        rank_data,
+    )
+    odds_band_model = _build_odds_band_model(
+        match,
+        sporttery_handicap,
+        current_asian_risk,
+    )
+    upset_warning_model = _build_upset_warning_model(
+        match,
+        sporttery_handicap,
+        current_asian_risk,
+        fundamentals,
+        odds_band_model,
+    )
     return {
         "match_id": str(match.get("match_id") or ""),
         "match_number": match.get("match_number") or match.get("round_id"),
@@ -324,10 +1542,7 @@ def build_daily_match_input(
         "match_time": match.get("match_time"),
         "home_team": match.get("home_team"),
         "away_team": match.get("away_team"),
-        "rank": {
-            "home": available_rank("home"),
-            "away": available_rank("away"),
-        },
+        "rank": rank_data,
         "euro": {
             "initial": [
                 _number(match.get("euro_initial_win")),
@@ -423,7 +1638,10 @@ def build_daily_match_input(
                 "signal": "暂无可用相似历史样本",
             },
         },
-        "current_asian_risk": classify_asian_risk_patterns(match),
+        "league_tactical_model": league_tactical_model,
+        "odds_band_model": odds_band_model,
+        "upset_warning_model": upset_warning_model,
+        "current_asian_risk": current_asian_risk,
         "fundamentals": fundamentals,
         "data_warnings": list(dict.fromkeys(warnings)),
         "missing_fundamentals": missing_fundamentals,
@@ -730,6 +1948,15 @@ class FAEDailyAIAnalyzer:
         daily_summary = self.attach_draw_radar_summary(
             daily_summary, stored_matches
         )
+        daily_summary = self.attach_league_model_rankings(
+            daily_summary, stored_matches
+        )
+        daily_summary = self.attach_upset_warning_summary(
+            daily_summary, stored_matches
+        )
+        daily_summary = self.attach_odds_band_summary(
+            daily_summary, stored_matches
+        )
         daily_summary["recommended_combinations"] = (
             self._ensure_mixed_combinations(daily_summary)
         )
@@ -992,6 +2219,9 @@ class FAEDailyAIAnalyzer:
             "历史复盘记忆只用于提醒曾经出现的误判和风险，不是当前比赛事实，不得据此直接推荐。",
             "联赛历史画像来自当前比赛日期之前的完场数据并带时间衰减；只允许把eligible_for_adjustment=true且分段样本充足的内容作为低到中权重基线。",
             "联赛画像中的命中率、让平率、进球率是历史条件频率，不是真实胜率；不得单独据此推荐，必须与当天五项市场证据一致。",
+            "league_tactical_model是人工沉淀的联赛模板指数，包含平局、让平、大小球和冷门指数；它只用于筛选和解释，不能覆盖赔率价值、盘口一致性和数据质量。",
+            "odds_band_model是赔率区间扫描器：favorite_heat表示热门过热，underdog_upset表示下盘爆冷，handicap_draw_value表示让平价值；1.40-1.70热门危险区、1.80-2.20均势区、客场1.70-2.20陷阱区、平赔低位和盘口过深都只能作为降级热门或提高平/让平扫描权重的证据。",
+            "upset_warning_model是爆冷预警扫描器：盘口降级、热门胜赔升、平赔下降、热门穿盘赔率偏高、强队近期穿盘代理偏弱、弱队近期有球会累加风险分；80分以上只能降低热门方向并提示防冷，禁止单独反买。",
             "historical_goal_margin_model按欧赔强弱、亚盘深度、大小球、竞彩让球数、联赛和时间衰减寻找相似完赛场次；ordinary_draw统计0球分差，handicap_draw统计当前让球数对应的精确净胜球差，两者严禁混用。",
             "只有historical_goal_margin_model中eligible_for_adjustment=true的结果才可参与校准；必须同时比较effective_sample、confidence、market_probability、blended_probability、odds和value_edge，样本不足时只允许写观察。",
             "历史相似模型以市场去水概率为先验并限制修正幅度，仍不是真实胜率或因果规律；若历史与市场明显冲突，降低星级或不下注，禁止用历史频率制造必出平局/让平的结论。",
@@ -1002,6 +2232,7 @@ class FAEDailyAIAnalyzer:
             "若当前热门赔率所在favorite_odds_bands样本不少于20，且联赛热门失手率或不穿盘率显著高于全库，只能降低热门方向置信度并增加平局、弱方不败或让球防选，不得脱离当天盘口直接反买。",
             "current_asian_risk表示当前比赛赛前触发的水位与盘口结构；league_history_profile.asian_risk_patterns表示该联赛同类结构的历史不穿率。只有当前模式一致、该模式样本不少于20且联赛画像可调权时，才可作为低到中权重风险证据。",
             "退盘削弱、上盘升水、降水不升盘、升盘高水、欧亚背离和热门过热都只是赛前市场预警，不能表述为赛果原因；盘口无明显预警时应明确需要比赛过程数据解释。",
+            "若欧赔和亚盘同时推向客胜，但current_asian_risk出现升盘高水/上盘升水，且竞彩主队受让后的让胜为低赔最低项，必须把客胜降级为方向观察或不下注，不得作为主选胆。",
             "若联赛画像与当天盘口冲突，以当天盘口、数据质量和阵容事实为准，并在风险中说明冲突。",
             "单日观察项属于低权重提醒；只有validated_patterns中的跨日模式可以作为辅助校正，且必须让位于当天盘口。",
             "当validated_pattern_count为0时，代表没有经过跨日和足量样本验证的规则；禁止使用历史0%命中区间、严禁纳入、全部排除或类似绝对结论。",
@@ -1072,12 +2303,16 @@ class FAEDailyAIAnalyzer:
             "历史复盘记忆只是低权重风险提醒，不是当前比赛事实；不得机械套用昨天结论。",
             "联赛历史画像只在eligible_for_adjustment=true时作为低到中权重基线；赔率分段样本不足时不得使用。",
             "历史联赛频率不是真实概率，必须让位于本场欧赔、亚盘、竞彩、大小球和市场一致性。",
+            "league_tactical_model是联赛模板指数，只能作为低到中权重筛选层；指数高但赔率价值、盘口一致性或数据质量不足时仍必须降级或不下注。",
+            "odds_band_model是赔率区间扫描器：favorite_heat、underdog_upset、handicap_draw_value分别对应热门过热、下盘爆冷、让平价值；指数高只能降低热门或增加防选，不得脱离盘口一致性直接反买。",
+            "upset_warning_model达到重点防冷时，热门胜负方向必须降级为观察或不下注；防选优先写平局、受让保护项或让平，但不得把爆冷预警写成确定赛果。",
             "historical_goal_margin_model将普通平局定义为0球分差，将让平定义为当前竞彩让球数对应的精确净胜球差；两种玩法必须分开引用。仅eligible_for_adjustment=true且effective_sample达标时允许参与校准。",
             "historical_odds_rules是固定历史回放的有限修正规则；只能引用matched_rule_ids中已命中项及其sample、hit_rate、market_probability和adjustment_pp，不得写成必出规律。",
             "主队+1且让平赔2.70-3.19对应客队恰好赢1球；最低欧赔1.70-1.89只作用于普通平局，两者不得混用。",
             "引用相似历史模型时必须同时比较market_probability、blended_probability、odds与value_edge；它以市场为先验且不是因果规律，不得写成必出或真实胜率。",
             "market_surprise是明确热门方未赢球的历史频率，必须拆分热门打平和弱方爆冷；仅当当前赔率分段样本不少于20时用于降低热门置信度或增加防选，禁止单独据此反买。",
             "current_asian_risk只描述本场赛前水位结构；只有联赛画像中相同asian_risk_patterns模式样本不少于20时才能辅助降级或增加防选，禁止把市场预警写成赛果真实原因。",
+            "欧赔和亚盘同时推向客胜但触发升盘高水/上盘升水，且竞彩主队受让后的让胜为低赔最低项时，客胜必须降级为观察或不下注。",
             "仅validated_patterns可作为跨日辅助校正，近期观察项不能单独改变推荐。",
             "单日0/N或N/N属于小样本，不得据此将当前比赛定义为严禁、必选、高危赔率区间或全部排除。",
             "存在欧亚背离、极端水位或大小球跳档时自动降级，最高3.5星；缺少多项基本面时不得给五星。",
@@ -1215,10 +2450,23 @@ class FAEDailyAIAnalyzer:
         effective_primary_play, guard = cls._selection_consistency_guard(
             source, value_primary_play
         )
+        non_cover_guard = cls._favorite_non_cover_guard(
+            source, effective_primary_play
+        )
+        if non_cover_guard.get("triggered"):
+            effective_primary_play = str(
+                non_cover_guard.get("effective_selection")
+                or effective_primary_play
+            )
         secondary_play = cls._secondary_play(
             source,
             effective_primary_play,
-            None if guard.get("triggered") else generated.get("secondary_play"),
+            (
+                None
+                if guard.get("triggered")
+                or non_cover_guard.get("triggered")
+                else generated.get("secondary_play")
+            ),
         )
         verdict = cls._text(
             generated.get("verdict"),
@@ -1228,15 +2476,20 @@ class FAEDailyAIAnalyzer:
             ),
             900,
         )
-        if guard.get("triggered"):
+        guard_reasons = [
+            str(item.get("reason") or "")
+            for item in (guard, non_cover_guard)
+            if item.get("triggered") and item.get("reason")
+        ]
+        if guard_reasons:
             verdict = cls._text(
-                f"{guard['reason']}。以下保留原始AI说明供审计：{verdict}",
+                f"{'；'.join(guard_reasons)}。以下保留原始AI说明供审计：{verdict}",
                 "",
                 1100,
             )
         risks = list(dict.fromkeys(
             cls._list(generated.get("risks"), 5, 220)
-            + ([guard["reason"]] if guard.get("triggered") else [])
+            + guard_reasons
             + [str(item) for item in source.get("data_warnings") or []]
         ))[:8]
         return {
@@ -1263,6 +2516,7 @@ class FAEDailyAIAnalyzer:
                 "model_primary_play": model_primary_play,
                 "value_guard": value_guard,
                 "consistency_guard": guard,
+                "non_cover_guard": non_cover_guard,
                 "rating": rating,
                 "model_rating": rating,
                 "rating_adjustments": [],
@@ -1633,6 +2887,175 @@ class FAEDailyAIAnalyzer:
         return {}
 
     @classmethod
+    def _favorite_non_cover_guard(
+        cls,
+        source: Dict[str, Any],
+        model_selection: str,
+    ) -> Dict[str, Any]:
+        """Downgrade a favorite pick when handicap markets protect the dog.
+
+        Example: 201 had euro/asian leaning to away win, but the Asian move was
+        "deepen high water" and Sporttery +1 made home handicap-win the clear
+        low-price outcome. In that structure the favorite win can remain a
+        directional observation, but it should not be an official pick.
+        """
+        base = {
+            "triggered": False,
+            "model_selection": model_selection,
+            "effective_selection": model_selection,
+            "force_no_bet": False,
+        }
+        favorite = cls._favorite_market_profile(source)
+        favorite_side = favorite.get("side")
+        if (
+            (model_selection == "客胜" and favorite_side != "away")
+            or (model_selection == "主胜" and favorite_side != "home")
+            or model_selection not in {"主胜", "客胜"}
+        ):
+            return base
+
+        asian_risk = source.get("current_asian_risk") or {}
+        risk_ids = {
+            str(value)
+            for value in asian_risk.get("pattern_ids") or []
+        }
+        unstable = {
+            "deepen_high_water",
+            "upper_water_rise",
+            "water_drop_without_deepen",
+            "handicap_retreat",
+            "euro_asian_divergence",
+            "overheated_shallow",
+        }
+        if str(asian_risk.get("favorite_side") or "") != favorite_side:
+            return base
+        if not (risk_ids & unstable):
+            return base
+
+        handicap = _number(
+            (source.get("sporttery_handicap") or {}).get("value")
+        )
+        if handicap is None:
+            return base
+        protected_selection = None
+        protected_index = None
+        if favorite_side == "away" and handicap > 0:
+            protected_selection = "让胜"
+            protected_index = 0
+        elif favorite_side == "home" and handicap < 0:
+            protected_selection = "让负"
+            protected_index = 2
+        if not protected_selection:
+            return base
+
+        hhad = (
+            (((source.get("fae_core") or {}).get("probabilities") or {})
+             .get("hhad") or {})
+        )
+        probabilities = {
+            "让胜": _number(hhad.get("win")),
+            "让平": _number(hhad.get("draw")),
+            "让负": _number(hhad.get("lose")),
+        }
+        protected_probability = probabilities.get(protected_selection)
+        if protected_probability is None:
+            return base
+        strongest = max(
+            (
+                (label, value) for label, value in probabilities.items()
+                if value is not None
+            ),
+            key=lambda item: item[1],
+            default=(None, None),
+        )
+        if strongest[0] != protected_selection:
+            return base
+
+        odds_values = (
+            (source.get("sporttery_handicap") or {}).get("current")
+            or (source.get("sporttery_handicap") or {}).get("initial")
+            or []
+        )
+        protected_odds = (
+            _number(odds_values[protected_index])
+            if len(odds_values) > protected_index else None
+        )
+        other_probabilities = [
+            value for label, value in probabilities.items()
+            if label != protected_selection and value is not None
+        ]
+        gap = (
+            protected_probability - max(other_probabilities)
+            if other_probabilities else 0
+        )
+        strong_protection = (
+            protected_odds is not None
+            and protected_odds <= 1.75
+            and protected_probability >= 50
+            and gap >= 12
+        )
+        if not strong_protection:
+            upset_model = source.get("upset_warning_model") or {}
+            upset_score = _number(upset_model.get("score")) or 0
+            if upset_score >= 75:
+                suggested = [
+                    str(value) for value in (
+                        upset_model.get("suggested_defenses") or []
+                    )
+                    if str(value) in {
+                        "主胜", "平局", "客胜", "让胜", "让平", "让负"
+                    }
+                ]
+                effective = suggested[0] if suggested else protected_selection
+                reason = (
+                    f"爆冷预警护栏：{model_selection}方向存在"
+                    f"{upset_model.get('level') or '防冷'}信号，"
+                    f"爆冷指数{upset_score:g}分，建议防"
+                    f"{'、'.join(suggested) if suggested else protected_selection}，"
+                    f"{model_selection}降级为观察并标记不下注"
+                )
+                return {
+                    "triggered": True,
+                    "model_selection": model_selection,
+                    "effective_selection": effective,
+                    "force_no_bet": True,
+                    "protected_selection": protected_selection,
+                    "protected_probability": round(protected_probability, 2),
+                    "protected_odds": round(protected_odds, 3)
+                    if protected_odds is not None else None,
+                    "probability_gap": round(gap, 2),
+                    "upset_warning_score": round(upset_score, 2),
+                    "risk_pattern_ids": sorted(risk_ids & unstable),
+                    "reason": reason,
+                }
+            return base
+
+        risk_label = (
+            asian_risk.get("primary_label")
+            or "、".join(sorted(risk_ids & unstable))
+            or "热门不穿"
+        )
+        reason = (
+            f"热门不穿护栏：{model_selection}方向虽获欧赔/亚盘支持，"
+            f"但盘口触发{risk_label}，竞彩受让保护项{protected_selection}"
+            f"{protected_odds:g}为最低且FAE估算{protected_probability:g}%"
+            f"领先{gap:g}个百分点，{model_selection}降级为观察并标记不下注"
+        )
+        return {
+            "triggered": True,
+            "model_selection": model_selection,
+            "effective_selection": protected_selection,
+            "force_no_bet": True,
+            "protected_selection": protected_selection,
+            "protected_probability": round(protected_probability, 2),
+            "protected_odds": round(protected_odds, 3)
+            if protected_odds is not None else None,
+            "probability_gap": round(gap, 2),
+            "risk_pattern_ids": sorted(risk_ids & unstable),
+            "reason": reason,
+        }
+
+    @classmethod
     def _draw_radar_candidate(
         cls,
         match: Dict[str, Any],
@@ -1765,6 +3188,45 @@ class FAEDailyAIAnalyzer:
             if role:
                 role_signals.append(role)
             context_note = str(context_signal.get("note") or "").strip()
+        league_model = source.get("league_tactical_model") or {}
+        league_indexes = league_model.get("indexes") or {}
+        league_score_bonus = 0.0
+        league_note = ""
+        if league_model.get("matched"):
+            league_key = (
+                "draw" if selection == "平局" else "handicap_draw"
+            )
+            league_index = _number(league_indexes.get(league_key))
+            if league_index is not None and league_index >= 62:
+                league_score_bonus = 8.0 if league_index >= 72 else 4.0
+                role_signals.append(
+                    f"{league_model.get('league_label') or '联赛'}"
+                    f"{selection}模板"
+                )
+                league_note = (
+                    f"联赛模板{selection}指数{league_index:g}分，"
+                    "作为低到中权重先验"
+                )
+        odds_band_model = source.get("odds_band_model") or {}
+        odds_band_indexes = odds_band_model.get("indexes") or {}
+        odds_band_score_bonus = 0.0
+        odds_band_note = ""
+        if odds_band_model.get("available"):
+            odds_key = (
+                "underdog_upset" if selection == "平局"
+                else "handicap_draw_value"
+            )
+            odds_index = _number(odds_band_indexes.get(odds_key))
+            if odds_index is not None and odds_index >= 65:
+                odds_band_score_bonus = 8.0 if odds_index >= 80 else 4.0
+                role_signals.append(
+                    "赔率区间防平"
+                    if selection == "平局" else "赔率区间让平"
+                )
+                odds_band_note = (
+                    f"赔率区间{selection}相关指数{odds_index:g}分，"
+                    "作为爆冷/让平扫描先验"
+                )
         role_bonus = min(12, len(role_signals) * 6)
         risk_bonus = min(5, len(relevant_risks) * 2)
         value_adjustment = max(
@@ -1794,6 +3256,8 @@ class FAEDailyAIAnalyzer:
             + history_adjustment
             + max(-4.0, min(6.0, historical_rule_adjustment * 1.2))
             + float(context_signal.get("score_bonus") or 0)
+            + league_score_bonus
+            + odds_band_score_bonus
         )
         if metric.get("confidence") == "高":
             score += 3
@@ -1919,6 +3383,10 @@ class FAEDailyAIAnalyzer:
             reason_parts.append("存在热门方不稳盘口信号")
         if context_note:
             reason_parts.append(context_note)
+        if league_note:
+            reason_parts.append(league_note)
+        if odds_band_note:
+            reason_parts.append(odds_band_note)
         if matched_historical_rules:
             reason_parts.append(
                 "历史赔率规则{}项，概率修正{:+g}个百分点".format(
@@ -2034,6 +3502,260 @@ class FAEDailyAIAnalyzer:
                 reverse=True,
             )[:6]
         result["draw_radar"] = radar
+        return result
+
+    @classmethod
+    def attach_league_model_rankings(
+        cls,
+        summary: Dict[str, Any],
+        matches: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        """Expose league-template indexes as a transparent screening layer."""
+        result = dict(summary or {})
+        rows = []
+        for item in matches:
+            source = item.get("input_snapshot") or {}
+            model = source.get("league_tactical_model") or {}
+            indexes = model.get("indexes") or {}
+            if not model.get("matched"):
+                continue
+            match_id = str(item.get("match_id") or "")
+            if not match_id:
+                continue
+            total_direction = str(model.get("total_direction") or "大小球")
+            base = {
+                "match_id": match_id,
+                "match_number": item.get("match_number"),
+                "league": item.get("league"),
+                "home_team": item.get("home_team"),
+                "away_team": item.get("away_team"),
+                "league_label": model.get("league_label"),
+                "style": model.get("style"),
+                "score_templates": model.get("score_templates") or [],
+                "conditions": model.get("matched_conditions") or [],
+            }
+            rows.append({
+                **base,
+                "bucket": "draw",
+                "selection": "平局",
+                "index": indexes.get("draw"),
+                "reason": (
+                    f"{model.get('league_label')}平局模板；"
+                    f"常见比分{'、'.join(model.get('score_templates') or [])}"
+                ),
+            })
+            rows.append({
+                **base,
+                "bucket": "handicap_draw",
+                "selection": "让平",
+                "index": indexes.get("handicap_draw"),
+                "reason": (
+                    f"{model.get('league_label')}让平模板；"
+                    "结合竞彩让球数看精确一球差"
+                ),
+            })
+            rows.append({
+                **base,
+                "bucket": "total",
+                "selection": total_direction,
+                "index": indexes.get("total"),
+                "reason": (
+                    f"{model.get('league_label')}大小球模板偏{total_direction}"
+                ),
+            })
+            rows.append({
+                **base,
+                "bucket": "upset",
+                "selection": "冷门/热门不穿",
+                "index": indexes.get("upset"),
+                "reason": (
+                    f"{model.get('league_label')}冷门指数；"
+                    "只用于降级热门或增加防选"
+                ),
+            })
+
+        def top(bucket: str, limit: int) -> List[Dict[str, Any]]:
+            return sorted(
+                [
+                    row for row in rows
+                    if row["bucket"] == bucket and row.get("index") is not None
+                ],
+                key=lambda row: float(row.get("index") or 0),
+                reverse=True,
+            )[:limit]
+
+        result["league_model_rankings"] = {
+            "version": LEAGUE_TACTICAL_MODEL_VERSION,
+            "policy": (
+                "联赛模板指数只作筛选与解释层，不直接进入组合；"
+                "正式推荐仍以五市场、价值指数、投注分和数据质量为准。"
+            ),
+            "draw": top("draw", 2),
+            "handicap_draw": top("handicap_draw", 3),
+            "total": top("total", 3),
+            "upset": top("upset", 3),
+        }
+        return result
+
+    @classmethod
+    def attach_upset_warning_summary(
+        cls,
+        summary: Dict[str, Any],
+        matches: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        """Expose a dedicated upset-warning scanner for favorite downgrades."""
+        result = dict(summary or {})
+        rows = []
+        for item in matches:
+            source = item.get("input_snapshot") or {}
+            model = source.get("upset_warning_model") or {}
+            score = _number(model.get("score"))
+            if score is None or score < 40:
+                continue
+            match_id = str(item.get("match_id") or "")
+            if not match_id:
+                continue
+            factors = [
+                factor for factor in model.get("factors") or []
+                if isinstance(factor, dict)
+            ]
+            rows.append({
+                "match_id": match_id,
+                "match_number": item.get("match_number"),
+                "league": item.get("league"),
+                "home_team": item.get("home_team"),
+                "away_team": item.get("away_team"),
+                "score": round(score, 1),
+                "level": model.get("level"),
+                "favorite_team": model.get("favorite_team"),
+                "favorite_side": model.get("favorite_side"),
+                "favorite_odds": model.get("favorite_odds"),
+                "suggested_defenses": (
+                    model.get("suggested_defenses") or []
+                ),
+                "factor_labels": [
+                    str(factor.get("label") or factor.get("key") or "")
+                    for factor in factors[:4]
+                    if factor.get("label") or factor.get("key")
+                ],
+                "factors": factors,
+                "reason": "；".join(
+                    str(factor.get("reason") or "")
+                    for factor in factors[:3]
+                    if factor.get("reason")
+                ),
+            })
+        result["upset_warning"] = {
+            "version": UPSET_WARNING_MODEL_VERSION,
+            "policy": (
+                "爆冷预警用于识别热门方不稳和下盘风险；"
+                "80分以上重点防冷，60-79分观察，不能单独反买。"
+            ),
+            "items": sorted(
+                rows,
+                key=lambda row: float(row.get("score") or 0),
+                reverse=True,
+            )[:8],
+        }
+        return result
+
+    @classmethod
+    def attach_odds_band_summary(
+        cls,
+        summary: Dict[str, Any],
+        matches: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        """Expose odds-band indicators requested for upset/draw scanning."""
+        result = dict(summary or {})
+        rows = []
+        labels = {
+            "favorite_heat": "热门过热指数",
+            "underdog_upset": "下盘爆冷指数",
+            "handicap_draw_value": "让平价值指数",
+        }
+        selections = {
+            "favorite_heat": "热门降级观察",
+            "underdog_upset": "防平/防下盘",
+            "handicap_draw_value": "让平扫描",
+        }
+        for item in matches:
+            source = item.get("input_snapshot") or {}
+            model = source.get("odds_band_model") or {}
+            if not model.get("available") and source:
+                raw_match = _odds_band_match_from_input(source)
+                model = _build_odds_band_model(
+                    raw_match,
+                    _number(
+                        (source.get("sporttery_handicap") or {}).get("value")
+                    ),
+                    source.get("current_asian_risk") or {},
+                )
+            if not model.get("available"):
+                continue
+            indexes = model.get("indexes") or {}
+            levels = model.get("levels") or {}
+            favorite = model.get("favorite") or {}
+            signals = [
+                signal for signal in model.get("signals") or []
+                if isinstance(signal, dict)
+            ]
+            match_id = str(item.get("match_id") or "")
+            if not match_id:
+                continue
+            base = {
+                "match_id": match_id,
+                "match_number": item.get("match_number"),
+                "league": item.get("league"),
+                "home_team": item.get("home_team"),
+                "away_team": item.get("away_team"),
+                "favorite_team": favorite.get("team"),
+                "favorite_odds": favorite.get("current_odds"),
+                "favorite_band": favorite.get("band_label"),
+                "draw_odds": (model.get("draw_odds") or {}).get("current"),
+                "handicap_draw_odds": model.get("handicap_draw_odds"),
+                "suggested_focus": model.get("suggested_focus") or [],
+                "signal_labels": [
+                    str(signal.get("label") or signal.get("key") or "")
+                    for signal in signals[:4]
+                    if signal.get("label") or signal.get("key")
+                ],
+                "reason": "；".join(
+                    str(signal.get("reason") or "")
+                    for signal in signals[:3]
+                    if signal.get("reason")
+                ),
+            }
+            for key, title in labels.items():
+                index = _number(indexes.get(key))
+                if index is None or index < 45:
+                    continue
+                rows.append({
+                    **base,
+                    "bucket": key,
+                    "title": title,
+                    "selection": selections[key],
+                    "index": round(index, 1),
+                    "level": levels.get(key) or _index_level(index),
+                })
+
+        def top(bucket: str, limit: int) -> List[Dict[str, Any]]:
+            return sorted(
+                [row for row in rows if row.get("bucket") == bucket],
+                key=lambda row: float(row.get("index") or 0),
+                reverse=True,
+            )[:limit]
+
+        result["odds_band_indicators"] = {
+            "version": ODDS_BAND_MODEL_VERSION,
+            "policy": (
+                "赔率区间指标用于识别危险赔率带：热门过热、下盘爆冷、"
+                "让平价值分别排序；指标高只代表需要降级热门或纳入扫描，"
+                "不等于直接投注。"
+            ),
+            "favorite_heat": top("favorite_heat", 5),
+            "underdog_upset": top("underdog_upset", 5),
+            "handicap_draw_value": top("handicap_draw_value", 5),
+        }
         return result
 
     @staticmethod
@@ -2309,11 +4031,24 @@ class FAEDailyAIAnalyzer:
             effective_primary_play, guard = cls._selection_consistency_guard(
                 source, value_primary_play
             )
+            non_cover_guard = cls._favorite_non_cover_guard(
+                source, effective_primary_play
+            )
+            if non_cover_guard.get("triggered"):
+                effective_primary_play = str(
+                    non_cover_guard.get("effective_selection")
+                    or effective_primary_play
+                )
             analysis["model_primary_play"] = model_primary_play
             analysis["primary_play"] = effective_primary_play
             analysis["value_guard"] = value_guard
             analysis["consistency_guard"] = guard
-            if guard.get("triggered") or value_guard.get("triggered"):
+            analysis["non_cover_guard"] = non_cover_guard
+            if (
+                guard.get("triggered")
+                or value_guard.get("triggered")
+                or non_cover_guard.get("triggered")
+            ):
                 analysis["secondary_play"] = None
             value_profile = cls._play_value_profile(
                 source, effective_primary_play
@@ -2486,6 +4221,16 @@ class FAEDailyAIAnalyzer:
             if inferred_divergence and bet_score < 70:
                 no_bet = True
                 no_bet_reasons.append("欧亚背离且投注分不足")
+            if non_cover_guard.get("force_no_bet"):
+                no_bet = True
+                no_bet_reasons.append(
+                    str(
+                        non_cover_guard.get("reason")
+                        or "热门不穿护栏触发"
+                    )
+                )
+                cap = min(cap, 2.5)
+                adjustments.append("热门方向被受让低赔保护项压制，正式结论为不下注")
             if no_bet:
                 cap = min(cap, 2.5)
                 adjustments.append("未达到投注门槛，正式结论为不下注")

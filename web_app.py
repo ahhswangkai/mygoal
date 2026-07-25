@@ -1682,6 +1682,24 @@ def get_fae_daily_ai():
             data.get('daily_summary') or {},
             data.get('matches') or [],
         )
+        data['daily_summary'] = (
+            fae_daily_ai_analyzer.attach_league_model_rankings(
+                data.get('daily_summary') or {},
+                data.get('matches') or [],
+            )
+        )
+        data['daily_summary'] = (
+            fae_daily_ai_analyzer.attach_upset_warning_summary(
+                data.get('daily_summary') or {},
+                data.get('matches') or [],
+            )
+        )
+        data['daily_summary'] = (
+            fae_daily_ai_analyzer.attach_odds_band_summary(
+                data.get('daily_summary') or {},
+                data.get('matches') or [],
+            )
+        )
         data['daily_summary'] = fae_daily_ai_analyzer.align_summary_ratings(
             data.get('daily_summary') or {},
             data.get('matches') or [],

@@ -2,7 +2,7 @@
 
 ENGINE_NAME = "Football AI Engine"
 ENGINE_CODE = "FAE"
-ENGINE_VERSION = "2.7.1"
+ENGINE_VERSION = "2.10.0"
 SCHEMA_VERSION = "2.5"
 
 DIMENSION_WEIGHTS = {
@@ -73,6 +73,9 @@ VERSION_MANIFEST = {
         "普通平局与竞彩让平独立雷达、核心/观察分层及赛后单独结算",
         "历史赔率区间、让球数、联赛与初即时变化的保守概率校准",
         "强热门不穿场景下的普通平/竞彩让平雷达纠偏",
+        "欧赔亚盘推热门但竞彩受让低赔保护时的热门降级护栏",
+        "联赛模板指数：平局、让平、大小球和冷门筛选层",
+        "爆冷预警扫描器：盘口降级、平赔压低与热门穿盘风险评分",
     ],
     "learning_policy": {
         "minimum_samples": 10,
