@@ -17,6 +17,31 @@ from .version import ENGINE_VERSION
 
 DAILY_PROMPT_VERSION = "five-market-daily-v13-historical-market-rules"
 
+DRAW_SELECTION_MIN_PROBABILITY = {
+    "平局": 27.0,
+    "让平": 27.0,
+}
+DRAW_SELECTION_CORE_SCORE = {
+    "平局": 72.0,
+    "让平": 74.0,
+}
+DRAW_SELECTION_WATCH_SCORE = {
+    "平局": 62.0,
+    "让平": 64.0,
+}
+DRAW_SELECTION_MIN_VALUE = {
+    "平局": 0.0,
+    "让平": 1.5,
+}
+DRAW_SELECTION_MIN_SAMPLE = {
+    "平局": 20.0,
+    "让平": 24.0,
+}
+DRAW_SELECTION_MAX_RISK_IDS = {
+    "平局": 2,
+    "让平": 3,
+}
+
 HANDICAP_VALUES = {
     "平手": 0.0, "平/半": 0.25, "平手/半球": 0.25,
     "半球": 0.5, "半/一": 0.75, "半球/一球": 0.75,
@@ -1375,6 +1400,17 @@ class FAEDailyAIAnalyzer:
             str(reason) for reason in result.get("no_bet_reasons") or []
             if str(reason) not in {"赔率价值不足", "综合投注分未达门槛"}
         ]
+        metric_label = str(result.get("label") or "")
+        effective_sample = _number(metric.get("effective_sample"))
+        minimum_sample = DRAW_SELECTION_MIN_SAMPLE.get(metric_label)
+        if minimum_sample is not None:
+            if effective_sample is None or effective_sample < minimum_sample:
+                reasons.append("历史样本不足，不作为单场主推")
+            elif (
+                str(metric.get("confidence") or "") == "低"
+                and effective_sample < minimum_sample * 1.4
+            ):
+                reasons.append("历史置信度不足，命中预估偏弱")
         if value_score < 52:
             reasons.append("历史校准后赔率价值不足")
         if bet_score < 55:
@@ -1597,17 +1633,22 @@ class FAEDailyAIAnalyzer:
             score -= 8
         score = round(max(0, min(99, score)))
 
-        minimum_probability = 26 if selection == "平局" else 23
+        min_probability = DRAW_SELECTION_MIN_PROBABILITY.get(selection, 23)
+        min_score = DRAW_SELECTION_CORE_SCORE.get(selection, 70)
+        min_watch_score = DRAW_SELECTION_WATCH_SCORE.get(selection, 52)
+        min_value = DRAW_SELECTION_MIN_VALUE.get(selection, 0)
+        max_risk_count = DRAW_SELECTION_MAX_RISK_IDS.get(selection, 2)
         core = bool(
             history_eligible
             and probability is not None
-            and probability >= minimum_probability
+            and probability >= min_probability
             and odds_value is not None
-            and odds_value >= 0
-            and score >= 70
+            and odds_value >= min_value
+            and score >= min_score
             and confidence_score >= 55
             and not profile.get("no_bet")
             and not severe_data_risk
+            and len(relevant_risks) <= max_risk_count
         )
         watch = bool(
             not core
@@ -1615,7 +1656,7 @@ class FAEDailyAIAnalyzer:
             and (
                 (
                     history_eligible
-                    and score >= 52
+                    and score >= min_watch_score
                 )
                 or role_signals
             )
@@ -1928,21 +1969,77 @@ class FAEDailyAIAnalyzer:
             ),
         )
         best_selection = str(best.get("label") or model_selection)
+        best_profile = cls._historical_adjusted_profile(source, dict(best))
+        best_score = float(
+            best_profile.get("bet_score")
+            or best_profile.get("score")
+            or best.get("bet_score")
+            or best.get("score")
+            or 0
+        )
+        best_odds_value = _number(best_profile.get("odds_value"))
+        best_value_score = float(best_profile.get("value_score") or 0)
         current_score = float(
             current.get("bet_score") or current.get("score") or 0
         )
-        best_score = float(
-            best.get("bet_score") or best.get("score") or 0
+        current_profile = (
+            cls._historical_adjusted_profile(source, dict(current))
+            if current else {}
         )
-        triggered = (
+        current_value_profile = float(
+            current_profile.get("value_score")
+            or current_profile.get("bet_score")
+            or current_score
+            or 0
+        )
+        base_triggered = (
             best_selection != model_selection
-            and best_score >= 62
+            and best_score >= 66
+            and (best_odds_value is None or best_odds_value >= 0)
             and (
                 not current
                 or current.get("no_bet")
                 or best_score - current_score >= 12
             )
         )
+        if best_selection in {"平局", "让平"}:
+            if model_selection in {"平局", "让平"}:
+                draw_upgrade = False
+                gap = 14 if best_selection == "平局" else 16
+                if (
+                    base_triggered
+                    and best_score - current_score >= gap
+                    and best_value_score >= 58
+                    and best_odds_value is not None
+                    and best_odds_value >= DRAW_SELECTION_MIN_VALUE.get(
+                        best_selection, 0
+                    )
+                ):
+                    draw_upgrade = True
+                triggered = draw_upgrade
+            else:
+                draw_upgrade = (
+                    best_score >= 70
+                    and best_value_score >= 58
+                    and best_value_score - current_value_profile >= 7
+                    and best_score - current_score >= 16
+                    and best_odds_value is not None
+                    and best_odds_value >= DRAW_SELECTION_MIN_VALUE.get(
+                        best_selection, 0
+                    )
+                    and "数据缺失" not in str(best_profile.get("no_bet_reasons") or "")
+                )
+                triggered = bool(draw_upgrade)
+        else:
+            draw_upgrade = False
+            triggered = base_triggered
+        if (
+            triggered
+            and best_selection in {"平局", "让平"}
+            and best_odds_value is not None
+            and best_odds_value < DRAW_SELECTION_MIN_VALUE.get(best_selection, 0)
+        ):
+            triggered = False
         if not triggered:
             return model_selection, {
                 "triggered": False,

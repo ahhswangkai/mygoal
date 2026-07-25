@@ -34,16 +34,21 @@ def _prepare_candidates(
     rankings: Dict[str, Any],
     strategy_weights: Optional[Dict[str, float]] = None,
 ) -> List[Dict[str, Any]]:
+    """Prepare ranked candidates; keep only non-no-bet, bettable entries."""
     candidates: List[Dict[str, Any]] = []
     groups = rankings.get("groups") or {}
     weights = strategy_weights or {}
     for category in ("平局", "让平"):
         for raw in groups.get(category) or []:
+            if raw.get("no_bet"):
+                continue
             probability = _number(raw.get("probability")) or 0
             score = _number(raw.get("score")) or 0
             risk_score = _number((raw.get("risk") or {}).get("score")) or 0
             odds = _number(raw.get("odds"))
             implied_probability = 100 / odds if odds and odds > 1 else None
+            if implied_probability is not None and probability <= implied_probability:
+                continue
             strategy_weight = max(
                 0.70, min(1.30, _number(weights.get(category)) or 1.0)
             )
@@ -75,8 +80,11 @@ def _build_combinations(
     legs: int,
     limit: int,
 ) -> List[Dict[str, Any]]:
+    candidates = list(candidates)
+    has_draw = any(item.get("selection") == "平局" for item in candidates)
+    has_handicap_draw = any(item.get("selection") == "让平" for item in candidates)
     rows = []
-    for picks in combinations(list(candidates), legs):
+    for picks in combinations(candidates, legs):
         if len({str(item.get("match_id")) for item in picks}) != legs:
             continue
         odds_values = [item.get("odds_value") for item in picks]
@@ -85,6 +93,14 @@ def _build_combinations(
             combined_odds = 1.0
             for value in odds_values:
                 combined_odds *= value
+        selection_set = {
+            str(item.get("selection") or "") for item in picks
+        }
+        if has_draw and has_handicap_draw and legs >= 2:
+            if legs == 2 and len(selection_set) < 2:
+                continue
+            if legs == 3 and not {"平局", "让平"}.issubset(selection_set):
+                continue
         model_probability = 1.0
         for item in picks:
             model_probability *= max(
