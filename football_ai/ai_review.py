@@ -14,7 +14,7 @@ from .provider import ArkNarrativeClient, FAEOutputError
 from .version import ENGINE_VERSION
 
 
-AI_REVIEW_PROMPT_VERSION = "fae-deep-review-v6-draw-radar"
+AI_REVIEW_PROMPT_VERSION = "fae-deep-review-v7-all-matches"
 SETTLED_STATUSES = {"hit", "miss", "push"}
 LEARNING_SCOPES = {
     "euro",
@@ -44,7 +44,12 @@ class FAEAIReviewAnalyzer:
         snapshot: Dict[str, Any],
         review: Dict[str, Any],
     ) -> Dict[str, Any]:
-        """Build a compact audit input containing only settled predictions."""
+        """Build a compact audit input for every finished daily-AI match.
+
+        Official bet ROI still uses hit/miss/push rows only. Deep review must
+        audit no-bet and pure observation rows as well, because those decisions
+        are part of the model behaviour.
+        """
         source_by_id = {
             str(item.get("match_id") or ""): item
             for item in snapshot.get("matches") or []
@@ -62,7 +67,12 @@ class FAEAIReviewAnalyzer:
                 radar_by_id.setdefault(match_id, []).append(item)
         matches = []
         for result in review.get("match_results") or []:
-            if result.get("status") not in SETTLED_STATUSES:
+            status = result.get("status")
+            is_finished_observation = (
+                status == "skipped"
+                and bool(result.get("result_score"))
+            )
+            if status not in SETTLED_STATUSES and not is_finished_observation:
                 continue
             match_id = str(result.get("match_id") or "")
             source = source_by_id.get(match_id) or {}
@@ -81,6 +91,9 @@ class FAEAIReviewAnalyzer:
                     "model_selection": result.get("model_selection"),
                     "rating": result.get("rating"),
                     "odds": result.get("odds"),
+                    "no_bet": bool(result.get("no_bet")),
+                    "no_bet_reasons": result.get("no_bet_reasons") or [],
+                    "decision": analysis.get("decision"),
                     "guardrail_triggered": result.get(
                         "guardrail_triggered"
                     ),
@@ -149,6 +162,7 @@ class FAEAIReviewAnalyzer:
                 "result": {
                     "score": result.get("result_score"),
                     "status": result.get("status"),
+                    "observation_status": result.get("observation_status"),
                     "return": result.get("return"),
                     "profit": result.get("profit"),
                 },
@@ -226,6 +240,17 @@ class FAEAIReviewAnalyzer:
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "coverage": {
                 "settled_matches": len(matches),
+                "reviewed_matches": len(matches),
+                "no_bet_matches": sum(
+                    1 for item in matches
+                    if ((item.get("prediction") or {}).get("no_bet"))
+                ),
+                "official_bet_matches": sum(
+                    1 for item in matches
+                    if not ((item.get("prediction") or {}).get("no_bet"))
+                    and ((item.get("result") or {}).get("status"))
+                    in SETTLED_STATUSES
+                ),
                 "settled_handicap_references": int(
                     (((review.get("summary") or {}).get("handicap") or {})
                      .get("settled") or 0)
@@ -267,7 +292,7 @@ class FAEAIReviewAnalyzer:
             },
             "matches": [{
                 "match_id": "必须来自输入",
-                "verdict": "判断有效/命中但过程有风险/判断失误/走盘",
+                "verdict": "判断有效/命中但过程有风险/判断失误/走盘/不下注合理/不下注过保守/观望复盘",
                 "handicap_verdict": "让球参考命中/让球参考未中/让球走盘/未推荐",
                 "diagnosis": "60到180字",
                 "correct_signals": ["赛前已记录且有效的信号"],
@@ -305,6 +330,9 @@ class FAEAIReviewAnalyzer:
             "固定复核欧赔、亚盘真实升深、竞彩让球、大小球和市场一致性五项。",
             "升降属于走势而非盘口名；让平必须结合输入中的具体让球数解释。",
             "必须分别复核正式主选与handicap_prediction中的竞彩让球参考；普通主胜命中不能掩盖让胜、让平或让负未中。",
+            "所有已完赛比赛都必须复盘，包括prediction.no_bet=true的不下注比赛和selection=观望的观察比赛；不下注不是跳过，而是风险控制决策，需要判断合理还是过保守。",
+            "prediction.no_bet=true时，result.status通常为skipped，result.observation_status表示如果按赛前观察方向下注会命中、未中或走盘；若observation_status=miss，优先复核不下注是否避免错误，若observation_status=hit，必须复核是否过度保守。",
+            "selection=观望且没有具体下注方向时，不能按命中率评价，只复核是否正确识别了数据不足、盘口冲突或风险。",
             "必须单独复核draw_radar_predictions：核心候选与观察候选分开统计；观察命中不能事后包装成正式推荐，核心未中也必须记录。",
             "竞彩让球必须严格按保存的让球数计算：主队-1时，赢2球以上为让胜、恰好赢1球为让平、其余为让负；确定性结算结果优先于文字推断。",
             "market_risk_context中的水位模式仅表示赛前风险结构；可以检验该预警是否有效，但不得把退盘、升水或欧亚背离直接写成比赛失利的真实原因。",
@@ -314,7 +342,7 @@ class FAEAIReviewAnalyzer:
             "若盘口无明显预警，只能说明现有赛前市场数据无法解释赛果；没有xG、红牌、射门等过程数据时必须明确未知。",
             "调权只能作为候选，单日样本不得直接修改正式权重；每个候选必须给出至少10个样本的验证门槛。",
             "match_id仅允许用于JSON关联字段；结论、做对了什么、需要修正、市场复核、逐场诊断、调权候选和组合复核等所有自然语言必须使用match_number（如周四201），严禁展示原始比赛ID。",
-            "输入中的每场已结算比赛必须在matches中恰好出现一次。",
+            "输入中的每场已完赛比赛必须在matches中恰好出现一次，包括不下注和观望。",
         ]
         return "\n\n".join([
             f"你是 Football AI Engine v{ENGINE_VERSION} 的 AI 深度复盘层。",
@@ -348,18 +376,37 @@ class FAEAIReviewAnalyzer:
             match_id = str(source.get("match_id") or "")
             generated = generated_by_id.get(match_id) or {}
             result_status = ((source.get("result") or {}).get("status"))
+            observation_status = (
+                (source.get("result") or {}).get("observation_status")
+            )
+            no_bet = bool((source.get("prediction") or {}).get("no_bet"))
             handicap_prediction = source.get("handicap_prediction") or {}
             handicap_status = handicap_prediction.get("status")
-            fallback_verdict = {
-                "hit": "判断有效",
-                "miss": "判断失误",
-                "push": "走盘",
-            }.get(result_status, "判断失误")
+            if no_bet:
+                fallback_verdict = {
+                    "hit": "不下注过保守",
+                    "miss": "不下注合理",
+                    "push": "走盘",
+                }.get(observation_status, "不下注合理")
+            elif result_status == "skipped":
+                fallback_verdict = "观望复盘"
+            else:
+                fallback_verdict = {
+                    "hit": "判断有效",
+                    "miss": "判断失误",
+                    "push": "走盘",
+                }.get(result_status, "观望复盘")
             verdict = cls._text(
                 generated.get("verdict"), fallback_verdict, 30
             )
             if verdict not in {
-                "判断有效", "命中但过程有风险", "判断失误", "走盘"
+                "判断有效",
+                "命中但过程有风险",
+                "判断失误",
+                "走盘",
+                "不下注合理",
+                "不下注过保守",
+                "观望复盘",
             }:
                 verdict = fallback_verdict
             normalized_matches.append({
@@ -376,6 +423,12 @@ class FAEAIReviewAnalyzer:
                     "selection_text"
                 ),
                 "handicap_result_status": handicap_status,
+                "no_bet": no_bet,
+                "no_bet_reasons": (
+                    (source.get("prediction") or {}).get("no_bet_reasons")
+                    or []
+                ),
+                "observation_status": observation_status,
                 "handicap_verdict": {
                     "hit": "让球参考命中",
                     "miss": "让球参考未中",

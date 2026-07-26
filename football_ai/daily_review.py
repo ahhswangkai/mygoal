@@ -483,14 +483,19 @@ class FAEDailyAIReviewEngine:
                 "historical_goal_margin"
             ) or {},
         }
-        if selection == "观望":
-            result.update({"status": "skipped", "return": None, "profit": None})
-            return result
         final_score = _score(match)
         if match.get("status") not in (2, "2") or not final_score:
             result.update({"status": "pending", "return": None, "profit": None})
             return result
         home, away = final_score
+        if selection == "观望":
+            result.update({
+                "status": "skipped",
+                "result_score": f"{home}:{away}",
+                "return": None,
+                "profit": None,
+            })
+            return result
         grade = cls._grade(
             selection, home, away, handicap=handicap, total_line=total_line
         )

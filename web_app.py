@@ -1325,13 +1325,20 @@ def _review_fae_daily_ai(owner_date, force_ai=False):
     ai_review_enabled = os.getenv(
         'FAE_AI_REVIEW_ENABLED', 'true'
     ).lower() in ('1', 'true', 'yes', 'on')
-    settled_count = int(
-        ((review.get('summary') or {}).get('singles') or {}).get(
-            'settled', 0
+    reviewable_count = sum(
+        1 for row in review.get('match_results') or []
+        if row.get('status') in ('hit', 'miss', 'push')
+        or (
+            row.get('status') == 'skipped'
+            and row.get('result_score')
         )
     )
     existing = mongo_storage.get_fae_daily_ai_review(owner_date) or {}
-    if ai_review_enabled and fae_ai_review_analyzer.configured and settled_count:
+    if (
+        ai_review_enabled
+        and fae_ai_review_analyzer.configured
+        and reviewable_count
+    ):
         desired_hash = fae_ai_review_analyzer.input_hash(snapshot, review)
         cached = existing.get('ai_deep_review') or {}
         if not force_ai and cached.get('input_hash') == desired_hash:
@@ -1379,7 +1386,7 @@ def _review_fae_daily_ai(owner_date, force_ai=False):
                     'Unexpected FAE AI deep review error for %s',
                     owner_date,
                 )
-    elif settled_count:
+    elif reviewable_count:
         review['ai_deep_review_unavailable'] = (
             'AI 深度复盘未启用'
             if not ai_review_enabled

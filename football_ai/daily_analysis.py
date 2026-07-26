@@ -15,17 +15,31 @@ from .provider import ArkNarrativeClient, FAEError, FAEOutputError
 from .version import ENGINE_VERSION
 
 
-DAILY_PROMPT_VERSION = "five-market-daily-v18-odds-band-upset-scanner"
+DAILY_PROMPT_VERSION = "five-market-daily-v19-draw-only-strict-gate"
+
+OFFICIAL_PLAY_SELECTIONS = {"平局", "让平"}
+OFFICIAL_MIN_BET_SCORE = 70.0
+OFFICIAL_MIN_VALUE_SCORE = 60.0
+OFFICIAL_MIN_MARKET_CONFIDENCE = 70.0
+OFFICIAL_MIN_RATING = 4.0
+ASIAN_HARD_DOWNGRADE_RISKS = {
+    "deepen_high_water",
+    "upper_water_rise",
+    "water_drop_without_deepen",
+    "handicap_retreat",
+    "euro_asian_divergence",
+    "overheated_shallow",
+}
 
 DRAW_SELECTION_POLICY_DEFAULT = "conservative"
 
 # 通过可切换策略统一控制平/让平的门槛。便于AB测试、回测复盘和线上快速回退。
 DRAW_SELECTION_POLICIES = {
     "conservative": {
-        "min_probability": {"平局": 29.0, "让平": 29.0},
-        "core_score": {"平局": 74.0, "让平": 76.0},
-        "watch_score": {"平局": 63.0, "让平": 66.0},
-        "min_value": {"平局": 0.0, "让平": 2.0},
+        "min_probability": {"平局": 30.0, "让平": 30.0},
+        "core_score": {"平局": 78.0, "让平": 80.0},
+        "watch_score": {"平局": 64.0, "让平": 67.0},
+        "min_value": {"平局": 2.0, "让平": 4.0},
         "min_sample": {"平局": 24.0, "让平": 28.0},
         "max_risk_ids": {"平局": 1, "让平": 2},
         "draw_upgrade_gap_from_draw": {"平局": 15.0, "让平": 17.0},
@@ -2212,6 +2226,9 @@ class FAEDailyAIAnalyzer:
             "升降属于走势，不属于盘口名称；必须区分升盘与降水。",
             "竞彩让平必须结合具体让球数解释：主队-1时让平代表主队赢1球，主队+1时代表客队赢1球。",
             "严格区分客队小胜与竞彩让负：away_small_win只放客队明确为胜负方向且预计净胜1球的比赛；竞彩让负必须放入handicap_lose，禁止放入away_small_win。",
+            "正式推荐只服务用户主玩法：平局和让平。主胜、客胜、让胜、让负、大球、小球只能写方向观察或风险解释，禁止进入核心推荐和组合。",
+            "正式推荐必须同时满足投注分>=70、价值指数>=60、盘口可信度>=70、星级>=4；不满足任一条件必须写不下注。",
+            "亚盘不配合（退盘、升盘高水、上盘升水、降水不升盘、欧亚背离、热门浅盘）时，胜负方向必须硬降级为观察，不得只写风险提示后继续推荐。",
             "大小球跳动达到0.75或以上时优先标记数据异常，不得据此强推方向。",
             "不得伪造近期状态、伤停、首发、天气、战意和赛程；输入缺失必须明确说明。",
             "fundamentals来自500赛前页：recent、history、team_rankings、future可作基本面证据；lineups.status=predicted仅表示预计阵容，禁止称为官方首发；injuries.status=no_listed_players仅表示页面未列出球员，禁止称为确认无伤停。",
@@ -2305,6 +2322,8 @@ class FAEDailyAIAnalyzer:
             "历史联赛频率不是真实概率，必须让位于本场欧赔、亚盘、竞彩、大小球和市场一致性。",
             "league_tactical_model是联赛模板指数，只能作为低到中权重筛选层；指数高但赔率价值、盘口一致性或数据质量不足时仍必须降级或不下注。",
             "odds_band_model是赔率区间扫描器：favorite_heat、underdog_upset、handicap_draw_value分别对应热门过热、下盘爆冷、让平价值；指数高只能降低热门或增加防选，不得脱离盘口一致性直接反买。",
+            "正式推荐只允许平局或让平；主胜、客胜、让胜、让负、大球、小球只保留方向观察。正式推荐必须投注分>=70、价值指数>=60、盘口可信度>=70、星级>=4。",
+            "亚盘不配合时胜负方向必须硬降级为观察，不能只写风险提示后继续推荐。",
             "upset_warning_model达到重点防冷时，热门胜负方向必须降级为观察或不下注；防选优先写平局、受让保护项或让平，但不得把爆冷预警写成确定赛果。",
             "historical_goal_margin_model将普通平局定义为0球分差，将让平定义为当前竞彩让球数对应的精确净胜球差；两种玩法必须分开引用。仅eligible_for_adjustment=true且effective_sample达标时允许参与校准。",
             "historical_odds_rules是固定历史回放的有限修正规则；只能引用matched_rule_ids中已命中项及其sample、hit_rate、market_probability和adjustment_pp，不得写成必出规律。",
@@ -2393,6 +2412,9 @@ class FAEDailyAIAnalyzer:
             f"你是 FAE v{ENGINE_VERSION} 的全日总编。日期：{owner_date}。",
             "以下逐场结论已经完成。请横向比较全部比赛，只做当日排名和组合，不重写逐场分析。",
             "优先给出同时包含平局与让平的高质量2串1、3串1；不得为了混合而凑低质量选择。",
+            "正式推荐池和组合只允许平局/让平；主胜、客胜、让胜、让负、大球、小球只能进入观察或避开说明。",
+            "正式推荐必须投注分>=70、价值指数>=60、盘口可信度>=70、星级>=4；低于门槛不允许进入核心池。",
+            "亚盘不配合时胜负方向必须硬降级为观察，不得在摘要里重新包装成可下注推荐。",
             "严格区分推荐池：客队小胜只放客胜方向且预计客队净胜1球的比赛；竞彩让负无论主客强弱都只能放入handicap_lose池。",
             "结合历史复盘记忆检查是否重复犯错，但记忆不能替代当天盘口，也不能把单日赛果当成稳定规律。",
             "validated_pattern_count为0时不得输出历史0%命中区间、严禁纳入、全部排除等绝对规则；单日小样本只能作为风险备注。",
@@ -4208,10 +4230,51 @@ class FAEDailyAIAnalyzer:
                 or effective_primary_play == "观望"
                 or not value_profile
             )
+            value_score_number = _number(value_profile.get("value_score"))
+            market_confidence_score = (
+                _number(market_confidence.get("score")) or 0
+            )
+            asian_risk_ids = {
+                str(value)
+                for value in (current_asian_risk.get("pattern_ids") or [])
+            }
+            asian_hard_downgrade = bool(
+                asian_risk_ids & ASIAN_HARD_DOWNGRADE_RISKS
+            ) or inferred_divergence
             if value_guard.get("no_bet_only"):
                 no_bet_reasons.append("全部玩法均未达到投注门槛")
             if not value_profile:
                 no_bet_reasons.append("缺少主选对应的赔率价值数据")
+            if effective_primary_play not in OFFICIAL_PLAY_SELECTIONS:
+                no_bet = True
+                no_bet_reasons.append(
+                    "非平/让平玩法仅保留方向观察，不进入正式推荐"
+                )
+                cap = min(cap, 2.5)
+                adjustments.append(
+                    "主胜/客胜/让胜/让负不再作为正式推荐，只作方向观察"
+                )
+            if bet_score < OFFICIAL_MIN_BET_SCORE:
+                no_bet = True
+                no_bet_reasons.append(
+                    f"投注分低于{OFFICIAL_MIN_BET_SCORE:g}分正式门槛"
+                )
+                cap = min(cap, 2.5)
+            if (
+                value_score_number is None
+                or value_score_number < OFFICIAL_MIN_VALUE_SCORE
+            ):
+                no_bet = True
+                no_bet_reasons.append(
+                    f"价值指数低于{OFFICIAL_MIN_VALUE_SCORE:g}分正式门槛"
+                )
+                cap = min(cap, 2.5)
+            if market_confidence_score < OFFICIAL_MIN_MARKET_CONFIDENCE:
+                no_bet = True
+                no_bet_reasons.append(
+                    f"盘口可信度低于{OFFICIAL_MIN_MARKET_CONFIDENCE:g}分正式门槛"
+                )
+                cap = min(cap, 2.5)
             if risk.get("dangerous"):
                 no_bet = True
                 no_bet_reasons.append("风险模型判定危险")
@@ -4221,6 +4284,16 @@ class FAEDailyAIAnalyzer:
             if inferred_divergence and bet_score < 70:
                 no_bet = True
                 no_bet_reasons.append("欧亚背离且投注分不足")
+            if (
+                asian_hard_downgrade
+                and effective_primary_play not in OFFICIAL_PLAY_SELECTIONS
+            ):
+                no_bet = True
+                no_bet_reasons.append(
+                    "亚盘不配合触发硬降级，胜负方向不得进入正式推荐"
+                )
+                cap = min(cap, 2.5)
+                adjustments.append("亚盘不配合，胜负方向硬降级为观察")
             if non_cover_guard.get("force_no_bet"):
                 no_bet = True
                 no_bet_reasons.append(
@@ -4504,11 +4577,11 @@ class FAEDailyAIAnalyzer:
         pool_selections = {
             "handicap_draw": "让平",
             "draw": "平局",
-            "away_small_win": "客胜",
-            "handicap_lose": "让负",
         }
         pools = {}
         for key, items in (result.get("pools") or {}).items():
+            if key in {"core", "away_small_win", "handicap_lose"}:
+                continue
             rows = []
             for item in items or []:
                 row = dict(item)
@@ -4600,9 +4673,19 @@ class FAEDailyAIAnalyzer:
         candidates = sorted(
             (
                 item for item in matches
-                if float((item.get("analysis") or {}).get("rating") or 0) >= 3.5
-                and (item.get("analysis") or {}).get("primary_play") != "观望"
+                if str((item.get("analysis") or {}).get("primary_play") or "")
+                in OFFICIAL_PLAY_SELECTIONS
+                and float((item.get("analysis") or {}).get("rating") or 0)
+                >= OFFICIAL_MIN_RATING
                 and not (item.get("analysis") or {}).get("no_bet")
+                and float((item.get("analysis") or {}).get("bet_score") or 0)
+                >= OFFICIAL_MIN_BET_SCORE
+                and float((item.get("analysis") or {}).get("value_score") or 0)
+                >= OFFICIAL_MIN_VALUE_SCORE
+                and float((((item.get("analysis") or {})
+                           .get("market_confidence") or {})
+                          .get("score") or 0))
+                >= OFFICIAL_MIN_MARKET_CONFIDENCE
             ),
             key=lambda item: (
                 float((item.get("analysis") or {}).get("rating") or 0),
@@ -4663,7 +4746,7 @@ class FAEDailyAIAnalyzer:
         ]
         calibrated_text = (
             "校准后核心：" + "；".join(core_parts) + "。"
-            if core_parts else "校准后核心：今天没有达到3.5星的核心场次。"
+            if core_parts else "校准后核心：今天没有达到4星正式门槛的平/让平核心场次。"
         )
         if downgraded:
             calibrated_text += (
@@ -4862,7 +4945,8 @@ class FAEDailyAIAnalyzer:
             for key, items in (result.get("pools") or {}).items()
         }
         for key in (
-            "handicap_draw", "draw", "away_small_win", "handicap_lose"
+            "core", "handicap_draw", "draw", "away_small_win",
+            "handicap_lose"
         ):
             pools[key] = [
                 item for item in pools.get(key) or []

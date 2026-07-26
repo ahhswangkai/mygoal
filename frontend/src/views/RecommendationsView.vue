@@ -589,8 +589,9 @@
                 <div>
                   <strong>火山方舟深度复盘</strong>
                   <small>
-                    已审计 {{ faeReview.ai_deep_review.coverage?.settled_matches || 0 }}
+                    已复盘 {{ faeReview.ai_deep_review.coverage?.reviewed_matches || faeReview.ai_deep_review.coverage?.settled_matches || 0 }}
                     / {{ faeReview.ai_deep_review.coverage?.total_matches || 0 }} 场 ·
+                    不下注 {{ faeReview.ai_deep_review.coverage?.no_bet_matches || 0 }} 场 ·
                     让球参考 {{ faeReview.ai_deep_review.coverage?.settled_handicap_references || 0 }} 项 ·
                     {{ faeReview.ai_deep_review.model }}
                   </small>
@@ -666,7 +667,10 @@
                     <b>{{ item.match_number }}</b>
                     {{ item.home_team }} vs {{ item.away_team }}
                   </span>
-                  <em>{{ item.selection_text }} · {{ item.result_score }}</em>
+                  <em>
+                    {{ item.no_bet ? `不下注（观察${item.selection_text || '观望'}）` : item.selection_text }}
+                    · {{ item.result_score }}
+                  </em>
                   <i :class="aiVerdictClass(item.verdict)">{{ item.verdict }}</i>
                 </summary>
                 <small v-if="item.handicap_selection_text" class="ai-handicap-verdict">
@@ -694,7 +698,7 @@
             </small>
           </section>
           <div
-            v-else-if="faeReview && faeReview.summary?.singles?.settled"
+            v-else-if="faeReview && reviewableMatchCount"
             class="ai-review-waiting"
           >
             <strong>确定性结算已完成</strong>
@@ -705,7 +709,13 @@
 
           <template v-if="faeReview">
             <section class="daily-review-block">
-              <h2><span>正式主选逐场结果</span><small>{{ faeReview.summary?.singles?.hits || 0 }}/{{ faeReview.summary?.singles?.settled || 0 }}</small></h2>
+              <h2>
+                <span>全量逐场复盘</span>
+                <small>
+                  主选 {{ faeReview.summary?.singles?.hits || 0 }}/{{ faeReview.summary?.singles?.settled || 0 }}
+                  · 不下注 {{ reviewNoBetCount }}
+                </small>
+              </h2>
               <button
                 v-for="item in faeReview.match_results"
                 :key="item.match_id"
@@ -716,8 +726,10 @@
                   <b>{{ item.match_number }}</b>{{ item.home_team }} vs {{ item.away_team }}
                 </span>
                 <span class="review-pick-info">
-                  <strong>{{ item.selection_text || item.selection }}</strong>
-                  <i :class="item.status">{{ reviewStatusLabel(item.status) }}</i>
+                  <strong>
+                    {{ item.no_bet ? `不下注（观察${item.selection_text || item.selection}）` : (item.selection_text || item.selection) }}
+                  </strong>
+                  <i :class="item.status">{{ reviewStatusLabel(item.status, item.no_bet) }}</i>
                   <small v-if="item.guardrail_triggered" class="guarded-pick">
                     AI原选{{ item.model_selection }}
                   </small>
@@ -1016,10 +1028,9 @@ const dateOptions = Array.from({ length: 7 }, (_, index) => {
 })
 
 const dailyPoolLabels = {
-  core: '重点推荐',
-  handicap_lose: '重点让负',
-  away_small_win: '客队小胜',
-  avoid: '建议避开'
+  draw: '正式平局',
+  handicap_draw: '正式让平',
+  avoid: '方向观察'
 }
 const dailyPoolGroups = computed(() => {
   const source = faeDailyAi.value?.daily_summary?.pools || {}
@@ -1031,21 +1042,6 @@ const dailyPoolGroups = computed(() => {
       ))
     ])
   )
-  pools.handicap_lose ||= []
-  pools.away_small_win = (pools.away_small_win || []).filter(item => {
-    const match = dailyMatch(item.match_id)
-    const analysis = match.analysis || {}
-    const hhad = match.input_snapshot?.fae_core?.probabilities?.hhad || {}
-    const letLoseIsTop = Number(hhad.lose || 0) >= Math.max(
-      Number(hhad.win || 0),
-      Number(hhad.draw || 0)
-    )
-    const isLetLose = analysis.primary_play === '让负'
-      || String(item.reason || '').includes('让负')
-      || letLoseIsTop
-    if (isLetLose) pools.handicap_lose.push(item)
-    return !isLetLose
-  })
   return Object.entries(dailyPoolLabels)
     .map(([key, title]) => ({ key, title, items: pools[key] || [] }))
     .filter(group => group.items.length)
@@ -1132,6 +1128,15 @@ const visibleDailyCombinations = computed(() => (
     !dailyMatch(pick.match_id).retained_from_pregame
   ))
 )))
+const reviewNoBetCount = computed(() => (
+  faeReview.value?.match_results || []
+).filter(item => item.no_bet).length)
+const reviewableMatchCount = computed(() => (
+  faeReview.value?.match_results || []
+).filter(item => (
+  ['hit', 'miss', 'push'].includes(item.status)
+  || (item.status === 'skipped' && item.result_score)
+)).length)
 const dailyMarkets = [
   { key: 'euro', label: '欧赔方向' },
   { key: 'asian', label: '亚盘升深' },
@@ -1422,11 +1427,11 @@ function weightActionLabel(action) {
   return '样本积累中，线上权重保持不变'
 }
 
-function reviewStatusLabel(status) {
+function reviewStatusLabel(status, noBet = false) {
   if (status === 'hit') return '✓ 命中'
   if (status === 'miss') return '× 未中'
   if (status === 'push') return '走盘'
-  if (status === 'skipped') return '观望'
+  if (status === 'skipped') return noBet ? '不下注' : '观望'
   if (status === 'ungraded') return '未结算'
   return '待赛'
 }
@@ -1455,8 +1460,13 @@ function aiConfidenceLabel(value) {
 }
 
 function aiVerdictClass(value) {
-  if (value === '判断有效') return 'good'
-  if (value === '命中但过程有风险' || value === '走盘') return 'warning'
+  if (value === '判断有效' || value === '不下注合理') return 'good'
+  if (
+    value === '命中但过程有风险'
+    || value === '走盘'
+    || value === '不下注过保守'
+    || value === '观望复盘'
+  ) return 'warning'
   return 'bad'
 }
 
