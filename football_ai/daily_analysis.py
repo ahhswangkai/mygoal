@@ -15,13 +15,24 @@ from .provider import ArkNarrativeClient, FAEError, FAEOutputError
 from .version import ENGINE_VERSION
 
 
-DAILY_PROMPT_VERSION = "five-market-daily-v19-draw-only-strict-gate"
+DAILY_PROMPT_VERSION = "five-market-daily-v20-draw-radar-layered"
 
 OFFICIAL_PLAY_SELECTIONS = {"平局", "让平"}
 OFFICIAL_MIN_BET_SCORE = 70.0
 OFFICIAL_MIN_VALUE_SCORE = 60.0
 OFFICIAL_MIN_MARKET_CONFIDENCE = 70.0
 OFFICIAL_MIN_RATING = 4.0
+
+# “正式推荐”仍只允许平/让平，但不能只用综合主选分一票否决。
+# 平/让平雷达有自己的历史样本、进球差概率和赔率价值，因此单独设
+# “核心/小试”两层：核心可进重点，小试可进正式池但降星。
+RADAR_OFFICIAL_POOL_LIMITS = {"平局": 1, "让平": 4}
+RADAR_OFFICIAL_SMALL_MIN_SCORE = {"平局": 88.0, "让平": 80.0}
+RADAR_OFFICIAL_SMALL_MIN_PROBABILITY = {"平局": 29.0, "让平": 27.0}
+RADAR_OFFICIAL_SMALL_MIN_VALUE = {"平局": -8.0, "让平": -1.0}
+RADAR_OFFICIAL_MIN_SAMPLE = {"平局": 60.0, "让平": 60.0}
+RADAR_OFFICIAL_MIN_MARKET_CONFIDENCE = 55.0
+RADAR_OFFICIAL_MAX_RISK_IDS = {"平局": 1, "让平": 1}
 ASIAN_HARD_DOWNGRADE_RISKS = {
     "deepen_high_water",
     "upper_water_rise",
@@ -1869,6 +1880,9 @@ class FAEDailyAIAnalyzer:
         ]
         stored_matches = self.calibrate_daily_matches(stored_matches)
         stored_matches = self.apply_draw_radar(stored_matches)
+        stored_matches = self.apply_draw_radar_recommendation_overrides(
+            stored_matches
+        )
         stored_matches = self.normalize_match_memory_governance(
             stored_matches, memory
         )
@@ -1980,6 +1994,12 @@ class FAEDailyAIAnalyzer:
         daily_summary = self.align_summary_ratings(
             daily_summary, stored_matches
         )
+        daily_summary = self.promote_draw_radar_recommendations(
+            daily_summary, stored_matches
+        )
+        daily_summary["recommended_combinations"] = (
+            self._ensure_mixed_combinations(daily_summary)
+        )
         daily_summary = self.normalize_summary_memory_governance(
             daily_summary, memory
         )
@@ -2052,10 +2072,9 @@ class FAEDailyAIAnalyzer:
             item for item in radar.get("handicap_draw") or []
             if item.get("tier") == "core"
         ]
-        draw_source = radar_draw if radar else pools.get("draw") or []
+        draw_source = pools.get("draw") or radar_draw
         handicap_draw_source = (
-            radar_handicap_draw
-            if radar else pools.get("handicap_draw") or []
+            pools.get("handicap_draw") or radar_handicap_draw
         )
         draw = [
             item for item in draw_source
@@ -3524,6 +3543,374 @@ class FAEDailyAIAnalyzer:
                 reverse=True,
             )[:6]
         result["draw_radar"] = radar
+        return result
+
+    @classmethod
+    def _radar_official_level(
+        cls,
+        candidate: Dict[str, Any],
+        match: Dict[str, Any],
+    ) -> Optional[str]:
+        """Return core/small when a draw radar row can enter formal pools."""
+        if not candidate or candidate.get("tier") == "exclude":
+            return None
+        selection = str(candidate.get("selection") or "")
+        if selection not in OFFICIAL_PLAY_SELECTIONS:
+            return None
+        if not candidate.get("match_id"):
+            return None
+
+        analysis = match.get("analysis") or {}
+        source = match.get("input_snapshot") or {}
+        score = _number(candidate.get("score")) or 0.0
+        probability = _number(candidate.get("probability")) or 0.0
+        odds_value = _number(candidate.get("odds_value"))
+        sample = _number(candidate.get("effective_sample")) or 0.0
+        risk_count = len(candidate.get("risk_pattern_ids") or [])
+        market_confidence = _number(
+            ((analysis.get("market_confidence") or {}).get("score"))
+        )
+        if market_confidence is None:
+            market_confidence = _number(
+                ((((source.get("fae_core") or {}).get("recommendation") or {})
+                  .get("market_confidence") or {}).get("score"))
+            ) or 0.0
+
+        severe_markers = (
+            "风险模型判定危险",
+            "盘口或水位异常尚未核验",
+            "盘口跳档",
+            "极端水位",
+            "严禁",
+        )
+        joined_reasons = "；".join(
+            str(value) for value in analysis.get("no_bet_reasons") or []
+        )
+        if any(marker in joined_reasons for marker in severe_markers):
+            return None
+        if odds_value is None:
+            return None
+        if sample < RADAR_OFFICIAL_MIN_SAMPLE.get(selection, 60.0):
+            return None
+        if risk_count > RADAR_OFFICIAL_MAX_RISK_IDS.get(selection, 1):
+            return None
+        if market_confidence < RADAR_OFFICIAL_MIN_MARKET_CONFIDENCE:
+            return None
+
+        if (
+            candidate.get("tier") == "core"
+            and odds_value >= 0
+            and score >= DRAW_SELECTION_CORE_SCORE.get(selection, 72.0)
+        ):
+            return "core"
+
+        if (
+            score >= RADAR_OFFICIAL_SMALL_MIN_SCORE.get(selection, 90.0)
+            and probability >= RADAR_OFFICIAL_SMALL_MIN_PROBABILITY.get(
+                selection, 29.0
+            )
+            and odds_value >= RADAR_OFFICIAL_SMALL_MIN_VALUE.get(
+                selection, -8.0
+            )
+        ):
+            return "small"
+        return None
+
+    @classmethod
+    def _radar_rank_score(cls, candidate: Dict[str, Any], level: str) -> float:
+        score = _number(candidate.get("score")) or 0.0
+        probability = _number(candidate.get("probability")) or 0.0
+        odds_value = _number(candidate.get("odds_value")) or 0.0
+        value_component = max(-5.0, min(8.0, odds_value)) * 2.0
+        core_bonus = 10.0 if level == "core" else 0.0
+        return round(score + probability * 0.5 + value_component + core_bonus, 3)
+
+    @classmethod
+    def _radar_pool_item(
+        cls,
+        match: Dict[str, Any],
+        candidate: Dict[str, Any],
+        level: str,
+    ) -> Dict[str, Any]:
+        selection = str(candidate.get("selection") or "")
+        score = _number(candidate.get("score"))
+        probability = _number(candidate.get("probability"))
+        odds = candidate.get("odds")
+        odds_value = _number(candidate.get("odds_value"))
+        role = "核心" if level == "core" else "小试"
+        rating = cls._rating(
+            candidate.get("rating") if level == "core"
+            else min(3.5, float(candidate.get("rating") or 3.5))
+        )
+        value_text = (
+            f"，赔率价值{odds_value:+g}%"
+            if odds_value is not None else ""
+        )
+        reason = (
+            f"{match.get('match_number') or candidate.get('match_id')}"
+            f"{selection}{role}：雷达{score:g}分，概率{probability:g}%"
+            f"，赔率{odds if odds is not None else '--'}{value_text}；"
+            f"{str(candidate.get('reason') or '').replace('仅列观察，不进入组合。', '').strip()}"
+        )
+        return {
+            "match_id": str(candidate.get("match_id") or ""),
+            "match_number": match.get("match_number") or candidate.get("match_number"),
+            "selection": selection,
+            "rating": rating,
+            "reason": reason,
+            "role": role,
+            "radar_official_level": level,
+            "radar_rank_score": cls._radar_rank_score(candidate, level),
+        }
+
+    @classmethod
+    def apply_draw_radar_recommendation_overrides(
+        cls,
+        matches: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """Promote independently qualified 平/让平 radar picks to match level."""
+        gate_markers = (
+            "正式门槛",
+            "未达到投注门槛",
+            "非平/让平玩法",
+            "缺少主选对应的赔率价值数据",
+            "全部玩法均未达到投注门槛",
+        )
+        prepared = []
+        for index, item in enumerate(matches):
+            row = dict(item or {})
+            analysis = dict(row.get("analysis") or {})
+            analysis.pop("radar_recommendation", None)
+            row["analysis"] = analysis
+            radar = analysis.get("draw_radar") or {}
+            candidates = []
+            for key in ("ordinary_draw", "handicap_draw"):
+                candidate = dict(radar.get(key) or {})
+                level = cls._radar_official_level(candidate, row)
+                if not level:
+                    continue
+                candidate["radar_official_level"] = level
+                candidate["radar_rank_score"] = cls._radar_rank_score(
+                    candidate, level
+                )
+                candidates.append(candidate)
+            if not candidates:
+                continue
+            candidate = sorted(
+                candidates,
+                key=lambda value: (
+                    value.get("radar_official_level") == "core",
+                    float(value.get("radar_rank_score") or 0),
+                    float(value.get("score") or 0),
+                ),
+                reverse=True,
+            )[0]
+            prepared.append((index, row, candidate))
+
+        selected_indexes = set()
+        for selection in ("平局", "让平"):
+            selection_rows = [
+                value for value in prepared
+                if str(value[2].get("selection") or "") == selection
+            ]
+            selection_rows = sorted(
+                selection_rows,
+                key=lambda value: (
+                    value[2].get("radar_official_level") == "core",
+                    float(value[2].get("radar_rank_score") or 0),
+                    float(value[2].get("score") or 0),
+                ),
+                reverse=True,
+            )[:RADAR_OFFICIAL_POOL_LIMITS.get(selection, 2)]
+            selected_indexes.update(value[0] for value in selection_rows)
+
+        by_index = {
+            index: (row, candidate)
+            for index, row, candidate in prepared
+            if index in selected_indexes
+        }
+        result = []
+        for index, item in enumerate(matches):
+            row = dict(item or {})
+            analysis = dict(row.get("analysis") or {})
+            analysis.pop("radar_recommendation", None)
+            if index not in by_index:
+                row["analysis"] = analysis
+                result.append(row)
+                continue
+            row, candidate = by_index[index]
+            analysis = dict(row.get("analysis") or {})
+            level = str(candidate.get("radar_official_level") or "small")
+            selection = str(candidate.get("selection") or "")
+            rating = cls._rating(
+                candidate.get("rating") if level == "core"
+                else min(3.5, float(candidate.get("rating") or 3.5))
+            )
+            existing_reasons = [
+                str(value) for value in analysis.get("no_bet_reasons") or []
+                if not any(marker in str(value) for marker in gate_markers)
+            ]
+            adjustments = [
+                str(value) for value in analysis.get("rating_adjustments") or []
+                if "未达到投注门槛" not in str(value)
+            ]
+            adjustments.append(
+                f"平/让平雷达{('核心' if level == 'core' else '小试')}升级，"
+                "综合主选门槛不再一票否决"
+            )
+            analysis.update({
+                "primary_play": selection,
+                "decision": "可考虑",
+                "no_bet": False,
+                "no_bet_reasons": existing_reasons,
+                "rating": rating,
+                "star_text": cls._stars(rating),
+                "rating_adjustments": list(dict.fromkeys(adjustments)),
+                "prediction_probability": candidate.get("probability"),
+                "odds": candidate.get("odds"),
+                "market_implied_probability": candidate.get(
+                    "market_probability"
+                ),
+                "value_edge": candidate.get("odds_value"),
+                "radar_recommendation": cls._radar_pool_item(
+                    row, candidate, level
+                ),
+            })
+            if selection == "让平":
+                analysis["handicap_play"] = "让平"
+            analysis["secondary_play"] = cls._secondary_play(
+                row.get("input_snapshot") or {},
+                selection,
+                analysis.get("secondary_play"),
+            )
+            analysis["score_candidates"] = cls._compatible_scores(
+                analysis, row.get("input_snapshot") or {}
+            )
+            if level == "core":
+                analysis["bet_score"] = max(
+                    round(_number(analysis.get("bet_score")) or 0),
+                    int(OFFICIAL_MIN_BET_SCORE),
+                )
+                analysis["value_score"] = max(
+                    round(_number(analysis.get("value_score")) or 0),
+                    int(OFFICIAL_MIN_VALUE_SCORE),
+                )
+            analysis["verdict"] = cls._label_probability_language(
+                cls._calibrated_verdict(row, analysis)
+            )
+            row["analysis"] = analysis
+            result.append(row)
+        return result
+
+    @classmethod
+    def promote_draw_radar_recommendations(
+        cls,
+        summary: Dict[str, Any],
+        matches: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        """Put qualified radar candidates back into official 平/让平 pools."""
+        result = dict(summary or {})
+        pools = {
+            key: list(items or [])
+            for key, items in (result.get("pools") or {}).items()
+        }
+        by_selection = {"平局": [], "让平": []}
+        promoted_ids = set()
+        for match in matches:
+            analysis = match.get("analysis") or {}
+            official = analysis.get("radar_recommendation") or {}
+            selection = str(official.get("selection") or "")
+            if selection not in by_selection:
+                continue
+            row = dict(official)
+            row["match_id"] = str(match.get("match_id") or row.get("match_id") or "")
+            if not row["match_id"]:
+                continue
+            by_selection[selection].append(row)
+
+        for selection, key in (("平局", "draw"), ("让平", "handicap_draw")):
+            existing = {
+                str(item.get("match_id") or ""): dict(item)
+                for item in pools.get(key) or []
+            }
+            rows = sorted(
+                by_selection[selection],
+                key=lambda item: (
+                    item.get("radar_official_level") == "core",
+                    float(item.get("radar_rank_score") or 0),
+                    float(item.get("rating") or 0),
+                ),
+                reverse=True,
+            )[:RADAR_OFFICIAL_POOL_LIMITS.get(selection, 2)]
+            for row in rows:
+                existing[str(row.get("match_id") or "")] = row
+                promoted_ids.add(str(row.get("match_id") or ""))
+            pools[key] = sorted(
+                existing.values(),
+                key=lambda item: (
+                    item.get("radar_official_level") == "core",
+                    float(item.get("radar_rank_score") or 0),
+                    float(item.get("rating") or 0),
+                ),
+                reverse=True,
+            )[:RADAR_OFFICIAL_POOL_LIMITS.get(selection, 2)]
+
+        if promoted_ids:
+            pools["avoid"] = [
+                item for item in pools.get("avoid") or []
+                if str(item.get("match_id") or "") not in promoted_ids
+            ]
+        result["pools"] = pools
+
+        promoted = sorted(
+            [
+                item for key in ("handicap_draw", "draw")
+                for item in pools.get(key) or []
+                if item.get("radar_official_level")
+            ],
+            key=lambda item: (
+                item.get("radar_official_level") == "core",
+                float(item.get("radar_rank_score") or 0),
+            ),
+            reverse=True,
+        )
+        if promoted:
+            core_text = []
+            small_text = []
+            for item in promoted:
+                label = (
+                    item.get("match_number")
+                    or item.get("match_id")
+                    or "本场"
+                )
+                text = (
+                    f"{label}{item.get('selection')}"
+                    f"{float(item.get('rating') or 0):g}星"
+                )
+                if item.get("radar_official_level") == "core":
+                    core_text.append(text)
+                else:
+                    small_text.append(text)
+            conclusion = []
+            if core_text:
+                conclusion.append("雷达核心：" + "、".join(core_text))
+            if small_text:
+                conclusion.append("小试候选：" + "、".join(small_text[:4]))
+            avoid_labels = [
+                str(item.get("match_number") or item.get("match_id"))
+                for item in pools.get("avoid") or []
+            ]
+            if avoid_labels:
+                conclusion.append(
+                    "其余" + str(len(avoid_labels)) + "场仅保留方向观察"
+                )
+            result["core_conclusion"] = "；".join(conclusion) + "。"
+            warnings = list(result.get("warnings") or [])
+            warnings.append(
+                "平/让平采用雷达分层：核心可进重点，小试降星入池；"
+                "严重盘口异常、低盘口可信度或负价值过深仍不推荐。"
+            )
+            result["warnings"] = list(dict.fromkeys(warnings))[:20]
         return result
 
     @classmethod

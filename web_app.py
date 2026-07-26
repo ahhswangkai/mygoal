@@ -1679,6 +1679,14 @@ def get_fae_daily_ai():
                 data.get('review_memory') or {},
             )
         )
+        data['matches'] = fae_daily_ai_analyzer.apply_draw_radar(
+            data.get('matches') or []
+        )
+        data['matches'] = (
+            fae_daily_ai_analyzer.apply_draw_radar_recommendation_overrides(
+                data.get('matches') or []
+            )
+        )
         data['daily_summary'] = (
             fae_daily_ai_analyzer.normalize_summary_pool_semantics(
                 data.get('daily_summary') or {},
@@ -1688,6 +1696,12 @@ def get_fae_daily_ai():
         data['daily_summary'] = fae_daily_ai_analyzer._apply_no_bet_summary(
             data.get('daily_summary') or {},
             data.get('matches') or [],
+        )
+        data['daily_summary'] = (
+            fae_daily_ai_analyzer.attach_draw_radar_summary(
+                data.get('daily_summary') or {},
+                data.get('matches') or [],
+            )
         )
         data['daily_summary'] = (
             fae_daily_ai_analyzer.attach_league_model_rankings(
@@ -1710,6 +1724,17 @@ def get_fae_daily_ai():
         data['daily_summary'] = fae_daily_ai_analyzer.align_summary_ratings(
             data.get('daily_summary') or {},
             data.get('matches') or [],
+        )
+        data['daily_summary'] = (
+            fae_daily_ai_analyzer.promote_draw_radar_recommendations(
+                data.get('daily_summary') or {},
+                data.get('matches') or [],
+            )
+        )
+        data['daily_summary']['recommended_combinations'] = (
+            fae_daily_ai_analyzer._ensure_mixed_combinations(
+                data.get('daily_summary') or {}
+            )
         )
         data['daily_summary'] = (
             fae_daily_ai_analyzer.normalize_summary_memory_governance(
@@ -1835,6 +1860,11 @@ def get_fae_daily_ai_match(match_id):
                 if owner_date else {},
             )[0]
         )
+        rows = fae_daily_ai_analyzer.apply_draw_radar([data])
+        rows = fae_daily_ai_analyzer.apply_draw_radar_recommendation_overrides(
+            rows
+        )
+        data = rows[0] if rows else data
     return jsonify({'success': True, 'data': data})
 
 
