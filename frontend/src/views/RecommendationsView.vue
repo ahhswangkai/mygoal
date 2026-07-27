@@ -103,25 +103,22 @@
                 覆盖 {{ historicalModelCount }} 场 ·
                 {{ historicalCalibrationCount }} 场实际校准
               </span>
-              <small>
-                展开逐场分析可查看普通平局、竞彩让平的相似样本、概率与赔率价值
-              </small>
             </div>
           </div>
 
-          <section v-if="drawRadarGroups.length" class="draw-radar-panel">
+          <section v-if="showModelPanels && drawRadarGroups.length" class="draw-radar-panel">
             <header>
               <div>
                 <strong>平 / 让平概率排行榜</strong>
-                <small>按 FAE 估算概率降序，独立展示普通平局与竞彩让平</small>
+                <small>只展示最关键候选，完整依据进详情页看</small>
               </div>
-              <span>核心优先 · 观察复盘</span>
+              <span>核心 / 小试</span>
             </header>
             <div class="draw-radar-groups">
               <article v-for="group in drawRadarGroups" :key="group.key">
                 <div class="draw-radar-title">
                   <strong>{{ group.title }}</strong>
-                  <small>排除 {{ group.excluded }} 场</small>
+                  <small>Top {{ group.items.length }}</small>
                 </div>
                 <button
                   v-for="(item, index) in group.items"
@@ -137,7 +134,7 @@
                       vs
                       {{ dailyMatch(item.match_id).away_team }}
                     </span>
-                    <small>{{ item.definition }}</small>
+                    <small>{{ shortRadarReason(item) }}</small>
                   </span>
                   <span class="draw-radar-decision">
                     <i :class="item.tier">{{ radarTierLabel(item.tier) }}</i>
@@ -150,14 +147,12 @@
                       价值 {{ signedMetric(item.odds_value) }}%
                     </i>
                   </span>
-                  <small class="draw-radar-reason">{{ item.reason }}</small>
                 </button>
               </article>
             </div>
-            <p>{{ faeDailyAi.daily_summary?.draw_radar?.policy }}</p>
           </section>
 
-          <section v-if="upsetWarningItems.length" class="draw-radar-panel upset-warning-panel">
+          <section v-if="showModelPanels && upsetWarningItems.length" class="draw-radar-panel upset-warning-panel">
             <header>
               <div>
                 <strong>爆冷预警榜</strong>
@@ -202,7 +197,7 @@
             <p>{{ faeDailyAi.daily_summary?.upset_warning?.policy }}</p>
           </section>
 
-          <section v-if="oddsBandGroups.length" class="draw-radar-panel odds-band-panel">
+          <section v-if="showModelPanels && oddsBandGroups.length" class="draw-radar-panel odds-band-panel">
             <header>
               <div>
                 <strong>赔率区间指标</strong>
@@ -258,7 +253,7 @@
             <p>{{ faeDailyAi.daily_summary?.odds_band_indicators?.policy }}</p>
           </section>
 
-          <section v-if="leagueModelGroups.length" class="draw-radar-panel league-model-panel">
+          <section v-if="showModelPanels && leagueModelGroups.length" class="draw-radar-panel league-model-panel">
             <header>
               <div>
                 <strong>联赛模板指数榜</strong>
@@ -359,7 +354,7 @@
             <p>今日没有同时达到门槛的平局与让平候选，不强行凑组合。</p>
           </section>
 
-          <section v-if="visibleDailyMatches.length" class="daily-match-section">
+          <section v-if="showModelPanels && visibleDailyMatches.length" class="daily-match-section">
             <header class="daily-match-section-title">
               <h2>逐场五维分析</h2>
               <span>{{ visibleDailyMatches.length }} 场未开赛</span>
@@ -1027,10 +1022,10 @@ const dateOptions = Array.from({ length: 7 }, (_, index) => {
   }
 })
 
+const showModelPanels = false
 const dailyPoolLabels = {
-  draw: '正式平局',
-  handicap_draw: '正式让平',
-  avoid: '方向观察'
+  draw: '平局精选',
+  handicap_draw: '让平精选'
 }
 const dailyPoolGroups = computed(() => {
   const source = faeDailyAi.value?.daily_summary?.pools || {}
@@ -1070,7 +1065,7 @@ const drawRadarGroups = computed(() => {
       !dailyMatch(item.match_id).retained_from_pregame
     )).sort((left, right) => (
       Number(right.probability || 0) - Number(left.probability || 0)
-    ))
+    )).slice(0, 3)
   })).filter(group => group.items.length)
 })
 const leagueModelGroups = computed(() => {
@@ -1235,6 +1230,19 @@ function radarPercent(value) {
   const parsed = Number(value)
   if (!Number.isFinite(parsed)) return '--'
   return `${Number.isInteger(parsed) ? parsed : parsed.toFixed(1)}%`
+}
+
+function shortRadarReason(item) {
+  const role = item?.role_signals?.find(Boolean)
+  if (role) return role
+  const text = displayDailyText(item?.reason || item?.definition || '')
+  const parts = text
+    .replace(/达到独立核心门槛。?/g, '')
+    .replace(/仅列观察，不进入组合。?/g, '')
+    .split(/[；。]/)
+    .map(value => value.trim())
+    .filter(Boolean)
+  return parts[0] || item?.definition || '点击查看完整依据'
 }
 
 function matchRadarRows(item) {
@@ -1805,7 +1813,10 @@ onBeforeUnmount(() => requestController?.abort())
   color: #4d4d52;
   font-size: 12px;
   line-height: 1.65;
-  white-space: pre-line;
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
 }
 
 .daily-ai-warnings {
@@ -1855,14 +1866,14 @@ onBeforeUnmount(() => requestController?.abort())
 }
 
 .goal-margin-loaded {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  gap: 3px 7px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
   margin-top: 9px;
   padding: 7px 8px;
   color: #4c665d;
   font-size: 10px;
-  line-height: 1.45;
+  line-height: 1.35;
   background: #edf8f3;
   border-radius: 7px;
 }
@@ -1964,7 +1975,7 @@ onBeforeUnmount(() => requestController?.abort())
   grid-template-columns: 24px minmax(0, 1fr) auto;
   gap: 4px 7px;
   width: 100%;
-  padding: 8px 0;
+  padding: 7px 0;
   text-align: left;
   background: none;
   border: 0;
@@ -2010,7 +2021,7 @@ onBeforeUnmount(() => requestController?.abort())
 }
 
 .draw-radar-match > small {
-  margin-top: 2px;
+  margin-top: 3px;
   color: #a19aa0;
   font-size: 9px;
 }
@@ -2057,7 +2068,7 @@ onBeforeUnmount(() => requestController?.abort())
   display: flex;
   grid-column: 2 / 4;
   flex-wrap: wrap;
-  gap: 4px 8px;
+  gap: 3px 7px;
 }
 
 .draw-radar-metrics i {
@@ -2079,6 +2090,10 @@ onBeforeUnmount(() => requestController?.abort())
   color: #8f878d;
   font-size: 9px;
   line-height: 1.45;
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
 }
 
 .draw-radar-panel > p {

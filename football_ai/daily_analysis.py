@@ -15,7 +15,7 @@ from .provider import ArkNarrativeClient, FAEError, FAEOutputError
 from .version import ENGINE_VERSION
 
 
-DAILY_PROMPT_VERSION = "five-market-daily-v20-draw-radar-layered"
+DAILY_PROMPT_VERSION = "five-market-daily-v21-backtested-handicap-draw"
 
 OFFICIAL_PLAY_SELECTIONS = {"平局", "让平"}
 OFFICIAL_MIN_BET_SCORE = 70.0
@@ -26,7 +26,7 @@ OFFICIAL_MIN_RATING = 4.0
 # “正式推荐”仍只允许平/让平，但不能只用综合主选分一票否决。
 # 平/让平雷达有自己的历史样本、进球差概率和赔率价值，因此单独设
 # “核心/小试”两层：核心可进重点，小试可进正式池但降星。
-RADAR_OFFICIAL_POOL_LIMITS = {"平局": 1, "让平": 4}
+RADAR_OFFICIAL_POOL_LIMITS = {"平局": 2, "让平": 2}
 RADAR_OFFICIAL_SMALL_MIN_SCORE = {"平局": 88.0, "让平": 80.0}
 RADAR_OFFICIAL_SMALL_MIN_PROBABILITY = {"平局": 29.0, "让平": 27.0}
 RADAR_OFFICIAL_SMALL_MIN_VALUE = {"平局": -8.0, "让平": -1.0}
@@ -170,6 +170,49 @@ LEAGUE_TACTICAL_MODEL_VERSION = "league-tactical-model-v1"
 UPSET_WARNING_MODEL_VERSION = "upset-warning-v1"
 ODDS_BAND_MODEL_VERSION = "odds-band-model-v1"
 
+# 历史回测：让平不能靠“升盘高水/欧亚背离”单独升级。
+# 正向信号主要来自：联赛画像 + 竞彩让1球 + 热门胜赔区间 + 让平赔率区间。
+HANDICAP_DRAW_BACKTEST_VERSION = "handicap-draw-backtest-v2-league-pockets"
+ORDINARY_DRAW_BACKTEST_VERSION = "ordinary-draw-backtest-v1"
+ORDINARY_DRAW_POSITIVE_LEAGUES = {
+    "德甲",
+    "沙特联",
+    "葡超",
+    "瑞典超",
+    "K1联赛",
+    "K联赛",
+    "韩K联",
+    "韩职",
+    "法乙",
+    "法甲",
+}
+ORDINARY_DRAW_RULE_MIN_SAMPLE = 25.0
+HANDICAP_DRAW_RULE_MIN_SAMPLE = 25.0
+HANDICAP_DRAW_POSITIVE_LEAGUES = {
+    "法甲",
+    "英冠",
+    "芬超",
+    "芬兰超",
+    "非洲杯",
+    "西甲",
+    "日职",
+    "J1联赛",
+    "挪超",
+    "K1联赛",
+    "K联赛",
+    "韩K联",
+    "韩职",
+    "沙特联",
+}
+HANDICAP_DRAW_NEGATIVE_LEAGUES = {
+    "欧冠",
+    "荷甲",
+    "荷乙",
+    "澳超",
+    "美职联",
+    "MLS",
+}
+
 LEAGUE_TACTICAL_TEMPLATES = {
     "k_league": {
         "aliases": ("K1联赛", "K联赛", "韩K联", "韩职"),
@@ -254,6 +297,22 @@ def _league_tactical_template(league: Any) -> Optional[Dict[str, Any]]:
         if any(alias and alias in text for alias in template["aliases"]):
             return {"key": key, **template}
     return None
+
+
+def _league_in_aliases(league: Any, aliases: Iterable[str]) -> bool:
+    text = str(league or "").strip()
+    if not text:
+        return False
+    for alias in aliases:
+        alias_text = str(alias or "").strip()
+        if not alias_text:
+            continue
+        # “日职”不能误命中“日职乙”，否则 J2 会被当成 J1 模型。
+        if alias_text in {"日职", "J1联赛"} and text in {"日职乙", "日乙", "J2联赛"}:
+            continue
+        if alias_text in text:
+            return True
+    return False
 
 
 def _clamp_index(value: Any) -> int:
@@ -857,13 +916,13 @@ def _build_odds_band_model(
                 "竞彩让2球",
                 2,
                 2,
-                8,
-                "竞彩让2球可观察强队赢两球的让平路径",
+                -6,
+                "历史回测中让2球让平区间偏弱，只作为盘口深度风险",
                 {"sporttery_handicap": sporttery_handicap},
             )
 
     if hhad_draw_odds is not None:
-        if 3.20 <= hhad_draw_odds <= 3.90:
+        if 3.30 <= hhad_draw_odds <= 3.70:
             add_signal(
                 "handicap_draw_odds_value_band",
                 "让平赔率价值区",
@@ -2058,11 +2117,18 @@ class FAEDailyAIAnalyzer:
     ) -> List[Dict[str, Any]]:
         """Build combinations only from independently credible pool entries."""
         pools = daily_summary.get("pools") or {}
-        minimum_rating = 3.5
+        minimum_rating = OFFICIAL_MIN_RATING
         avoid_ids = {
             str(item.get("match_id") or "")
             for item in pools.get("avoid") or []
         }
+
+        def ready_for_combo(item: Dict[str, Any]) -> bool:
+            level = item.get("radar_official_level")
+            if level and level != "core":
+                return False
+            return float(item.get("rating") or 0) >= minimum_rating
+
         radar = daily_summary.get("draw_radar") or {}
         radar_draw = [
             item for item in radar.get("ordinary_draw") or []
@@ -2079,14 +2145,14 @@ class FAEDailyAIAnalyzer:
         draw = [
             item for item in draw_source
             if (
-                float(item.get("rating") or 0) >= minimum_rating
+                ready_for_combo(item)
                 and str(item.get("match_id") or "") not in avoid_ids
             )
         ]
         handicap_draw = [
             item for item in handicap_draw_source
             if (
-                float(item.get("rating") or 0) >= minimum_rating
+                ready_for_combo(item)
                 and str(item.get("match_id") or "") not in avoid_ids
             )
         ]
@@ -2257,6 +2323,8 @@ class FAEDailyAIAnalyzer:
             "联赛画像中的命中率、让平率、进球率是历史条件频率，不是真实胜率；不得单独据此推荐，必须与当天五项市场证据一致。",
             "league_tactical_model是人工沉淀的联赛模板指数，包含平局、让平、大小球和冷门指数；它只用于筛选和解释，不能覆盖赔率价值、盘口一致性和数据质量。",
             "odds_band_model是赔率区间扫描器：favorite_heat表示热门过热，underdog_upset表示下盘爆冷，handicap_draw_value表示让平价值；1.40-1.70热门危险区、1.80-2.20均势区、客场1.70-2.20陷阱区、平赔低位和盘口过深都只能作为降级热门或提高平/让平扫描权重的证据。",
+            "普通平局采用历史回测版规则：统一模型只允许正向联赛的均势平进入正式池，必须满足平赔2.75-3.20、亚盘退浅或平手保护、上/下盘水位区间正常；平赔2.85-3.14为核心区间，其余只能小试。另有联赛专属模型：葡超小球平、挪超退盘平、荷甲中低总球平、英超降水平、英冠半球不动平、澳超高平赔中低总球、意甲升盘高水平；日职中低总球目前只观察。强热门冷平若未命中联赛专属模型，只能观察，禁止进入正式推荐。",
+            "让平升级采用历史回测版规则：通用模型只允许正向联赛、竞彩让1球、热门胜赔1.26-1.40、让平赔3.30-3.70，并要求亚盘上盘水位0.65-1.04、下盘水位不低于0.75；热门胜赔1.41-1.55只能小试。另有联赛专属让平口袋：意甲中赔让平、德甲中热门让平、法甲高让平赔、英超中高总球小球让平、西甲小球水位让平、沙特高赔大球让平、欧罗巴低水让平；挪超降水让平当前样本不足只观察。≤1.25超热、让2球、低命中联赛、上盘≥1.08、升盘高水不得升级。升盘高水、欧亚背离和退盘只作为风险证据，不能单独推让平。",
             "upset_warning_model是爆冷预警扫描器：盘口降级、热门胜赔升、平赔下降、热门穿盘赔率偏高、强队近期穿盘代理偏弱、弱队近期有球会累加风险分；80分以上只能降低热门方向并提示防冷，禁止单独反买。",
             "historical_goal_margin_model按欧赔强弱、亚盘深度、大小球、竞彩让球数、联赛和时间衰减寻找相似完赛场次；ordinary_draw统计0球分差，handicap_draw统计当前让球数对应的精确净胜球差，两者严禁混用。",
             "只有historical_goal_margin_model中eligible_for_adjustment=true的结果才可参与校准；必须同时比较effective_sample、confidence、market_probability、blended_probability、odds和value_edge，样本不足时只允许写观察。",
@@ -2341,6 +2409,8 @@ class FAEDailyAIAnalyzer:
             "历史联赛频率不是真实概率，必须让位于本场欧赔、亚盘、竞彩、大小球和市场一致性。",
             "league_tactical_model是联赛模板指数，只能作为低到中权重筛选层；指数高但赔率价值、盘口一致性或数据质量不足时仍必须降级或不下注。",
             "odds_band_model是赔率区间扫描器：favorite_heat、underdog_upset、handicap_draw_value分别对应热门过热、下盘爆冷、让平价值；指数高只能降低热门或增加防选，不得脱离盘口一致性直接反买。",
+            "普通平局采用历史回测版规则：统一模型只允许正向联赛的均势平进入正式池，必须满足平赔2.75-3.20、亚盘退浅或平手保护、上/下盘水位区间正常；平赔2.85-3.14为核心区间，其余只能小试。另有联赛专属模型：葡超小球平、挪超退盘平、荷甲中低总球平、英超降水平、英冠半球不动平、澳超高平赔中低总球、意甲升盘高水平；日职中低总球目前只观察。强热门冷平若未命中联赛专属模型，只能观察，禁止进入正式推荐。",
+            "让平升级采用历史回测版规则：通用模型只允许正向联赛、竞彩让1球、热门胜赔1.26-1.40、让平赔3.30-3.70，并要求亚盘上盘水位0.65-1.04、下盘水位不低于0.75；热门胜赔1.41-1.55只能小试。另有联赛专属让平口袋：意甲中赔让平、德甲中热门让平、法甲高让平赔、英超中高总球小球让平、西甲小球水位让平、沙特高赔大球让平、欧罗巴低水让平；挪超降水让平当前样本不足只观察。≤1.25超热、让2球、低命中联赛、上盘≥1.08、升盘高水不得升级。升盘高水、欧亚背离和退盘只作为风险证据，不能单独推让平。",
             "正式推荐只允许平局或让平；主胜、客胜、让胜、让负、大球、小球只保留方向观察。正式推荐必须投注分>=70、价值指数>=60、盘口可信度>=70、星级>=4。",
             "亚盘不配合时胜负方向必须硬降级为观察，不能只写风险提示后继续推荐。",
             "upset_warning_model达到重点防冷时，热门胜负方向必须降级为观察或不下注；防选优先写平局、受让保护项或让平，但不得把爆冷预警写成确定赛果。",
@@ -2865,6 +2935,971 @@ class FAEDailyAIAnalyzer:
             "draw_odds": odds[1],
         }
 
+    @staticmethod
+    def _asian_favorite_depth_profile(
+        source: Dict[str, Any],
+        favorite_side: str,
+    ) -> Dict[str, Any]:
+        """Return Asian line and water from the 1X2 favorite's perspective."""
+        risk = source.get("current_asian_risk") or {}
+        asian = source.get("asian") or {}
+        initial_values = asian.get("initial") or []
+        current_values = asian.get("current") or []
+
+        def side_water(values: List[Any], side: str) -> Optional[float]:
+            index = 0 if side == "home" else 2
+            return _number(values[index]) if len(values) > index else None
+
+        current_favorite_water = (
+            side_water(current_values, favorite_side)
+            if favorite_side in {"home", "away"} else None
+        )
+        current_underdog_water = (
+            side_water(
+                current_values,
+                "away" if favorite_side == "home" else "home",
+            )
+            if favorite_side in {"home", "away"} else None
+        )
+        initial_favorite_water = (
+            side_water(initial_values, favorite_side)
+            if favorite_side in {"home", "away"} else None
+        )
+        initial_underdog_water = (
+            side_water(
+                initial_values,
+                "away" if favorite_side == "home" else "home",
+            )
+            if favorite_side in {"home", "away"} else None
+        )
+        favorite_water_change = (
+            _number(risk.get("upper_water_change"))
+            if risk.get("upper_water_change") is not None
+            else (
+                round(current_favorite_water - initial_favorite_water, 3)
+                if (
+                    current_favorite_water is not None
+                    and initial_favorite_water is not None
+                )
+                else None
+            )
+        )
+        initial_depth = _number(risk.get("initial_depth"))
+        current_depth = _number(risk.get("current_depth"))
+        line_change = _number(risk.get("line_change"))
+        if current_depth is not None:
+            return {
+                "data_complete": bool(risk.get("data_complete", True)),
+                "initial_depth": initial_depth,
+                "current_depth": current_depth,
+                "line_change": line_change,
+                "initial_favorite_water": (
+                    initial_favorite_water
+                    if initial_favorite_water is not None
+                    else _number(risk.get("initial_upper_water"))
+                ),
+                "current_favorite_water": (
+                    current_favorite_water
+                    if current_favorite_water is not None
+                    else _number(risk.get("current_upper_water"))
+                ),
+                "favorite_water_change": favorite_water_change,
+                "initial_underdog_water": initial_underdog_water,
+                "current_underdog_water": current_underdog_water,
+                "source": "current_asian_risk",
+            }
+
+        if len(current_values) < 2:
+            return {"data_complete": False, "source": "asian"}
+        current_line = _handicap_value_from_text(current_values[1])
+        initial_line = (
+            _handicap_value_from_text(initial_values[1])
+            if len(initial_values) > 1 else None
+        )
+        if current_line is None:
+            return {"data_complete": False, "source": "asian"}
+        current_depth = (
+            current_line if favorite_side == "home" else -current_line
+        )
+        initial_depth = (
+            initial_line if favorite_side == "home" else -initial_line
+        ) if initial_line is not None else None
+        line_change = (
+            round(current_depth - initial_depth, 3)
+            if initial_depth is not None else None
+        )
+        return {
+            "data_complete": True,
+            "initial_depth": initial_depth,
+            "current_depth": current_depth,
+            "line_change": line_change,
+            "initial_favorite_water": initial_favorite_water,
+            "current_favorite_water": current_favorite_water,
+            "favorite_water_change": favorite_water_change,
+            "initial_underdog_water": initial_underdog_water,
+            "current_underdog_water": current_underdog_water,
+            "source": "asian",
+        }
+
+    @staticmethod
+    def _total_market_profile(source: Dict[str, Any]) -> Dict[str, Any]:
+        values = ((source.get("total") or {}).get("current") or [])
+        over_water = _number(values[0]) if len(values) > 0 else None
+        line = _number(values[1]) if len(values) > 1 else None
+        under_water = _number(values[2]) if len(values) > 2 else None
+        if line is None:
+            return {"available": False}
+        if line <= 2.25:
+            line_band = "<=2.25"
+        elif line <= 2.75:
+            line_band = "2.25-2.75"
+        elif line <= 3.25:
+            line_band = "2.75-3.25"
+        else:
+            line_band = ">=3.25"
+        if (
+            under_water is not None
+            and over_water is not None
+            and under_water + 0.08 < over_water
+        ):
+            bias = "under_low"
+        elif (
+            over_water is not None
+            and under_water is not None
+            and over_water + 0.08 < under_water
+        ):
+            bias = "over_low"
+        else:
+            bias = "even"
+        return {
+            "available": True,
+            "line": line,
+            "line_band": line_band,
+            "over_water": over_water,
+            "under_water": under_water,
+            "bias": bias,
+        }
+
+    @classmethod
+    def _league_specific_draw_signal(
+        cls,
+        source: Dict[str, Any],
+        favorite_odds: float,
+        draw_odds: float,
+        current_depth: Optional[float],
+        line_change: Optional[float],
+        favorite_water: Optional[float],
+        underdog_water: Optional[float],
+        favorite_water_change: Optional[float],
+    ) -> Dict[str, Any]:
+        """Backtested league-specific ordinary-draw pockets.
+
+        These are deliberately narrow. They are not generic "league likes
+        draws" statements; each rule is a market structure seen in historical
+        replay with a positive train/test split.
+        """
+        league = source.get("league")
+        total = cls._total_market_profile(source)
+        total_band = str(total.get("line_band") or "")
+        total_bias = str(total.get("bias") or "")
+        line_move = (
+            "retreat" if line_change is not None and line_change < -0.01
+            else "deepen" if line_change is not None and line_change > 0.01
+            else "same"
+        )
+
+        def matched(
+            aliases: Iterable[str],
+            *,
+            name: str,
+            sample: int,
+            hit_rate: float,
+            roi: float,
+            score_bonus: float,
+            official_score_min: float,
+            core: bool,
+            reason: str,
+            condition: bool,
+        ) -> Dict[str, Any]:
+            if not condition or not _league_in_aliases(league, aliases):
+                return {}
+            return {
+                "kind": (
+                    "backtested_league_draw_value"
+                    if core else "backtested_league_draw_secondary"
+                ),
+                "role": name,
+                "score_bonus": score_bonus,
+                "official_score_min": official_score_min,
+                "backtest_version": ORDINARY_DRAW_BACKTEST_VERSION,
+                "sample": sample,
+                "hit_rate": hit_rate,
+                "roi": roi,
+                "note": (
+                    f"{name}：历史回测样本{sample}场，命中率{hit_rate:g}%、"
+                    f"ROI{roi:+g}%；{reason}"
+                ),
+            }
+
+        checks = [
+            matched(
+                ("葡超",),
+                name="葡超小球平局模型",
+                sample=72,
+                hit_rate=41.7,
+                roi=38.2,
+                score_bonus=24.0,
+                official_score_min=80.0,
+                core=True,
+                reason="大小球低水偏小，比赛被压到低节奏博弈",
+                condition=total_bias == "under_low",
+            ),
+            matched(
+                ("挪超",),
+                name="挪超退盘平局模型",
+                sample=40,
+                hit_rate=37.5,
+                roi=50.3,
+                score_bonus=22.0,
+                official_score_min=82.0,
+                core=True,
+                reason="热门方向退盘，开放联赛中更容易走到双方都有球后的平局",
+                condition=line_move == "retreat",
+            ),
+            matched(
+                ("荷甲",),
+                name="荷甲中低总球平局模型",
+                sample=51,
+                hit_rate=39.2,
+                roi=47.5,
+                score_bonus=22.0,
+                official_score_min=82.0,
+                core=True,
+                reason="大小球在2.25-2.75区间且下盘水位0.95-1.04，胜负分歧收敛",
+                condition=(
+                    total_band == "2.25-2.75"
+                    and underdog_water is not None
+                    and 0.95 <= underdog_water < 1.05
+                ),
+            ),
+            matched(
+                ("英超",),
+                name="英超降水平局模型",
+                sample=53,
+                hit_rate=41.5,
+                roi=47.4,
+                score_bonus=22.0,
+                official_score_min=82.0,
+                core=True,
+                reason="热门上盘0.75-0.84且较初盘降水，市场热度集中但未形成充分穿盘保护",
+                condition=(
+                    favorite_water is not None
+                    and 0.75 <= favorite_water < 0.85
+                    and favorite_water_change is not None
+                    and favorite_water_change <= -0.05
+                ),
+            ),
+            matched(
+                ("日职", "J1联赛"),
+                name="日职中低总球平局模型",
+                sample=24,
+                hit_rate=33.3,
+                roi=11.3,
+                score_bonus=8.0,
+                official_score_min=90.0,
+                core=False,
+                reason="大小球2.25-2.75且上盘水位基本不动，但修正后样本不足，只作观察",
+                condition=(
+                    "日职乙" not in str(league or "")
+                    and total_band == "2.25-2.75"
+                    and (
+                        favorite_water_change is None
+                        or abs(favorite_water_change) < 0.05
+                    )
+                ),
+            ),
+            matched(
+                ("英冠",),
+                name="英冠半球不动平局模型",
+                sample=32,
+                hit_rate=40.6,
+                roi=34.8,
+                score_bonus=18.0,
+                official_score_min=86.0,
+                core=False,
+                reason="热门半球盘维持不动，胜负倾向存在但没有继续加深",
+                condition=(
+                    current_depth is not None
+                    and abs(current_depth - 0.5) < 0.01
+                    and line_move == "same"
+                ),
+            ),
+            matched(
+                ("澳超",),
+                name="澳超高平赔中低总球模型",
+                sample=28,
+                hit_rate=42.9,
+                roi=45.0,
+                score_bonus=18.0,
+                official_score_min=86.0,
+                core=False,
+                reason="平赔3.25-3.49但大小球仅2.25-2.75，开放预期不足以支撑分胜负",
+                condition=(
+                    3.25 <= draw_odds <= 3.49
+                    and total_band == "2.25-2.75"
+                ),
+            ),
+            matched(
+                ("意甲",),
+                name="意甲升盘高水平局模型",
+                sample=33,
+                hit_rate=42.4,
+                roi=63.6,
+                score_bonus=18.0,
+                official_score_min=86.0,
+                core=False,
+                reason="亚盘升深但热门上盘水位0.95-1.04，盘口增强但水位未同步压低",
+                condition=(
+                    line_move == "deepen"
+                    and favorite_water is not None
+                    and 0.95 <= favorite_water < 1.05
+                ),
+            ),
+        ]
+        return next((item for item in checks if item), {})
+
+    @classmethod
+    def _league_specific_handicap_draw_signal(
+        cls,
+        source: Dict[str, Any],
+        favorite_odds: float,
+        current_depth: Optional[float],
+        line_change: Optional[float],
+        favorite_water: Optional[float],
+        underdog_water: Optional[float],
+        favorite_water_change: Optional[float],
+        handicap_draw_odds: Optional[float],
+        favorite_matches_one_goal: bool,
+    ) -> Dict[str, Any]:
+        """Backtested league-specific handicap-draw pockets.
+
+        让平不是统一模型：同样是竞彩让1球，不同联赛的有效区间不同。
+        这里仅放历史回放里样本、命中率、ROI 同时能站住的窄规则。
+        """
+        league = source.get("league")
+        if (
+            not favorite_matches_one_goal
+            or handicap_draw_odds is None
+            or favorite_water is None
+            or current_depth is None
+        ):
+            return {}
+
+        total = cls._total_market_profile(source)
+        total_band = str(total.get("line_band") or "")
+        total_bias = str(total.get("bias") or "")
+        line_move = (
+            "retreat" if line_change is not None and line_change < -0.01
+            else "deepen" if line_change is not None and line_change > 0.01
+            else "same"
+        )
+        asian_context_ok = (
+            0.25 <= current_depth <= 1.25
+            and 0.65 <= favorite_water < 1.08
+            and (underdog_water is None or underdog_water >= 0.70)
+            and not (
+                line_change is not None
+                and line_change > 0.01
+                and favorite_water >= 0.98
+            )
+        )
+        if not asian_context_ok:
+            return {}
+
+        def matched(
+            aliases: Iterable[str],
+            *,
+            name: str,
+            sample: int,
+            hit_rate: float,
+            roi: float,
+            score_bonus: float,
+            official_score_min: float,
+            core: bool,
+            reason: str,
+            condition: bool,
+        ) -> Dict[str, Any]:
+            if not condition or not _league_in_aliases(league, aliases):
+                return {}
+            return {
+                "kind": (
+                    "backtested_league_handicap_draw_value"
+                    if core else "backtested_league_handicap_draw_secondary"
+                ),
+                "role": name,
+                "score_bonus": score_bonus,
+                "official_score_min": official_score_min,
+                "backtest_version": HANDICAP_DRAW_BACKTEST_VERSION,
+                "sample": sample,
+                "hit_rate": hit_rate,
+                "roi": roi,
+                "note": (
+                    f"{name}：历史回测样本{sample}场，命中率{hit_rate:g}%、"
+                    f"ROI{roi:+g}%；{reason}"
+                ),
+            }
+
+        checks = [
+            matched(
+                ("意甲",),
+                name="意甲中赔让平模型",
+                sample=68,
+                hit_rate=41.2,
+                roi=45.4,
+                score_bonus=24.0,
+                official_score_min=82.0,
+                core=True,
+                reason="热门胜赔1.90-2.19，胜负优势不碾压但竞彩让1球，适合找刚好赢1球",
+                condition=(
+                    1.90 <= favorite_odds < 2.20
+                    and 3.30 <= handicap_draw_odds < 4.00
+                ),
+            ),
+            matched(
+                ("德甲",),
+                name="德甲中热门让平模型",
+                sample=32,
+                hit_rate=46.9,
+                roi=68.9,
+                score_bonus=24.0,
+                official_score_min=82.0,
+                core=True,
+                reason="热门胜赔1.55-1.69，进攻强但让球只压到一球，历史更容易赢球输让",
+                condition=(
+                    1.55 <= favorite_odds < 1.70
+                    and 3.30 <= handicap_draw_odds < 4.00
+                ),
+            ),
+            matched(
+                ("法甲",),
+                name="法甲高让平赔模型",
+                sample=35,
+                hit_rate=45.7,
+                roi=63.5,
+                score_bonus=22.0,
+                official_score_min=82.0,
+                core=True,
+                reason="让平赔3.50-3.69，市场给一球差回报仍足，且亚盘未给深盘保护",
+                condition=3.50 <= handicap_draw_odds < 3.70,
+            ),
+            matched(
+                ("英超",),
+                name="英超中高总球小球让平模型",
+                sample=27,
+                hit_rate=44.4,
+                roi=70.4,
+                score_bonus=20.0,
+                official_score_min=84.0,
+                core=True,
+                reason="大小球2.75-3.25但小球低水，强队赢球路径更偏1球差",
+                condition=(
+                    3.30 <= handicap_draw_odds < 4.00
+                    and total_band == "2.75-3.25"
+                    and total_bias == "under_low"
+                ),
+            ),
+            matched(
+                ("西甲",),
+                name="西甲小球水位让平模型",
+                sample=45,
+                hit_rate=42.2,
+                roi=46.2,
+                score_bonus=20.0,
+                official_score_min=84.0,
+                core=True,
+                reason="上盘0.85-0.94且小球低水，热门有优势但大胜空间受限",
+                condition=(
+                    3.30 <= handicap_draw_odds < 4.00
+                    and 0.85 <= favorite_water < 0.95
+                    and total_bias == "under_low"
+                ),
+            ),
+            matched(
+                ("沙特联",),
+                name="沙特高赔大球让平模型",
+                sample=27,
+                hit_rate=37.0,
+                roi=41.8,
+                score_bonus=14.0,
+                official_score_min=88.0,
+                core=False,
+                reason="让平赔3.70-3.99且大球低水，进球数支持强队赢球但穿盘不稳",
+                condition=(
+                    3.70 <= handicap_draw_odds < 4.00
+                    and total_bias == "over_low"
+                ),
+            ),
+            matched(
+                ("欧罗巴", "欧联"),
+                name="欧罗巴低水让平模型",
+                sample=25,
+                hit_rate=44.0,
+                roi=64.5,
+                score_bonus=14.0,
+                official_score_min=88.0,
+                core=False,
+                reason="上盘0.75-0.84低水但没有继续给深盘，杯赛更容易停在一球差",
+                condition=(
+                    3.30 <= handicap_draw_odds < 4.00
+                    and 0.75 <= favorite_water < 0.85
+                ),
+            ),
+            matched(
+                ("挪超",),
+                name="挪超降水让平观察模型",
+                sample=22,
+                hit_rate=45.5,
+                roi=77.6,
+                score_bonus=8.0,
+                official_score_min=90.0,
+                core=False,
+                reason="上盘0.85-0.94且较初盘降水，开放联赛存在2:1路径；样本不足，只作观察",
+                condition=(
+                    3.30 <= handicap_draw_odds < 4.00
+                    and 0.85 <= favorite_water < 0.95
+                    and favorite_water_change is not None
+                    and favorite_water_change <= -0.05
+                    and line_move in {"same", "retreat"}
+                ),
+            ),
+        ]
+        return next((item for item in checks if item), {})
+
+    @classmethod
+    def _draw_odds_band_signal(
+        cls,
+        source: Dict[str, Any],
+        selection: str,
+        risk_ids: Iterable[str],
+    ) -> Dict[str, Any]:
+        """Classify ordinary draw candidates by odds interval.
+
+        普通平局不能只看一个概率分。平赔 2.75-3.20 的均势平，
+        和平赔 4.00-5.20 的强热门冷平，是两种完全不同的路径。
+        """
+        favorite = cls._favorite_market_profile(source)
+        favorite_side = favorite.get("side")
+        favorite_odds = _number(favorite.get("odds"))
+        draw_odds = _number(favorite.get("draw_odds"))
+        if (
+            favorite_side not in {"home", "away"}
+            or favorite_odds is None
+            or draw_odds is None
+        ):
+            return {}
+
+        risk_set = {str(value) for value in risk_ids or []}
+        asian_depth = cls._asian_favorite_depth_profile(
+            source, str(favorite_side)
+        )
+        current_depth = _number(asian_depth.get("current_depth"))
+        line_change = _number(asian_depth.get("line_change"))
+        favorite_water = _number(asian_depth.get("current_favorite_water"))
+        underdog_water = _number(asian_depth.get("current_underdog_water"))
+        favorite_water_change = _number(
+            asian_depth.get("favorite_water_change")
+        )
+
+        def water_text(value: Optional[float]) -> str:
+            return f"{value:g}" if value is not None else "--"
+
+        unstable_risks = {
+            "handicap_retreat",
+            "upper_water_rise",
+            "water_drop_without_deepen",
+            "euro_asian_divergence",
+            "overheated_shallow",
+        }
+        deepen_high_water = "deepen_high_water" in risk_set
+
+        if selection == "让平":
+            league = source.get("league")
+            positive_league = _league_in_aliases(
+                league, HANDICAP_DRAW_POSITIVE_LEAGUES
+            )
+            negative_league = _league_in_aliases(
+                league, HANDICAP_DRAW_NEGATIVE_LEAGUES
+            )
+            hhad_values = (
+                (source.get("sporttery_handicap") or {}).get("current")
+                or (source.get("sporttery_handicap") or {}).get("initial")
+                or []
+            )
+            handicap_draw_odds = (
+                _number(hhad_values[1]) if len(hhad_values) > 1 else None
+            )
+            handicap = _number(
+                (source.get("sporttery_handicap") or {}).get("value")
+            )
+            favorite_matches_one_goal = (
+                handicap is not None
+                and abs(handicap) == 1
+                and (
+                    (favorite_side == "home" and handicap < 0)
+                    or (favorite_side == "away" and handicap > 0)
+                )
+            )
+            cold_draw_competes = (
+                4.00 <= draw_odds <= 5.20
+                and favorite_odds <= 1.50
+                and risk_set & unstable_risks
+                and not deepen_high_water
+            )
+            if cold_draw_competes:
+                return {
+                    "kind": "cold_draw_competes",
+                    "role": "冷平区间压制让平",
+                    "score_bonus": -16.0,
+                    "block_official": True,
+                    "note": (
+                        "平赔4.00-5.20且热门盘口不稳但未升深，优先按冷平处理，"
+                        "不升级让平"
+                    ),
+                }
+            if (
+                handicap_draw_odds is not None
+                and 3.30 <= handicap_draw_odds <= 3.70
+                and handicap is not None
+                and abs(handicap) >= 2
+                and favorite_odds <= 1.55
+            ):
+                return {
+                    "kind": "handicap_draw_two_goal_block",
+                    "role": "让2球回测降级",
+                    "score_bonus": -12.0,
+                    "block_official": True,
+                    "note": (
+                        "历史回测中让2球让平区间表现明显偏弱，"
+                        "不升级为正式让平"
+                    ),
+                }
+            if (
+                handicap_draw_odds is not None
+                and 3.30 <= handicap_draw_odds <= 3.70
+                and favorite_matches_one_goal
+                and favorite_odds <= 1.25
+            ):
+                return {
+                    "kind": "handicap_draw_ultra_hot_block",
+                    "role": "超低赔让平降级",
+                    "score_bonus": -10.0,
+                    "block_official": True,
+                    "note": (
+                        "热门胜赔≤1.25的超热区让平历史回测偏弱，"
+                        "只保留观察不升级"
+                    ),
+                }
+            if (
+                handicap_draw_odds is not None
+                and 3.30 <= handicap_draw_odds <= 3.70
+                and favorite_matches_one_goal
+                and negative_league
+            ):
+                return {
+                    "kind": "handicap_draw_negative_league_block",
+                    "role": "低命中联赛降级",
+                    "score_bonus": -10.0,
+                    "block_official": True,
+                    "note": (
+                        f"{league or '该联赛'}在让平赔率区间历史回测偏弱，"
+                        "不升级为正式让平"
+                    ),
+                }
+            asian_water_supports_handicap_draw = (
+                favorite_water is not None
+                and 0.65 <= favorite_water < 1.05
+                and (
+                    underdog_water is None
+                    or underdog_water >= 0.75
+                )
+                and not (
+                    line_change is not None
+                    and line_change > 0.01
+                    and favorite_water >= 0.98
+                )
+            )
+            league_handicap_draw_signal = cls._league_specific_handicap_draw_signal(
+                source,
+                favorite_odds,
+                current_depth,
+                line_change,
+                favorite_water,
+                underdog_water,
+                favorite_water_change,
+                handicap_draw_odds,
+                favorite_matches_one_goal,
+            )
+            if league_handicap_draw_signal:
+                return league_handicap_draw_signal
+            if (
+                handicap_draw_odds is not None
+                and 3.30 <= handicap_draw_odds <= 3.70
+                and favorite_matches_one_goal
+                and positive_league
+                and not asian_water_supports_handicap_draw
+            ):
+                return {
+                    "kind": "handicap_draw_blocked_by_asian_water",
+                    "role": "让平缺少亚盘水位确认",
+                    "score_bonus": -12.0,
+                    "block_official": True,
+                    "note": (
+                        "让平赔率区间符合，但亚盘上盘水位不在0.65-1.04"
+                        "支持区间，或下盘水位过低/升盘高水，不升级让平"
+                    ),
+                }
+            if (
+                handicap_draw_odds is not None
+                and 3.30 <= handicap_draw_odds <= 3.70
+                and favorite_matches_one_goal
+                and positive_league
+                and 1.26 <= favorite_odds <= 1.40
+            ):
+                return {
+                    "kind": "backtested_league_one_goal_value",
+                    "role": "回测正向让平区间",
+                    "score_bonus": 30.0,
+                    "official_score_min": 80.0,
+                    "backtest_version": HANDICAP_DRAW_BACKTEST_VERSION,
+                    "sample": 50,
+                    "hit_rate": 48.0,
+                    "roi": 69.5,
+                    "note": (
+                        f"{league or '该联赛'}让平历史回测为正向；"
+                        "竞彩让1球、热门胜赔1.26-1.40、让平赔3.30-3.70，"
+                        f"亚盘上盘水位{water_text(favorite_water)}处在支持区间，"
+                        "按热门刚好赢一球路径评估"
+                    ),
+                }
+            if (
+                handicap_draw_odds is not None
+                and 3.30 <= handicap_draw_odds <= 3.70
+                and favorite_matches_one_goal
+                and positive_league
+                and 1.40 < favorite_odds <= 1.55
+            ):
+                return {
+                    "kind": "backtested_league_one_goal_secondary",
+                    "role": "回测次级让平区间",
+                    "score_bonus": 16.0,
+                    "official_score_min": 86.0,
+                    "backtest_version": HANDICAP_DRAW_BACKTEST_VERSION,
+                    "sample": 52,
+                    "hit_rate": 34.6,
+                    "roi": 18.2,
+                    "note": (
+                        f"{league or '该联赛'}让平历史回测可观察；"
+                        "竞彩让1球、让平赔3.30-3.70，但热门胜赔1.41-1.55"
+                        f"区间命中率下降，亚盘上盘水位{water_text(favorite_water)}，"
+                        "仅高分时小试"
+                    ),
+                }
+            return {}
+
+        if selection == "平局":
+            league_draw_signal = cls._league_specific_draw_signal(
+                source,
+                favorite_odds,
+                draw_odds,
+                current_depth,
+                line_change,
+                favorite_water,
+                underdog_water,
+                favorite_water_change,
+            )
+            if league_draw_signal:
+                return league_draw_signal
+
+        if selection == "平局" and 2.75 <= draw_odds <= 3.20 and favorite_odds >= 2.15:
+            league = source.get("league")
+            positive_draw_league = _league_in_aliases(
+                league, ORDINARY_DRAW_POSITIVE_LEAGUES
+            )
+            asian_water_confirms_draw = (
+                favorite_water is not None
+                and underdog_water is not None
+                and 0.65 <= favorite_water < 1.15
+                and underdog_water >= 0.75
+                and favorite_water < 1.05
+                if current_depth is not None and abs(current_depth) <= 0.25
+                else (
+                    favorite_water is not None
+                    and 0.80 <= favorite_water < 1.15
+                    and (
+                        underdog_water is None
+                        or underdog_water >= 0.75
+                    )
+                )
+            )
+            asian_confirms_draw = (
+                current_depth is not None
+                and asian_water_confirms_draw
+                and (
+                    abs(current_depth) <= 0.25
+                    or (
+                        current_depth <= 0.50
+                        and line_change is not None
+                        and line_change < -0.01
+                    )
+                )
+            )
+            draw_depth_guard = (
+                current_depth is not None
+                and (
+                    current_depth <= 0
+                    or (
+                        line_change is not None
+                        and line_change < -0.01
+                    )
+                )
+            )
+            if not asian_confirms_draw:
+                return {
+                    "kind": "balanced_draw_blocked_by_asian",
+                    "role": "均势平缺少亚盘确认",
+                    "score_bonus": -10.0,
+                    "block_official": True,
+                    "note": (
+                        "平赔处在均势区，但亚盘未落到平手/平半浅盘或退浅，"
+                        "或上/下盘水位区间不支持，"
+                        "不升级普通平"
+                    ),
+                }
+            if not positive_draw_league:
+                return {
+                    "kind": "balanced_draw_non_positive_league",
+                    "role": "非正向联赛均势平",
+                    "score_bonus": -6.0,
+                    "block_official": True,
+                    "note": (
+                        f"{league or '该联赛'}未进入普通平局正向回测联赛，"
+                        "均势平只保留观察"
+                    ),
+                }
+            if not draw_depth_guard:
+                return {
+                    "kind": "balanced_draw_blocked_by_depth_guard",
+                    "role": "均势平缺少退浅/平手保护",
+                    "score_bonus": -6.0,
+                    "block_official": True,
+                    "note": (
+                        "正向联赛和平赔区间符合，但亚盘仍是热门让平半且未退浅，"
+                        "历史回测表现偏弱，不升级普通平"
+                    ),
+                }
+            if 2.85 <= draw_odds <= 3.14:
+                return {
+                    "kind": "backtested_balanced_draw_value",
+                    "role": "回测正向均势平",
+                    "score_bonus": 26.0,
+                    "official_score_min": 80.0,
+                    "backtest_version": ORDINARY_DRAW_BACKTEST_VERSION,
+                    "sample": 71,
+                    "hit_rate": 47.9,
+                    "roi": 43.4,
+                    "note": (
+                        f"{league or '该联赛'}普通平局历史回测为正向；"
+                        "平赔2.85-3.14、亚盘退浅/平手保护，"
+                        f"上盘水位{water_text(favorite_water)}、下盘水位"
+                        f"{water_text(underdog_water)}，按均势平路径评估"
+                    ),
+                }
+            return {
+                "kind": "backtested_balanced_draw_secondary",
+                "role": "回测次级均势平",
+                "score_bonus": 18.0,
+                "official_score_min": 84.0,
+                "backtest_version": ORDINARY_DRAW_BACKTEST_VERSION,
+                "sample": 94,
+                "hit_rate": 46.8,
+                "roi": 40.4,
+                "note": (
+                    f"{league or '该联赛'}普通平局历史回测可观察；"
+                    "平赔2.75-3.20、亚盘退浅/平手保护，但平赔不在"
+                    "2.85-3.14核心区间，仅高分时小试"
+                ),
+            }
+
+        if selection == "平局" and (
+            4.00 <= draw_odds <= 5.20
+            and favorite_odds <= 1.50
+            and risk_set & (unstable_risks | {"deepen_high_water"})
+        ):
+            asian_water_confirms_cold_draw = (
+                favorite_water is not None
+                and (
+                    favorite_water >= 0.95
+                    or (
+                        favorite_water <= 0.75
+                        and "overheated_shallow" in risk_set
+                    )
+                    or (
+                        favorite_water_change is not None
+                        and favorite_water_change >= 0.05
+                    )
+                )
+            )
+            asian_confirms_cold_draw = (
+                current_depth is not None
+                and asian_water_confirms_cold_draw
+                and (
+                    current_depth <= 0.75
+                    or (
+                        line_change is not None
+                        and line_change <= 0.01
+                        and risk_set & unstable_risks
+                    )
+                    or "overheated_shallow" in risk_set
+                )
+            )
+            if not asian_confirms_cold_draw:
+                return {
+                    "kind": "cold_draw_blocked_by_asian_depth",
+                    "role": "冷平缺少亚盘浅盘确认",
+                    "score_bonus": -10.0,
+                    "block_official": True,
+                    "note": (
+                        "平赔处在强热门冷平区，但亚盘深度或上盘水位区间"
+                        "没有偏浅、退盘、不升深、高水/过热低水证据，"
+                        "不升级普通平"
+                    ),
+                }
+            if deepen_high_water and not (
+                risk_set & {"handicap_retreat", "water_drop_without_deepen"}
+            ):
+                return {
+                    "kind": "cold_draw_blocked_by_deepen",
+                    "role": "冷平区间但升深高水",
+                    "score_bonus": -8.0,
+                    "block_official": True,
+                    "note": (
+                        "平赔4.00-5.20但亚盘升深高水，优先看热门小胜/让平，"
+                        "不直接升级冷平"
+                    ),
+                }
+            return {
+                "kind": "cold_draw_watch_only",
+                "role": "冷平观察",
+                "score_bonus": 8.0,
+                "block_official": True,
+                "note": (
+                    "平赔4.00-5.20、热门胜赔≤1.50且盘口不稳，"
+                    f"亚盘上盘水位{water_text(favorite_water)}处在冷平确认区间，"
+                    "但冷平历史回测整体为负，只观察不升级"
+                ),
+            }
+        return {}
+
     @classmethod
     def _draw_radar_context_signal(
         cls,
@@ -3229,6 +4264,15 @@ class FAEDailyAIAnalyzer:
             if role:
                 role_signals.append(role)
             context_note = str(context_signal.get("note") or "").strip()
+        draw_band_signal = cls._draw_odds_band_signal(
+            source, selection, relevant_risks
+        )
+        draw_band_note = ""
+        if draw_band_signal:
+            role = str(draw_band_signal.get("role") or "").strip()
+            if role:
+                role_signals.append(role)
+            draw_band_note = str(draw_band_signal.get("note") or "").strip()
         league_model = source.get("league_tactical_model") or {}
         league_indexes = league_model.get("indexes") or {}
         league_score_bonus = 0.0
@@ -3297,6 +4341,7 @@ class FAEDailyAIAnalyzer:
             + history_adjustment
             + max(-4.0, min(6.0, historical_rule_adjustment * 1.2))
             + float(context_signal.get("score_bonus") or 0)
+            + float(draw_band_signal.get("score_bonus") or 0)
             + league_score_bonus
             + odds_band_score_bonus
         )
@@ -3424,6 +4469,8 @@ class FAEDailyAIAnalyzer:
             reason_parts.append("存在热门方不稳盘口信号")
         if context_note:
             reason_parts.append(context_note)
+        if draw_band_note:
+            reason_parts.append(draw_band_note)
         if league_note:
             reason_parts.append(league_note)
         if odds_band_note:
@@ -3435,6 +4482,23 @@ class FAEDailyAIAnalyzer:
                     historical_rule_adjustment,
                 )
             )
+        draw_band_sample = _number(draw_band_signal.get("sample"))
+        effective_sample_candidates = [
+            value for value in (
+                _number(metric.get("effective_sample")),
+                max(historical_rule_samples, default=None),
+                draw_band_sample,
+            )
+            if value is not None
+        ]
+        effective_sample = (
+            max(effective_sample_candidates)
+            if effective_sample_candidates else None
+        )
+        draw_band_confidence = (
+            "高" if draw_band_sample is not None and draw_band_sample >= 40
+            else "中" if draw_band_sample is not None else None
+        )
         if tier == "core":
             reason_parts.append("达到独立核心门槛")
         elif tier == "watch":
@@ -3458,11 +4522,7 @@ class FAEDailyAIAnalyzer:
             "odds": round(odds, 3) if odds is not None else None,
             "odds_value": round(odds_value, 2)
             if odds_value is not None else None,
-            "effective_sample": (
-                metric.get("effective_sample")
-                if metric.get("effective_sample") is not None
-                else max(historical_rule_samples, default=None)
-            ),
+            "effective_sample": effective_sample,
             "historical_odds_rule_adjustment_pp": round(
                 historical_rule_adjustment, 2
             ),
@@ -3473,11 +4533,14 @@ class FAEDailyAIAnalyzer:
             "confidence": (
                 metric.get("confidence")
                 if metric.get("eligible_for_adjustment")
-                else historical_rule_confidence or "样本不足"
+                else historical_rule_confidence
+                or draw_band_confidence
+                or "样本不足"
             ),
             "eligible_for_adjustment": history_eligible,
             "role_signals": role_signals,
             "risk_pattern_ids": relevant_risks,
+            "draw_odds_band_signal": draw_band_signal,
             "definition": definition,
             "target_goal_difference": target_difference,
             "reason": "；".join(reason_parts) + "。",
@@ -3567,6 +4630,8 @@ class FAEDailyAIAnalyzer:
         odds_value = _number(candidate.get("odds_value"))
         sample = _number(candidate.get("effective_sample")) or 0.0
         risk_count = len(candidate.get("risk_pattern_ids") or [])
+        draw_band_signal = candidate.get("draw_odds_band_signal") or {}
+        draw_band_kind = str(draw_band_signal.get("kind") or "")
         market_confidence = _number(
             ((analysis.get("market_confidence") or {}).get("score"))
         )
@@ -3590,11 +4655,76 @@ class FAEDailyAIAnalyzer:
             return None
         if odds_value is None:
             return None
-        if sample < RADAR_OFFICIAL_MIN_SAMPLE.get(selection, 60.0):
+        minimum_sample = RADAR_OFFICIAL_MIN_SAMPLE.get(selection, 60.0)
+        if (
+            selection == "平局"
+            and draw_band_kind in {
+                "backtested_balanced_draw_value",
+                "backtested_balanced_draw_secondary",
+                "backtested_league_draw_value",
+                "backtested_league_draw_secondary",
+            }
+        ):
+            minimum_sample = ORDINARY_DRAW_RULE_MIN_SAMPLE
+        if (
+            selection == "让平"
+            and draw_band_kind in {
+                "backtested_league_one_goal_value",
+                "backtested_league_one_goal_secondary",
+                "backtested_league_handicap_draw_value",
+                "backtested_league_handicap_draw_secondary",
+            }
+        ):
+            minimum_sample = HANDICAP_DRAW_RULE_MIN_SAMPLE
+        if sample < minimum_sample:
             return None
-        if risk_count > RADAR_OFFICIAL_MAX_RISK_IDS.get(selection, 1):
+        max_risk_count = (
+            2 if draw_band_kind == "cold_draw"
+            else RADAR_OFFICIAL_MAX_RISK_IDS.get(selection, 1)
+        )
+        if risk_count > max_risk_count:
             return None
         if market_confidence < RADAR_OFFICIAL_MIN_MARKET_CONFIDENCE:
+            return None
+        if draw_band_signal.get("block_official"):
+            return None
+
+        if selection == "平局":
+            if draw_band_kind in {
+                "backtested_balanced_draw_value",
+                "backtested_balanced_draw_secondary",
+                "backtested_league_draw_value",
+                "backtested_league_draw_secondary",
+            }:
+                official_score_min = (
+                    _number(draw_band_signal.get("official_score_min")) or 84.0
+                )
+                if score >= official_score_min:
+                    if draw_band_kind in {
+                        "backtested_balanced_draw_value",
+                        "backtested_league_draw_value",
+                    }:
+                        return "core"
+                    return "small"
+            return None
+
+        if selection == "让平":
+            if draw_band_kind in {
+                "backtested_league_one_goal_value",
+                "backtested_league_one_goal_secondary",
+                "backtested_league_handicap_draw_value",
+                "backtested_league_handicap_draw_secondary",
+            }:
+                official_score_min = (
+                    _number(draw_band_signal.get("official_score_min")) or 84.0
+                )
+                if score >= official_score_min:
+                    if draw_band_kind in {
+                        "backtested_league_one_goal_value",
+                        "backtested_league_handicap_draw_value",
+                    }:
+                        return "core"
+                    return "small"
             return None
 
         if (
@@ -3623,7 +4753,22 @@ class FAEDailyAIAnalyzer:
         odds_value = _number(candidate.get("odds_value")) or 0.0
         value_component = max(-5.0, min(8.0, odds_value)) * 2.0
         core_bonus = 10.0 if level == "core" else 0.0
-        return round(score + probability * 0.5 + value_component + core_bonus, 3)
+        draw_band = candidate.get("draw_odds_band_signal") or {}
+        band_bonus = {
+            "backtested_balanced_draw_value": 10.0,
+            "backtested_balanced_draw_secondary": 4.0,
+            "backtested_league_draw_value": 10.0,
+            "backtested_league_draw_secondary": 4.0,
+            "backtested_league_one_goal_value": 10.0,
+            "backtested_league_one_goal_secondary": 4.0,
+            "backtested_league_handicap_draw_value": 10.0,
+            "backtested_league_handicap_draw_secondary": 4.0,
+        }.get(str(draw_band.get("kind") or ""), 0.0)
+        return round(
+            score + probability * 0.5 + value_component + core_bonus
+            + band_bonus,
+            3,
+        )
 
     @classmethod
     def _radar_pool_item(
@@ -3677,6 +4822,23 @@ class FAEDailyAIAnalyzer:
             "全部玩法均未达到投注门槛",
         )
         prepared = []
+
+        def candidate_priority(candidate: Dict[str, Any]) -> tuple:
+            draw_band = candidate.get("draw_odds_band_signal") or {}
+            return (
+                draw_band.get("kind") == "backtested_balanced_draw_value",
+                draw_band.get("kind") == "backtested_league_draw_value",
+                draw_band.get("kind") == "backtested_balanced_draw_secondary",
+                draw_band.get("kind") == "backtested_league_draw_secondary",
+                draw_band.get("kind") == "backtested_league_one_goal_value",
+                draw_band.get("kind") == "backtested_league_handicap_draw_value",
+                draw_band.get("kind") == "backtested_league_one_goal_secondary",
+                draw_band.get("kind") == "backtested_league_handicap_draw_secondary",
+                candidate.get("radar_official_level") == "core",
+                float(candidate.get("radar_rank_score") or 0),
+                float(candidate.get("score") or 0),
+            )
+
         for index, item in enumerate(matches):
             row = dict(item or {})
             analysis = dict(row.get("analysis") or {})
@@ -3698,11 +4860,7 @@ class FAEDailyAIAnalyzer:
                 continue
             candidate = sorted(
                 candidates,
-                key=lambda value: (
-                    value.get("radar_official_level") == "core",
-                    float(value.get("radar_rank_score") or 0),
-                    float(value.get("score") or 0),
-                ),
+                key=candidate_priority,
                 reverse=True,
             )[0]
             prepared.append((index, row, candidate))
@@ -3715,11 +4873,7 @@ class FAEDailyAIAnalyzer:
             ]
             selection_rows = sorted(
                 selection_rows,
-                key=lambda value: (
-                    value[2].get("radar_official_level") == "core",
-                    float(value[2].get("radar_rank_score") or 0),
-                    float(value[2].get("score") or 0),
-                ),
+                key=lambda value: candidate_priority(value[2]),
                 reverse=True,
             )[:RADAR_OFFICIAL_POOL_LIMITS.get(selection, 2)]
             selected_indexes.update(value[0] for value in selection_rows)
