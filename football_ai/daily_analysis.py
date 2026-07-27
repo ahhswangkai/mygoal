@@ -173,6 +173,7 @@ ODDS_BAND_MODEL_VERSION = "odds-band-model-v1"
 # 历史回测：让平不能靠“升盘高水/欧亚背离”单独升级。
 # 正向信号主要来自：联赛画像 + 竞彩让1球 + 热门胜赔区间 + 让平赔率区间。
 HANDICAP_DRAW_BACKTEST_VERSION = "handicap-draw-backtest-v2-league-pockets"
+HANDICAP_DRAW_PATH_MODEL_VERSION = "handicap-draw-path-v1"
 ORDINARY_DRAW_BACKTEST_VERSION = "ordinary-draw-backtest-v1"
 ORDINARY_DRAW_POSITIVE_LEAGUES = {
     "德甲",
@@ -2323,8 +2324,8 @@ class FAEDailyAIAnalyzer:
             "联赛画像中的命中率、让平率、进球率是历史条件频率，不是真实胜率；不得单独据此推荐，必须与当天五项市场证据一致。",
             "league_tactical_model是人工沉淀的联赛模板指数，包含平局、让平、大小球和冷门指数；它只用于筛选和解释，不能覆盖赔率价值、盘口一致性和数据质量。",
             "odds_band_model是赔率区间扫描器：favorite_heat表示热门过热，underdog_upset表示下盘爆冷，handicap_draw_value表示让平价值；1.40-1.70热门危险区、1.80-2.20均势区、客场1.70-2.20陷阱区、平赔低位和盘口过深都只能作为降级热门或提高平/让平扫描权重的证据。",
-            "普通平局采用历史回测版规则：统一模型只允许正向联赛的均势平进入正式池，必须满足平赔2.75-3.20、亚盘退浅或平手保护、上/下盘水位区间正常；平赔2.85-3.14为核心区间，其余只能小试。另有联赛专属模型：葡超小球平、挪超退盘平、荷甲中低总球平、英超降水平、英冠半球不动平、澳超高平赔中低总球、意甲升盘高水平；日职中低总球目前只观察。强热门冷平若未命中联赛专属模型，只能观察，禁止进入正式推荐。",
-            "让平升级采用历史回测版规则：通用模型只允许正向联赛、竞彩让1球、热门胜赔1.26-1.40、让平赔3.30-3.70，并要求亚盘上盘水位0.65-1.04、下盘水位不低于0.75；热门胜赔1.41-1.55只能小试。另有联赛专属让平口袋：意甲中赔让平、德甲中热门让平、法甲高让平赔、英超中高总球小球让平、西甲小球水位让平、沙特高赔大球让平、欧罗巴低水让平；挪超降水让平当前样本不足只观察。≤1.25超热、让2球、低命中联赛、上盘≥1.08、升盘高水不得升级。升盘高水、欧亚背离和退盘只作为风险证据，不能单独推让平。",
+            "普通平局采用历史回测版规则：统一模型只允许正向联赛的均势平进入正式池，必须满足平赔2.75-3.20、亚盘退浅或平手保护、上/下盘水位区间正常；平赔2.85-3.14为核心区间，其余只能小试。另有联赛专属模型：葡超小球平、挪超退盘平、荷甲中低总球平、英超降水平、英冠半球不动平、澳超高平赔中低总球、意甲升盘高水平；巴甲只作为平局基线观察模型，不得因单日命中直接升级；日职中低总球目前只观察。强热门冷平若未命中联赛专属模型，只能观察，禁止进入正式推荐。",
+            "让平升级采用历史回测版规则：通用模型只允许正向联赛、竞彩让1球、热门胜赔1.26-1.40、让平赔3.30-3.70，并要求亚盘上盘水位0.65-1.04、下盘水位不低于0.75；热门胜赔1.41-1.55只能小试。另有联赛专属让平口袋：意甲中赔让平、德甲中热门让平、法甲高让平赔、英超中高总球小球让平、西甲小球水位让平、沙特高赔大球让平、欧罗巴低水让平；挪超降水让平当前样本不足只观察。让平必须再通过净胜1球路径检查：若降水不升盘但竞彩受让保护项明显低赔，说明更像热门不穿或失手，不升级让平。≤1.25超热、让2球、低命中联赛、上盘≥1.08不得升级；升盘高水、欧亚背离和退盘只作为风险证据，不能单独推让平。",
             "upset_warning_model是爆冷预警扫描器：盘口降级、热门胜赔升、平赔下降、热门穿盘赔率偏高、强队近期穿盘代理偏弱、弱队近期有球会累加风险分；80分以上只能降低热门方向并提示防冷，禁止单独反买。",
             "historical_goal_margin_model按欧赔强弱、亚盘深度、大小球、竞彩让球数、联赛和时间衰减寻找相似完赛场次；ordinary_draw统计0球分差，handicap_draw统计当前让球数对应的精确净胜球差，两者严禁混用。",
             "只有historical_goal_margin_model中eligible_for_adjustment=true的结果才可参与校准；必须同时比较effective_sample、confidence、market_probability、blended_probability、odds和value_edge，样本不足时只允许写观察。",
@@ -2409,8 +2410,8 @@ class FAEDailyAIAnalyzer:
             "历史联赛频率不是真实概率，必须让位于本场欧赔、亚盘、竞彩、大小球和市场一致性。",
             "league_tactical_model是联赛模板指数，只能作为低到中权重筛选层；指数高但赔率价值、盘口一致性或数据质量不足时仍必须降级或不下注。",
             "odds_band_model是赔率区间扫描器：favorite_heat、underdog_upset、handicap_draw_value分别对应热门过热、下盘爆冷、让平价值；指数高只能降低热门或增加防选，不得脱离盘口一致性直接反买。",
-            "普通平局采用历史回测版规则：统一模型只允许正向联赛的均势平进入正式池，必须满足平赔2.75-3.20、亚盘退浅或平手保护、上/下盘水位区间正常；平赔2.85-3.14为核心区间，其余只能小试。另有联赛专属模型：葡超小球平、挪超退盘平、荷甲中低总球平、英超降水平、英冠半球不动平、澳超高平赔中低总球、意甲升盘高水平；日职中低总球目前只观察。强热门冷平若未命中联赛专属模型，只能观察，禁止进入正式推荐。",
-            "让平升级采用历史回测版规则：通用模型只允许正向联赛、竞彩让1球、热门胜赔1.26-1.40、让平赔3.30-3.70，并要求亚盘上盘水位0.65-1.04、下盘水位不低于0.75；热门胜赔1.41-1.55只能小试。另有联赛专属让平口袋：意甲中赔让平、德甲中热门让平、法甲高让平赔、英超中高总球小球让平、西甲小球水位让平、沙特高赔大球让平、欧罗巴低水让平；挪超降水让平当前样本不足只观察。≤1.25超热、让2球、低命中联赛、上盘≥1.08、升盘高水不得升级。升盘高水、欧亚背离和退盘只作为风险证据，不能单独推让平。",
+            "普通平局采用历史回测版规则：统一模型只允许正向联赛的均势平进入正式池，必须满足平赔2.75-3.20、亚盘退浅或平手保护、上/下盘水位区间正常；平赔2.85-3.14为核心区间，其余只能小试。另有联赛专属模型：葡超小球平、挪超退盘平、荷甲中低总球平、英超降水平、英冠半球不动平、澳超高平赔中低总球、意甲升盘高水平；巴甲只作为平局基线观察模型，不得因单日命中直接升级；日职中低总球目前只观察。强热门冷平若未命中联赛专属模型，只能观察，禁止进入正式推荐。",
+            "让平升级采用历史回测版规则：通用模型只允许正向联赛、竞彩让1球、热门胜赔1.26-1.40、让平赔3.30-3.70，并要求亚盘上盘水位0.65-1.04、下盘水位不低于0.75；热门胜赔1.41-1.55只能小试。另有联赛专属让平口袋：意甲中赔让平、德甲中热门让平、法甲高让平赔、英超中高总球小球让平、西甲小球水位让平、沙特高赔大球让平、欧罗巴低水让平；挪超降水让平当前样本不足只观察。让平必须再通过净胜1球路径检查：若降水不升盘但竞彩受让保护项明显低赔，说明更像热门不穿或失手，不升级让平。≤1.25超热、让2球、低命中联赛、上盘≥1.08不得升级；升盘高水、欧亚背离和退盘只作为风险证据，不能单独推让平。",
             "正式推荐只允许平局或让平；主胜、客胜、让胜、让负、大球、小球只保留方向观察。正式推荐必须投注分>=70、价值指数>=60、盘口可信度>=70、星级>=4。",
             "亚盘不配合时胜负方向必须硬降级为观察，不能只写风险提示后继续推荐。",
             "upset_warning_model达到重点防冷时，热门胜负方向必须降级为观察或不下注；防选优先写平局、受让保护项或让平，但不得把爆冷预警写成确定赛果。",
@@ -3143,6 +3144,27 @@ class FAEDailyAIAnalyzer:
 
         checks = [
             matched(
+                ("巴甲", "巴西甲"),
+                name="巴甲平局基线观察模型",
+                sample=26,
+                hit_rate=42.3,
+                roi=56.1,
+                score_bonus=12.0,
+                official_score_min=94.0,
+                core=False,
+                reason=(
+                    "巴甲整体平局基线偏高，但细分到平赔/小球/浅盘后样本仍少，"
+                    "只提高观察排序，不单独升级正式推荐"
+                ),
+                condition=(
+                    draw_odds >= 2.75
+                    and not (
+                        favorite_odds <= 1.50
+                        and draw_odds >= 4.00
+                    )
+                ),
+            ),
+            matched(
                 ("葡超",),
                 name="葡超小球平局模型",
                 sample=72,
@@ -3267,6 +3289,161 @@ class FAEDailyAIAnalyzer:
             ),
         ]
         return next((item for item in checks if item), {})
+
+    @classmethod
+    def _handicap_draw_path_signal(
+        cls,
+        source: Dict[str, Any],
+        favorite_side: str,
+        favorite_odds: float,
+        current_depth: Optional[float],
+        line_change: Optional[float],
+        favorite_water: Optional[float],
+        favorite_water_change: Optional[float],
+        handicap: Optional[float],
+        handicap_draw_odds: Optional[float],
+        favorite_matches_one_goal: bool,
+        risk_set: Iterable[str],
+    ) -> Dict[str, Any]:
+        """Classify whether the handicap market really supports exact 1-goal win.
+
+        The league template can say "this league has let-draw style", but the
+        actual bet needs a concrete path: the favorite wins, yet does not cover.
+        This helper reads the three Sporttery handicap prices to separate
+        exact-margin support from "favorite may fail outright" protection.
+        """
+        if (
+            not favorite_matches_one_goal
+            or handicap is None
+            or handicap_draw_odds is None
+        ):
+            return {}
+
+        hhad_current = (
+            (source.get("sporttery_handicap") or {}).get("current")
+            or (source.get("sporttery_handicap") or {}).get("initial")
+            or []
+        )
+        hhad_initial = (
+            (source.get("sporttery_handicap") or {}).get("initial") or []
+        )
+        if len(hhad_current) < 3:
+            return {}
+        odds = [_number(value) for value in hhad_current[:3]]
+        if any(value is None or value <= 1 for value in odds):
+            return {}
+
+        if favorite_side == "home" and handicap < 0:
+            cover_label, cover_index = "让胜", 0
+            protected_label, protected_index = "让负", 2
+        elif favorite_side == "away" and handicap > 0:
+            cover_label, cover_index = "让负", 2
+            protected_label, protected_index = "让胜", 0
+        else:
+            return {}
+
+        cover_odds = odds[cover_index]
+        draw_odds = odds[1]
+        protected_odds = odds[protected_index]
+        initial_draw_odds = (
+            _number(hhad_initial[1]) if len(hhad_initial) > 1 else None
+        )
+        draw_odds_change = (
+            round(draw_odds - initial_draw_odds, 3)
+            if initial_draw_odds is not None else None
+        )
+        hhad = (
+            (((source.get("fae_core") or {}).get("probabilities") or {})
+             .get("hhad") or {})
+        )
+        probabilities = {
+            "让胜": _number(hhad.get("win")),
+            "让平": _number(hhad.get("draw")),
+            "让负": _number(hhad.get("lose")),
+        }
+        draw_probability = probabilities.get("让平")
+        cover_probability = probabilities.get(cover_label)
+        protected_probability = probabilities.get(protected_label)
+        valid_probabilities = [
+            value for value in probabilities.values() if value is not None
+        ]
+        top_probability = max(valid_probabilities) if valid_probabilities else None
+        risk_ids = {str(value) for value in risk_set or []}
+
+        protected_low_price = (
+            protected_odds is not None
+            and cover_odds is not None
+            and protected_odds <= 2.20
+            and protected_odds + 0.15 < cover_odds
+        )
+        water_drop_trap = (
+            "water_drop_without_deepen" in risk_ids
+            and favorite_water_change is not None
+            and favorite_water_change <= -0.05
+            and favorite_odds <= 1.65
+            and protected_low_price
+        )
+        if water_drop_trap:
+            return {
+                "kind": "handicap_draw_path_blocked_by_protected_side",
+                "role": "让平路径被受让保护压制",
+                "score_bonus": -18.0,
+                "block_official": True,
+                "backtest_version": HANDICAP_DRAW_PATH_MODEL_VERSION,
+                "note": (
+                    f"亚盘降水不升盘，但竞彩{protected_label}{protected_odds:g}"
+                    f"明显低于{cover_label}{cover_odds:g}，更像热门不穿或直接失手，"
+                    "不是清晰的刚好赢1球路径，不升级让平"
+                ),
+            }
+
+        draw_near_market_top = (
+            draw_probability is not None
+            and top_probability is not None
+            and draw_probability >= 28
+            and top_probability - draw_probability <= 10
+        )
+        handicap_prices_balanced = (
+            cover_odds is not None
+            and protected_odds is not None
+            and abs(cover_odds - protected_odds) <= 0.50
+        )
+        draw_price_supported = (
+            3.30 <= draw_odds <= 3.70
+            and (
+                draw_odds_change is None
+                or draw_odds_change <= 0.05
+            )
+        )
+        deepen_high_water_path = (
+            "deepen_high_water" in risk_ids
+            and current_depth is not None
+            and 0.75 <= current_depth <= 1.25
+            and line_change is not None
+            and line_change > 0.01
+            and favorite_water is not None
+            and 0.95 <= favorite_water < 1.08
+        )
+        if (
+            draw_price_supported
+            and draw_near_market_top
+            and (
+                handicap_prices_balanced
+                or deepen_high_water_path
+            )
+        ):
+            return {
+                "kind": "handicap_draw_goal_margin_path_watch",
+                "role": "净胜1球路径确认",
+                "score_bonus": 8.0,
+                "backtest_version": HANDICAP_DRAW_PATH_MODEL_VERSION,
+                "note": (
+                    f"竞彩让球三项中让平概率{draw_probability:g}%接近最高项，"
+                    f"{cover_label}{cover_odds:g}/{protected_label}{protected_odds:g}"
+                    "未形成单边压制，按净胜1球路径观察"
+                ),
+            }
+        return {}
 
     @classmethod
     def _league_specific_handicap_draw_signal(
@@ -3615,17 +3792,40 @@ class FAEDailyAIAnalyzer:
                         "不升级为正式让平"
                     ),
                 }
+            path_signal = cls._handicap_draw_path_signal(
+                source,
+                str(favorite_side),
+                favorite_odds,
+                current_depth,
+                line_change,
+                favorite_water,
+                favorite_water_change,
+                handicap,
+                handicap_draw_odds,
+                favorite_matches_one_goal,
+                risk_set,
+            )
+            if path_signal.get("block_official"):
+                return path_signal
+            path_supports_handicap_draw = bool(path_signal)
+            path_note = (
+                str(path_signal.get("note") or "").strip()
+                if path_signal else ""
+            )
             asian_water_supports_handicap_draw = (
-                favorite_water is not None
-                and 0.65 <= favorite_water < 1.05
-                and (
-                    underdog_water is None
-                    or underdog_water >= 0.75
-                )
-                and not (
-                    line_change is not None
-                    and line_change > 0.01
-                    and favorite_water >= 0.98
+                path_supports_handicap_draw
+                or (
+                    favorite_water is not None
+                    and 0.65 <= favorite_water < 1.05
+                    and (
+                        underdog_water is None
+                        or underdog_water >= 0.75
+                    )
+                    and not (
+                        line_change is not None
+                        and line_change > 0.01
+                        and favorite_water >= 0.98
+                    )
                 )
             )
             league_handicap_draw_signal = cls._league_specific_handicap_draw_signal(
@@ -3679,6 +3879,7 @@ class FAEDailyAIAnalyzer:
                         "竞彩让1球、热门胜赔1.26-1.40、让平赔3.30-3.70，"
                         f"亚盘上盘水位{water_text(favorite_water)}处在支持区间，"
                         "按热门刚好赢一球路径评估"
+                        + (f"；{path_note}" if path_note else "")
                     ),
                 }
             if (
@@ -3702,6 +3903,7 @@ class FAEDailyAIAnalyzer:
                         "竞彩让1球、让平赔3.30-3.70，但热门胜赔1.41-1.55"
                         f"区间命中率下降，亚盘上盘水位{water_text(favorite_water)}，"
                         "仅高分时小试"
+                        + (f"；{path_note}" if path_note else "")
                     ),
                 }
             return {}

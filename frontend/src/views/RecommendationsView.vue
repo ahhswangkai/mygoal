@@ -354,10 +354,15 @@
             <p>今日没有同时达到门槛的平局与让平候选，不强行凑组合。</p>
           </section>
 
-          <section v-if="showModelPanels && visibleDailyMatches.length" class="daily-match-section">
+          <section v-if="shouldShowDailyMatchList && visibleDailyMatches.length" class="daily-match-section">
             <header class="daily-match-section-title">
-              <h2>逐场五维分析</h2>
-              <span>{{ visibleDailyMatches.length }} 场未开赛</span>
+              <div>
+                <h2>{{ hasOfficialDailyRecommendations ? '逐场五维分析' : '逐场观察列表' }}</h2>
+                <small v-if="!hasOfficialDailyRecommendations">
+                  今天没有达到正式门槛的推荐，以下比赛保留研判结论和风险原因。
+                </small>
+              </div>
+              <span>{{ visibleDailyMatches.length }} 场</span>
             </header>
             <details
               v-for="item in visibleDailyMatches"
@@ -1041,6 +1046,12 @@ const dailyPoolGroups = computed(() => {
     .map(([key, title]) => ({ key, title, items: pools[key] || [] }))
     .filter(group => group.items.length)
 })
+const hasOfficialDailyRecommendations = computed(() => (
+  dailyPoolGroups.value.length > 0 || visibleDailyCombinations.value.length > 0
+))
+const shouldShowDailyMatchList = computed(() => (
+  showModelPanels || !hasOfficialDailyRecommendations.value
+))
 const dailyMatchMap = computed(() => Object.fromEntries(
   (faeDailyAi.value?.matches || []).map(item => [String(item.match_id), item])
 ))
@@ -2234,7 +2245,12 @@ onBeforeUnmount(() => requestController?.abort())
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 10px;
   margin-bottom: 8px;
+}
+
+.daily-match-section-title > div {
+  min-width: 0;
 }
 
 .daily-match-section-title h2 {
@@ -2243,7 +2259,16 @@ onBeforeUnmount(() => requestController?.abort())
   font-size: 14px;
 }
 
+.daily-match-section-title small {
+  display: block;
+  margin-top: 3px;
+  color: #969aa1;
+  font-size: 10px;
+  line-height: 1.35;
+}
+
 .daily-match-section-title span {
+  flex: 0 0 auto;
   padding: 3px 8px;
   color: #8c9098;
   font-size: 10px;
