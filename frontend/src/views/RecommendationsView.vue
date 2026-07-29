@@ -357,9 +357,12 @@
           <section v-if="shouldShowDailyMatchList && visibleDailyMatches.length" class="daily-match-section">
             <header class="daily-match-section-title">
               <div>
-                <h2>{{ hasOfficialDailyRecommendations ? '逐场五维分析' : '逐场观察列表' }}</h2>
-                <small v-if="!hasOfficialDailyRecommendations">
-                  今天没有达到正式门槛的推荐，以下比赛保留研判结论和风险原因。
+                <h2>{{ hasOfficialDailyRecommendations ? '比赛推荐' : '逐场观察列表' }}</h2>
+                <small>
+                  {{ hasOfficialDailyRecommendations
+                    ? '每场保留主选、防选和风险原因，未过正式门槛的场次会标记为观察或不下注。'
+                    : '今天没有达到正式门槛的推荐，以下比赛保留研判结论和风险原因。'
+                  }}
                 </small>
               </div>
               <span>{{ visibleDailyMatches.length }} 场</span>
@@ -1050,7 +1053,7 @@ const hasOfficialDailyRecommendations = computed(() => (
   dailyPoolGroups.value.length > 0 || visibleDailyCombinations.value.length > 0
 ))
 const shouldShowDailyMatchList = computed(() => (
-  showModelPanels || !hasOfficialDailyRecommendations.value
+  visibleDailyMatches.value.length > 0
 ))
 const dailyMatchMap = computed(() => Object.fromEntries(
   (faeDailyAi.value?.matches || []).map(item => [String(item.match_id), item])
