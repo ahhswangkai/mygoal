@@ -3293,8 +3293,8 @@ onBeforeUnmount(() => requestController?.abort())
 
 .daily-review-block > button {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 76px 58px;
-  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) minmax(98px, 34%) 46px;
+  gap: 6px;
   min-height: 72px;
   width: 100%;
   padding: 9px 10px;
@@ -3332,7 +3332,9 @@ onBeforeUnmount(() => requestController?.abort())
   color: #e53955;
   font-size: 13px;
   line-height: 1.3;
-  white-space: nowrap;
+  max-width: 100%;
+  white-space: normal;
+  word-break: break-all;
 }
 
 .review-result-info > em {
@@ -3375,7 +3377,7 @@ onBeforeUnmount(() => requestController?.abort())
 
 .review-result-info > small {
   color: #777;
-  font-size: 12px;
+  font-size: 10px;
   line-height: 1.3;
   white-space: nowrap;
 }

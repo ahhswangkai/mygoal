@@ -11,7 +11,7 @@ import MineView from './views/MineView.vue'
 
 const routes = [
   { path: '/', redirect: '/calculator' },
-  { path: '/home', name: 'home', component: HomeView, meta: { title: '足彩分析', mainTab: true } },
+  { path: '/home', name: 'home', component: HomeView, meta: { title: '足彩分析', mainTab: true, keepAlive: true } },
   {
     path: '/recommendations',
     name: 'recommendations',

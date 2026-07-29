@@ -223,7 +223,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, onActivated, onDeactivated } from 'vue'
 import { useRouter } from 'vue-router'
 import AccountButton from '../components/AccountButton.vue'
 
@@ -238,6 +238,7 @@ let liveScoreTimer = null
 let liveScoreController = null
 let liveScoreRequestPending = false
 let matchesController = null
+let realtimeActive = false
 
 const filters = ref({
   page: 1,
@@ -419,6 +420,20 @@ const handleVisibilityChange = () => {
   }
 }
 
+const activateRealtime = () => {
+  if (realtimeActive) return
+  realtimeActive = true
+  document.addEventListener('visibilitychange', handleVisibilityChange)
+  startLiveScorePolling()
+}
+
+const deactivateRealtime = () => {
+  if (!realtimeActive) return
+  realtimeActive = false
+  document.removeEventListener('visibilitychange', handleVisibilityChange)
+  stopLiveScorePolling()
+}
+
 const getPrediction = (matchId) => {
   return predictions.value.find(p => String(p.match_id) === String(matchId))
 }
@@ -534,13 +549,13 @@ const goToDetail = (id) => {
 onMounted(() => {
   fetchMatches()
   fetchPredictions()
-  document.addEventListener('visibilitychange', handleVisibilityChange)
-  startLiveScorePolling()
 })
 
+onActivated(activateRealtime)
+onDeactivated(deactivateRealtime)
+
 onUnmounted(() => {
-  document.removeEventListener('visibilitychange', handleVisibilityChange)
-  stopLiveScorePolling()
+  deactivateRealtime()
   matchesController?.abort()
 })
 </script>
