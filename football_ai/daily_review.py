@@ -120,6 +120,49 @@ def summarize_ai_settled(rows: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
     }
 
 
+def summarize_two_option(rows: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
+    """Summarize coverage accuracy for primary + hedge selections.
+
+    A two-option row is an analytical coverage check, not a real single-stake
+    bet.  We therefore report hit rate and average option count, but avoid
+    presenting ROI as if the pair were one ordinary ticket.
+    """
+    row_list = list(rows)
+    settled = [
+        row for row in row_list
+        if row.get("status") in {"hit", "miss", "push"}
+    ]
+    decided = [
+        row for row in settled if row.get("status") in {"hit", "miss"}
+    ]
+    hits = sum(1 for row in decided if row.get("status") == "hit")
+    pushes = sum(1 for row in settled if row.get("status") == "push")
+    option_counts = [
+        len(row.get("selections") or [])
+        for row in row_list
+        if row.get("selections")
+    ]
+    return {
+        "total": len(row_list),
+        "settled": len(settled),
+        "pending": sum(
+            1 for row in row_list if row.get("status") == "pending"
+        ),
+        "ungraded": sum(
+            1 for row in row_list
+            if row.get("status") in {"ungraded", "skipped"}
+        ),
+        "hits": hits,
+        "misses": len(decided) - hits,
+        "pushes": pushes,
+        "hit_rate": round(hits / len(decided) * 100, 1) if decided else 0,
+        "average_options": (
+            round(sum(option_counts) / len(option_counts), 2)
+            if option_counts else 0
+        ),
+    }
+
+
 def summarize_history_calibration(
     rows: Iterable[Dict[str, Any]],
 ) -> Dict[str, Any]:
@@ -198,6 +241,13 @@ class FAEDailyAIReviewEngine:
                 item, matches_by_id.get(str(item.get("match_id"))) or {}
             )]
             if result is not None
+        ]
+        two_option_results = [
+            result
+            for item in matches
+            for result in self._settle_two_option_references(
+                item, matches_by_id.get(str(item.get("match_id"))) or {}
+            )
         ]
         draw_radar_results = [
             result
@@ -292,12 +342,35 @@ class FAEDailyAIReviewEngine:
             "pending_matches": pending,
             "match_results": match_results,
             "handicap_results": handicap_results,
+            "two_option_results": two_option_results,
             "draw_radar_results": draw_radar_results,
             "combo_results": combo_results,
             "conflicts": conflicts,
             "summary": {
                 "singles": summarize_ai_settled(match_results),
                 "handicap": summarize_ai_settled(handicap_results),
+                "two_option": {
+                    "overall": summarize_two_option(two_option_results),
+                    "main": summarize_two_option([
+                        row for row in two_option_results
+                        if row.get("result_type") == "two_option_main"
+                    ]),
+                    "handicap": summarize_two_option([
+                        row for row in two_option_results
+                        if row.get("result_type") == "two_option_handicap"
+                    ]),
+                    "by_pair": {
+                        pair: summarize_two_option([
+                            row for row in two_option_results
+                            if row.get("pair_key") == pair
+                        ])
+                        for pair in sorted({
+                            str(row.get("pair_key") or "")
+                            for row in two_option_results
+                            if row.get("pair_key")
+                        })
+                    },
+                },
                 "draw_radar": {
                     "overall": summarize_ai_settled(draw_radar_results),
                     "ordinary_draw": summarize_ai_settled([
@@ -373,6 +446,109 @@ class FAEDailyAIReviewEngine:
             result["no_bet"] = True
             result["no_bet_reasons"] = analysis.get("no_bet_reasons") or []
         return result
+
+    def _settle_two_option_references(
+        self, source: Dict[str, Any], match: Dict[str, Any]
+    ) -> List[Dict[str, Any]]:
+        """Settle primary + hedge coverage without treating it as ROI."""
+        analysis = source.get("analysis") or {}
+        rows: List[Dict[str, Any]] = []
+        groups = {
+            "main": {
+                "type": "two_option_main",
+                "market": "主选防选",
+                "selections": [
+                    analysis.get("primary_play"),
+                    analysis.get("secondary_play"),
+                ],
+            },
+            "handicap": {
+                "type": "two_option_handicap",
+                "market": "竞彩让球双选",
+                "selections": [
+                    value for value in (
+                        analysis.get("primary_play"),
+                        analysis.get("secondary_play"),
+                        analysis.get("handicap_play"),
+                    )
+                    if value in {"让胜", "让平", "让负"}
+                ],
+            },
+        }
+        for group in groups.values():
+            selections = []
+            for value in group["selections"]:
+                selection = str(value or "")
+                if selection in SUPPORTED_SELECTIONS and selection not in selections:
+                    selections.append(selection)
+            if len(selections) < 2:
+                continue
+            if not self._same_market(selections):
+                continue
+            settled = [
+                self._settle_selection(source, match, selection)
+                for selection in selections
+            ]
+            statuses = [item.get("status") for item in settled]
+            if not statuses:
+                status = "ungraded"
+            elif "hit" in statuses:
+                status = "hit"
+            elif "pending" in statuses:
+                status = "pending"
+            elif "push" in statuses:
+                status = "push"
+            elif all(value == "miss" for value in statuses):
+                status = "miss"
+            else:
+                status = "ungraded"
+            hit_row = next(
+                (item for item in settled if item.get("status") == "hit"),
+                None,
+            )
+            first = settled[0] if settled else {}
+            rows.append({
+                "match_id": str(source.get("match_id") or ""),
+                "match_number": source.get("match_number"),
+                "home_team": source.get("home_team"),
+                "away_team": source.get("away_team"),
+                "league": source.get("league"),
+                "result_type": group["type"],
+                "market": group["market"],
+                "selection": " / ".join(selections),
+                "selection_text": " / ".join(
+                    item.get("selection_text") or item.get("selection")
+                    for item in settled
+                ),
+                "selections": selections,
+                "selection_results": settled,
+                "hit_selection": (
+                    hit_row.get("selection") if hit_row else None
+                ),
+                "hit_selection_text": (
+                    hit_row.get("selection_text") if hit_row else None
+                ),
+                "status": status,
+                "result_score": first.get("result_score"),
+                "pair_key": " / ".join(selections),
+                "rating": first.get("rating"),
+                "rating_bucket": first.get("rating_bucket"),
+                "no_bet": bool(analysis.get("no_bet")),
+                "no_bet_reasons": analysis.get("no_bet_reasons") or [],
+                "return": None,
+                "profit": None,
+            })
+        return rows
+
+    @staticmethod
+    def _same_market(selections: Iterable[str]) -> bool:
+        market_sets = (
+            {"主胜", "平局", "客胜"},
+            {"让胜", "让平", "让负"},
+            {"大球", "小球"},
+        )
+        selection_set = set(selections)
+        return any(selection_set <= market for market in market_sets)
 
     def _settle_draw_radar(
         self, source: Dict[str, Any], match: Dict[str, Any]
@@ -547,6 +723,7 @@ def aggregate_daily_ai_reviews(
     rows = list(reviews)
     matches: List[Dict[str, Any]] = []
     handicap_results: List[Dict[str, Any]] = []
+    two_option_results: List[Dict[str, Any]] = []
     draw_radar_results: List[Dict[str, Any]] = []
     combos: List[Dict[str, Any]] = []
     conflicts: List[Dict[str, Any]] = []
@@ -560,6 +737,10 @@ def aggregate_daily_ai_reviews(
             **row,
             "review_owner_date": owner_date,
         } for row in review.get("handicap_results") or [])
+        two_option_results.extend({
+            **row,
+            "review_owner_date": owner_date,
+        } for row in review.get("two_option_results") or [])
         draw_radar_results.extend({
             **row,
             "review_owner_date": owner_date,
@@ -588,6 +769,28 @@ def aggregate_daily_ai_reviews(
         ),
         "singles": summarize_ai_settled(matches),
         "handicap": summarize_ai_settled(handicap_results),
+        "two_option": {
+            "overall": summarize_two_option(two_option_results),
+            "main": summarize_two_option([
+                row for row in two_option_results
+                if row.get("result_type") == "two_option_main"
+            ]),
+            "handicap": summarize_two_option([
+                row for row in two_option_results
+                if row.get("result_type") == "two_option_handicap"
+            ]),
+            "by_pair": {
+                pair: summarize_two_option([
+                    row for row in two_option_results
+                    if row.get("pair_key") == pair
+                ])
+                for pair in sorted({
+                    str(row.get("pair_key") or "")
+                    for row in two_option_results
+                    if row.get("pair_key")
+                })
+            },
+        },
         "draw_radar": {
             "overall": summarize_ai_settled(draw_radar_results),
             "ordinary_draw": summarize_ai_settled([

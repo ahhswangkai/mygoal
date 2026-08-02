@@ -360,7 +360,7 @@
                 <h2>{{ hasOfficialDailyRecommendations ? '比赛推荐' : '逐场观察列表' }}</h2>
                 <small>
                   {{ hasOfficialDailyRecommendations
-                    ? '每场保留主选、防选和风险原因，未过正式门槛的场次会标记为观察或不下注。'
+                    ? '每场保留主选、防选和风险原因，未过正式门槛的场次会标记为观察降级。'
                     : '今天没有达到正式门槛的推荐，以下比赛保留研判结论和风险原因。'
                   }}
                 </small>
@@ -380,9 +380,9 @@
                 </span>
                 <span class="daily-selection-pair">
                   <span class="daily-primary-choice">
-                    <i>{{ item.analysis?.no_bet ? '结论' : '主选' }}</i>
+                    <i>主选</i>
                     <em :class="{ 'no-bet-badge': item.analysis?.no_bet }">
-                      {{ item.analysis?.no_bet ? '不下注' : (item.analysis?.primary_play || '观望') }}
+                      {{ item.analysis?.primary_play || '观望' }}
                     </em>
                   </span>
                   <strong>{{ item.analysis?.no_bet ? '观察' : (item.analysis?.star_text || starText(item.analysis?.rating)) }}</strong>
@@ -424,7 +424,12 @@
                   <p><span>价值指数</span><b>{{ item.analysis?.value_score ?? '--' }}分</b></p>
                   <p><span>盘口可信</span><b>{{ item.analysis?.market_confidence?.score ?? '--' }}分</b></p>
                   <p><span>投注分</span><b>{{ item.analysis?.bet_score ?? '--' }}分</b></p>
-                  <p><span>结论</span><b :class="{ 'no-bet-text': item.analysis?.no_bet }">{{ item.analysis?.decision || '观望' }}</b></p>
+                  <p>
+                    <span>策略</span>
+                    <b :class="{ 'no-bet-text': item.analysis?.no_bet }">
+                      {{ item.analysis?.no_bet ? '观察降级' : (item.analysis?.decision || '可考虑') }}
+                    </b>
+                  </p>
                 </div>
                 <HistoricalGoalMarginCard
                   :model="item.input_snapshot?.historical_goal_margin_model"
@@ -532,6 +537,16 @@
               <small>让胜 / 让平 / 让负独立结算</small>
             </article>
             <article>
+              <span>双选覆盖</span>
+              <strong>{{ faeStats.two_option?.overall?.hit_rate || 0 }}%</strong>
+              <small>{{ faeStats.two_option?.overall?.hits || 0 }}/{{ faeStats.two_option?.overall?.settled || 0 }} 覆盖</small>
+            </article>
+            <article>
+              <span>让球双选</span>
+              <strong>{{ faeStats.two_option?.handicap?.hit_rate || 0 }}%</strong>
+              <small>{{ faeStats.two_option?.handicap?.hits || 0 }}/{{ faeStats.two_option?.handicap?.settled || 0 }} 覆盖</small>
+            </article>
+            <article>
               <span>2串1命中</span>
               <strong>{{ faeStats.by_play?.['2串1']?.hit_rate || 0 }}%</strong>
               <small>{{ faeStats.by_play?.['2串1']?.hits || 0 }}/{{ faeStats.by_play?.['2串1']?.settled || 0 }}</small>
@@ -594,7 +609,7 @@
                   <small>
                     已复盘 {{ faeReview.ai_deep_review.coverage?.reviewed_matches || faeReview.ai_deep_review.coverage?.settled_matches || 0 }}
                     / {{ faeReview.ai_deep_review.coverage?.total_matches || 0 }} 场 ·
-                    不下注 {{ faeReview.ai_deep_review.coverage?.no_bet_matches || 0 }} 场 ·
+                    观察降级 {{ faeReview.ai_deep_review.coverage?.no_bet_matches || 0 }} 场 ·
                     让球参考 {{ faeReview.ai_deep_review.coverage?.settled_handicap_references || 0 }} 项 ·
                     {{ faeReview.ai_deep_review.model }}
                   </small>
@@ -604,7 +619,7 @@
             </header>
 
             <p class="ai-review-conclusion">
-              {{ faeReview.ai_deep_review.summary?.conclusion }}
+              {{ displayReviewText(faeReview.ai_deep_review.summary?.conclusion) }}
             </p>
 
             <div class="ai-review-points">
@@ -613,7 +628,7 @@
                 <p
                   v-for="item in faeReview.ai_deep_review.summary?.what_worked || []"
                   :key="`worked-${item}`"
-                >✓ {{ item }}</p>
+                >✓ {{ displayReviewText(item) }}</p>
                 <small v-if="!faeReview.ai_deep_review.summary?.what_worked?.length">暂无足够样本</small>
               </article>
               <article>
@@ -621,7 +636,7 @@
                 <p
                   v-for="item in faeReview.ai_deep_review.summary?.what_failed || []"
                   :key="`failed-${item}`"
-                >× {{ item }}</p>
+                >× {{ displayReviewText(item) }}</p>
                 <small v-if="!faeReview.ai_deep_review.summary?.what_failed?.length">暂无明确错误模式</small>
               </article>
             </div>
@@ -632,7 +647,7 @@
                 :key="key"
               >
                 <strong>{{ aiScopeLabel(key) }}</strong>
-                <p>{{ text }}</p>
+                <p>{{ displayReviewText(text) }}</p>
               </article>
             </div>
 
@@ -651,7 +666,7 @@
                     {{ aiActionLabel(candidate.action, candidate.delta) }}
                   </span>
                 </header>
-                <p>{{ candidate.reason }}</p>
+                <p>{{ displayReviewText(candidate.reason) }}</p>
                 <small>
                   置信度 {{ aiConfidenceLabel(candidate.confidence) }} ·
                   至少 {{ candidate.minimum_samples }} 个历史样本后验证
@@ -671,15 +686,18 @@
                     {{ item.home_team }} vs {{ item.away_team }}
                   </span>
                   <em>
-                    {{ item.no_bet ? `不下注（观察${item.selection_text || '观望'}）` : item.selection_text }}
+                    {{ item.selection_text || '观望' }}
                     · {{ item.result_score }}
                   </em>
-                  <i :class="aiVerdictClass(item.verdict)">{{ item.verdict }}</i>
+                  <i :class="aiVerdictClass(item.verdict)">{{ displayAiVerdict(item.verdict) }}</i>
                 </summary>
                 <small v-if="item.handicap_selection_text" class="ai-handicap-verdict">
                   竞彩参考 {{ item.handicap_selection_text }} · {{ item.handicap_verdict }}
                 </small>
-                <p>{{ item.diagnosis }}</p>
+                <small v-if="item.two_option_verdict" class="ai-handicap-verdict">
+                  双选覆盖 · {{ item.two_option_verdict }}
+                </small>
+                <p>{{ displayReviewText(item.diagnosis) }}</p>
                 <ul v-if="item.correct_signals?.length">
                   <li v-for="signal in item.correct_signals" :key="`correct-${signal}`">
                     <b>有效</b>{{ signal }}
@@ -716,7 +734,7 @@
                 <span>全量逐场复盘</span>
                 <small>
                   主选 {{ faeReview.summary?.singles?.hits || 0 }}/{{ faeReview.summary?.singles?.settled || 0 }}
-                  · 不下注 {{ reviewNoBetCount }}
+                  · 观察降级 {{ reviewNoBetCount }}
                 </small>
               </h2>
               <button
@@ -730,7 +748,7 @@
                 </span>
                 <span class="review-pick-info">
                   <strong>
-                    {{ item.no_bet ? `不下注（观察${item.selection_text || item.selection}）` : (item.selection_text || item.selection) }}
+                    {{ item.selection_text || item.selection }}
                   </strong>
                   <i :class="item.status">{{ reviewStatusLabel(item.status, item.no_bet) }}</i>
                   <small v-if="item.guardrail_triggered" class="guarded-pick">
@@ -743,6 +761,36 @@
                     <small v-if="item.odds">@{{ item.odds }}</small>
                   </em>
                   <small v-if="isSettledStatus(item.status)">{{ signedMetric(item.profit) }}单位</small>
+                </span>
+              </button>
+            </section>
+
+            <section v-if="faeReview.two_option_results?.length" class="daily-review-block">
+              <h2>
+                <span>双选覆盖复盘</span>
+                <small>
+                  总体 {{ faeReview.summary?.two_option?.overall?.hits || 0 }}/{{ faeReview.summary?.two_option?.overall?.settled || 0 }}
+                  · 让球 {{ faeReview.summary?.two_option?.handicap?.hits || 0 }}/{{ faeReview.summary?.two_option?.handicap?.settled || 0 }}
+                </small>
+              </h2>
+              <button
+                v-for="item in faeReview.two_option_results"
+                :key="`two-option-${item.result_type}-${item.match_id}`"
+                type="button"
+                @click="goToDetail(item.match_id)"
+              >
+                <span class="review-match-info">
+                  <b>{{ item.match_number }}</b>{{ item.home_team }} vs {{ item.away_team }}
+                </span>
+                <span class="review-pick-info">
+                  <strong>{{ item.selection_text || item.selection }}</strong>
+                  <i :class="item.status">
+                    {{ item.status === 'hit' ? `✓ 覆盖${item.hit_selection_text ? ` ${item.hit_selection_text}` : ''}` : reviewStatusLabel(item.status) }}
+                  </i>
+                </span>
+                <span class="review-result-info">
+                  <em>{{ item.result_score || '待赛' }}</em>
+                  <small>{{ item.market || '双选' }}</small>
                 </span>
               </button>
             </section>
@@ -1274,7 +1322,20 @@ function displayDailyText(value) {
   for (const item of matches) {
     text = text.split(String(item.match_id)).join(String(item.match_number))
   }
-  return text
+  return displayReviewText(text)
+}
+
+function displayReviewText(value) {
+  return String(value || '')
+    .replace(/不下注过保守/g, '观察过保守')
+    .replace(/不下注合理/g, '风控有效')
+    .replace(/不下注/g, '观察降级')
+}
+
+function displayAiVerdict(value) {
+  if (value === '不下注合理') return '风控有效'
+  if (value === '不下注过保守') return '观察过保守'
+  return value || '观望复盘'
 }
 
 function triplet(values) {
@@ -1453,7 +1514,7 @@ function reviewStatusLabel(status, noBet = false) {
   if (status === 'hit') return '✓ 命中'
   if (status === 'miss') return '× 未中'
   if (status === 'push') return '走盘'
-  if (status === 'skipped') return noBet ? '不下注' : '观望'
+  if (status === 'skipped') return noBet ? '观察降级' : '观望'
   if (status === 'ungraded') return '未结算'
   return '待赛'
 }

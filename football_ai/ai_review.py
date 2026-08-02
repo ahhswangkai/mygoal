@@ -14,7 +14,7 @@ from .provider import ArkNarrativeClient, FAEOutputError
 from .version import ENGINE_VERSION
 
 
-AI_REVIEW_PROMPT_VERSION = "fae-deep-review-v7-all-matches"
+AI_REVIEW_PROMPT_VERSION = "fae-deep-review-v8-two-option"
 SETTLED_STATUSES = {"hit", "miss", "push"}
 LEARNING_SCOPES = {
     "euro",
@@ -60,6 +60,11 @@ class FAEAIReviewAnalyzer:
             for item in review.get("handicap_results") or []
             if item.get("match_id")
         }
+        two_options_by_id: Dict[str, List[Dict[str, Any]]] = {}
+        for item in review.get("two_option_results") or []:
+            match_id = str(item.get("match_id") or "")
+            if match_id:
+                two_options_by_id.setdefault(match_id, []).append(item)
         radar_by_id: Dict[str, List[Dict[str, Any]]] = {}
         for item in review.get("draw_radar_results") or []:
             match_id = str(item.get("match_id") or "")
@@ -117,6 +122,16 @@ class FAEAIReviewAnalyzer:
                     "return": handicap_result.get("return"),
                     "profit": handicap_result.get("profit"),
                 } if handicap_result else {},
+                "two_option_predictions": [{
+                    "market": item.get("market"),
+                    "selection": item.get("selection"),
+                    "selection_text": item.get("selection_text"),
+                    "selections": item.get("selections") or [],
+                    "status": item.get("status"),
+                    "hit_selection": item.get("hit_selection"),
+                    "hit_selection_text": item.get("hit_selection_text"),
+                    "result_type": item.get("result_type"),
+                } for item in two_options_by_id.get(match_id, [])],
                 "draw_radar_predictions": [{
                     "selection": item.get("selection"),
                     "selection_text": item.get("selection_text"),
@@ -294,6 +309,7 @@ class FAEAIReviewAnalyzer:
                 "match_id": "必须来自输入",
                 "verdict": "判断有效/命中但过程有风险/判断失误/走盘/不下注合理/不下注过保守/观望复盘",
                 "handicap_verdict": "让球参考命中/让球参考未中/让球走盘/未推荐",
+                "two_option_verdict": "双选覆盖命中/双选覆盖未中/双选未形成",
                 "diagnosis": "60到180字",
                 "correct_signals": ["赛前已记录且有效的信号"],
                 "missed_signals": ["赛前已记录但误读或忽略的信号"],
@@ -330,6 +346,7 @@ class FAEAIReviewAnalyzer:
             "固定复核欧赔、亚盘真实升深、竞彩让球、大小球和市场一致性五项。",
             "升降属于走势而非盘口名；让平必须结合输入中的具体让球数解释。",
             "必须分别复核正式主选与handicap_prediction中的竞彩让球参考；普通主胜命中不能掩盖让胜、让平或让负未中。",
+            "必须单独复核two_option_predictions：主选+防选或让球双选任一命中即为覆盖命中；这只评估方向覆盖，不得包装成单注ROI。",
             "所有已完赛比赛都必须复盘，包括prediction.no_bet=true的不下注比赛和selection=观望的观察比赛；不下注不是跳过，而是风险控制决策，需要判断合理还是过保守。",
             "prediction.no_bet=true时，result.status通常为skipped，result.observation_status表示如果按赛前观察方向下注会命中、未中或走盘；若observation_status=miss，优先复核不下注是否避免错误，若observation_status=hit，必须复核是否过度保守。",
             "selection=观望且没有具体下注方向时，不能按命中率评价，只复核是否正确识别了数据不足、盘口冲突或风险。",
@@ -382,6 +399,19 @@ class FAEAIReviewAnalyzer:
             no_bet = bool((source.get("prediction") or {}).get("no_bet"))
             handicap_prediction = source.get("handicap_prediction") or {}
             handicap_status = handicap_prediction.get("status")
+            two_options = source.get("two_option_predictions") or []
+            two_option_hit = any(
+                item.get("status") == "hit" for item in two_options
+            )
+            two_option_settled = any(
+                item.get("status") in SETTLED_STATUSES
+                for item in two_options
+            )
+            fallback_two_option_verdict = (
+                "双选覆盖命中" if two_option_hit
+                else "双选覆盖未中" if two_option_settled
+                else "双选未形成"
+            )
             if no_bet:
                 fallback_verdict = {
                     "hit": "不下注过保守",
@@ -423,6 +453,12 @@ class FAEAIReviewAnalyzer:
                     "selection_text"
                 ),
                 "handicap_result_status": handicap_status,
+                "two_option_predictions": two_options,
+                "two_option_verdict": cls._text(
+                    generated.get("two_option_verdict"),
+                    fallback_two_option_verdict,
+                    40,
+                ),
                 "no_bet": no_bet,
                 "no_bet_reasons": (
                     (source.get("prediction") or {}).get("no_bet_reasons")
