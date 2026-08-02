@@ -292,9 +292,9 @@ const dateOptions = Array.from({ length: 7 }, (_, index) => {
 })
 
 const matchTimeTimestamp = (value) => {
-  if (!value) return Number.NEGATIVE_INFINITY
+  if (!value) return Number.POSITIVE_INFINITY
   const timestamp = new Date(String(value).trim().replace(' ', 'T')).getTime()
-  return Number.isNaN(timestamp) ? Number.NEGATIVE_INFINITY : timestamp
+  return Number.isNaN(timestamp) ? Number.POSITIVE_INFINITY : timestamp
 }
 
 const fetchMatches = async () => {
@@ -315,9 +315,10 @@ const fetchMatches = async () => {
     const payload = await response.json()
     if (!payload.success) throw new Error('比赛接口返回失败')
 
-    allMatches.value = (payload.data || []).sort(
-      (a, b) => matchTimeTimestamp(b.match_time) - matchTimeTimestamp(a.match_time)
-    )
+    allMatches.value = (payload.data || []).sort((a, b) => (
+      matchTimeTimestamp(a.match_time) - matchTimeTimestamp(b.match_time)
+      || String(a.match_number || '').localeCompare(String(b.match_number || ''), 'zh-CN')
+    ))
     filters.value.page = 1
   } catch (e) {
     if (e.name === 'AbortError') return
