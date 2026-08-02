@@ -360,7 +360,7 @@
                 <h2>{{ hasOfficialDailyRecommendations ? '比赛推荐' : '逐场观察列表' }}</h2>
                 <small>
                   {{ hasOfficialDailyRecommendations
-                    ? '每场保留主选、防选和风险原因，未过正式门槛的场次会标记为观察降级。'
+                    ? '每场保留主选、次选和风险原因，未过正式门槛的场次只标记为观察级。'
                     : '今天没有达到正式门槛的推荐，以下比赛保留研判结论和风险原因。'
                   }}
                 </small>
@@ -379,18 +379,22 @@
                   <small>{{ item.league }} · {{ formatMatchTime(item.match_time) }}</small>
                 </span>
                 <span class="daily-selection-pair">
-                  <span class="daily-primary-choice">
-                    <i>主选</i>
-                    <em :class="{ 'no-bet-badge': item.analysis?.no_bet }">
-                      {{ item.analysis?.primary_play || '观望' }}
-                    </em>
+                  <span class="daily-choice-stack">
+                    <span class="daily-pick-choice primary">
+                      <i>主选</i>
+                      <em>{{ dailyDisplayPrimary(item) }}</em>
+                    </span>
+                    <span class="daily-pick-choice secondary">
+                      <i>次选</i>
+                      <em>{{ dailyDisplaySecondary(item) }}</em>
+                    </span>
                   </span>
-                  <strong>{{ item.analysis?.no_bet ? '观察' : (item.analysis?.star_text || starText(item.analysis?.rating)) }}</strong>
+                  <strong>
+                    {{ item.analysis?.star_text || starText(item.analysis?.rating) }}
+                    <i v-if="item.analysis?.no_bet">观察级</i>
+                  </strong>
                   <span class="daily-pick-notes">
                     <i>倾向 {{ item.analysis?.predicted_result || '观望' }}</i>
-                    <i v-if="item.analysis?.secondary_play && item.analysis.secondary_play !== '观望'">
-                      防 {{ item.analysis.secondary_play }}
-                    </i>
                     <i v-if="item.analysis?.handicap_play && item.analysis.handicap_play !== '观望'">
                       让球 {{ item.analysis.handicap_play }}
                     </i>
@@ -1296,6 +1300,57 @@ function starText(stars) {
 
 function dailyMatch(matchId) {
   return dailyMatchMap.value[String(matchId)] || {}
+}
+
+const DAILY_RESULT_PLAY_LABELS = new Set(['主胜', '平局', '客胜', '让胜', '让平', '让负'])
+
+function normalizeDailyPlay(value) {
+  const text = String(value || '').trim()
+  if (!text || text === '观望' || text === '不下注' || text === '观察') return ''
+  return text
+}
+
+function isDailyResultPlay(value) {
+  return DAILY_RESULT_PLAY_LABELS.has(normalizeDailyPlay(value))
+}
+
+function dailyCandidateScores(item) {
+  const scores = item?.input_snapshot?.fae_core?.recommendation?.category_scores || []
+  return [...scores]
+    .filter(score => isDailyResultPlay(score?.label))
+    .sort((left, right) => {
+      const leftNoBet = left?.no_bet ? 1 : 0
+      const rightNoBet = right?.no_bet ? 1 : 0
+      if (leftNoBet !== rightNoBet) return leftNoBet - rightNoBet
+      return Number(right?.bet_score || 0) - Number(left?.bet_score || 0)
+    })
+}
+
+function dailyDisplayPlays(item) {
+  const analysis = item?.analysis || {}
+  const candidates = [
+    analysis.primary_play,
+    analysis.secondary_play,
+    analysis.handicap_play,
+    analysis.predicted_result,
+    ...dailyCandidateScores(item).map(score => score.label)
+  ]
+    .map(normalizeDailyPlay)
+    .filter(isDailyResultPlay)
+
+  const unique = []
+  for (const candidate of candidates) {
+    if (!unique.includes(candidate)) unique.push(candidate)
+  }
+  return unique
+}
+
+function dailyDisplayPrimary(item) {
+  return dailyDisplayPlays(item)[0] || '观望'
+}
+
+function dailyDisplaySecondary(item) {
+  return dailyDisplayPlays(item).find(play => play !== dailyDisplayPrimary(item)) || '观望'
 }
 
 function radarTierLabel(tier) {
@@ -2521,47 +2576,73 @@ onBeforeUnmount(() => requestController?.abort())
   font-size: 10px;
 }
 
-.daily-primary-choice {
-  display: flex;
+.daily-selection-pair {
+  display: grid;
+  gap: 5px;
+  justify-items: end;
+  min-width: 120px;
+}
+
+.daily-choice-stack {
+  display: grid;
+  gap: 5px;
+  justify-items: end;
+}
+
+.daily-pick-choice {
+  display: inline-flex;
   align-items: center;
   justify-content: flex-end;
   gap: 5px;
+  min-width: 82px;
 }
 
-.daily-primary-choice > i {
+.daily-pick-choice > i {
+  width: 28px;
   color: #a3a6ad;
   font-size: 9px;
   font-style: normal;
+  text-align: right;
 }
 
-.daily-primary-choice em {
+.daily-pick-choice em {
   min-width: 43px;
   padding: 4px 8px;
   color: #fff;
   font-size: 12px;
   font-style: normal;
-  font-weight: 700;
+  font-weight: 750;
   text-align: center;
   background: #e53955;
   border-radius: 7px;
 }
 
-.daily-primary-choice em.no-bet-badge {
-  background: #515866;
-}
-
-.daily-selection-pair {
-  display: grid;
-  gap: 4px;
-  justify-items: end;
-  min-width: 104px;
+.daily-pick-choice.secondary em {
+  color: #e53955;
+  background: #fff1f4;
+  border: 1px solid #ffd6df;
 }
 
 .daily-selection-pair > strong {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 5px;
   color: #e53955;
   font-size: 11px;
   letter-spacing: .4px;
   white-space: nowrap;
+}
+
+.daily-selection-pair > strong i {
+  padding: 1px 5px;
+  color: #9a6a16;
+  font-size: 9px;
+  font-style: normal;
+  font-weight: 650;
+  letter-spacing: 0;
+  background: #fff6df;
+  border-radius: 999px;
 }
 
 .daily-pick-notes {
