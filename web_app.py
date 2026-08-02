@@ -2499,13 +2499,53 @@ def _crawl_latest():
     try:
         print(f"⏰ 开始定时爬取任务: {datetime.now()}")
         
-        # 1. 确定爬取日期范围：总是爬取今天，上午时段额外爬取昨天
+        # 1. 确定爬取日期范围：总是爬取今天；部分美洲赛事会挂在昨天竞彩日，
+        #    但北京时间中午后才完场，所以结果回刷窗口要覆盖到下午。
         now = datetime.now()
-        dates_to_crawl = [now.strftime('%Y-%m-%d')]
-        if now.hour < 12:
+        dates_to_crawl = []
+
+        def add_crawl_date(value):
+            date_value = str(value or '')[:10]
+            if date_value and date_value not in dates_to_crawl:
+                dates_to_crawl.append(date_value)
+
+        add_crawl_date(now.strftime('%Y-%m-%d'))
+        try:
+            backfill_until_hour = int(os.getenv('RESULT_BACKFILL_UNTIL_HOUR', '16'))
+        except ValueError:
+            backfill_until_hour = 16
+        if now.hour < max(1, min(24, backfill_until_hour)):
             yesterday = now - timedelta(days=1)
-            dates_to_crawl.append(yesterday.strftime('%Y-%m-%d'))
-            print(f"ℹ️  上午时段，额外爬取昨天数据: {dates_to_crawl[-1]}")
+            add_crawl_date(yesterday.strftime('%Y-%m-%d'))
+            print(f"ℹ️  赛果回刷窗口内，额外爬取昨天数据: {dates_to_crawl[-1]}")
+
+        # 待结算票据兜底：只要用户还有近几天的待结算票，就继续回刷对应竞彩日。
+        # 这样不会因为美职联/南美等跨自然日完赛，错过最终状态。
+        try:
+            pending_backfill_days = max(1, int(os.getenv('RESULT_PENDING_BACKFILL_DAYS', '3')))
+        except ValueError:
+            pending_backfill_days = 3
+        try:
+            today_date = now.date()
+            pending_dates = set()
+            for bet in user_storage.list_pending_bets():
+                for item in bet.get('selected_items') or []:
+                    date_value = str(item.get('date') or '')[:10]
+                    if not date_value:
+                        continue
+                    try:
+                        item_date = datetime.strptime(date_value, '%Y-%m-%d').date()
+                    except ValueError:
+                        continue
+                    age_days = (today_date - item_date).days
+                    if 0 <= age_days <= pending_backfill_days:
+                        pending_dates.add(date_value)
+            for date_value in sorted(pending_dates):
+                add_crawl_date(date_value)
+            if pending_dates:
+                print(f"ℹ️  待结算票据回刷日期: {', '.join(sorted(pending_dates))}")
+        except Exception as e:
+            print(f"⚠️  读取待结算票据回刷日期失败: {str(e)}")
         
         all_matches = []
         for date_str in dates_to_crawl:
