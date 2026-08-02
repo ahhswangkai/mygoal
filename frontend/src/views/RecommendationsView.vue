@@ -765,7 +765,7 @@
               </button>
             </section>
 
-            <section v-if="faeReview.two_option_results?.length" class="daily-review-block">
+            <section v-if="twoOptionReviewRows.length" class="daily-review-block">
               <h2>
                 <span>双选覆盖复盘</span>
                 <small>
@@ -774,8 +774,8 @@
                 </small>
               </h2>
               <button
-                v-for="item in faeReview.two_option_results"
-                :key="`two-option-${item.result_type}-${item.match_id}`"
+                v-for="item in twoOptionReviewRows"
+                :key="`two-option-${item.match_id}`"
                 type="button"
                 @click="goToDetail(item.match_id)"
               >
@@ -790,7 +790,9 @@
                 </span>
                 <span class="review-result-info">
                   <em>{{ item.result_score || '待赛' }}</em>
-                  <small>{{ item.market || '双选' }}</small>
+                  <small>
+                    {{ twoOptionHitOdds(item) ? `@${twoOptionHitOdds(item)}` : (item.market || '双选') }}
+                  </small>
                 </span>
               </button>
             </section>
@@ -1188,6 +1190,18 @@ const visibleDailyCombinations = computed(() => (
 const reviewNoBetCount = computed(() => (
   faeReview.value?.match_results || []
 ).filter(item => item.no_bet).length)
+const twoOptionReviewRows = computed(() => {
+  const byMatch = new Map()
+  for (const item of faeReview.value?.two_option_results || []) {
+    const matchId = String(item.match_id || '')
+    if (!matchId) continue
+    const existing = byMatch.get(matchId)
+    if (!existing || twoOptionRowRank(item) > twoOptionRowRank(existing)) {
+      byMatch.set(matchId, item)
+    }
+  }
+  return Array.from(byMatch.values())
+})
 const reviewableMatchCount = computed(() => (
   faeReview.value?.match_results || []
 ).filter(item => (
@@ -1517,6 +1531,26 @@ function reviewStatusLabel(status, noBet = false) {
   if (status === 'skipped') return noBet ? '观察降级' : '观望'
   if (status === 'ungraded') return '未结算'
   return '待赛'
+}
+
+function twoOptionHitOdds(item) {
+  if (item?.hit_odds != null && item.hit_odds !== '') return item.hit_odds
+  const hit = (item?.selection_results || []).find(row => row?.status === 'hit')
+  return hit?.odds ?? ''
+}
+
+function twoOptionRowRank(item) {
+  const statusRank = {
+    hit: 40,
+    push: 30,
+    pending: 20,
+    miss: 10,
+    ungraded: 0,
+    skipped: 0
+  }[item?.status] ?? 0
+  const marketRank = item?.result_type === 'two_option_handicap' ? 2 : 1
+  const oddsRank = twoOptionHitOdds(item) ? 1 : 0
+  return statusRank + marketRank + oddsRank
 }
 
 function aiScopeLabel(scope) {

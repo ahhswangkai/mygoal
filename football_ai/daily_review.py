@@ -528,6 +528,7 @@ class FAEDailyAIReviewEngine:
                 "hit_selection_text": (
                     hit_row.get("selection_text") if hit_row else None
                 ),
+                "hit_odds": hit_row.get("odds") if hit_row else None,
                 "status": status,
                 "result_score": first.get("result_score"),
                 "pair_key": " / ".join(selections),

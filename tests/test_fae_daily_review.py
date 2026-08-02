@@ -162,6 +162,7 @@ class DailyAIReviewTests(unittest.TestCase):
         self.assertEqual(row["selection"], "让平 / 让负")
         self.assertEqual(row["status"], "hit")
         self.assertEqual(row["hit_selection"], "让负")
+        self.assertEqual(row["hit_odds"], 2.0)
         self.assertEqual(review["summary"]["two_option"]["handicap"]["hits"], 1)
         self.assertEqual(
             review["summary"]["two_option"]["handicap"]["hit_rate"], 100.0
