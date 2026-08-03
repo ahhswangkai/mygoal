@@ -382,11 +382,21 @@
                   <span class="daily-choice-stack">
                     <span class="daily-pick-choice primary">
                       <i>主选</i>
-                      <em>{{ dailyDisplayPrimary(item) }}</em>
+                      <em>
+                        <b>{{ dailyDisplayPrimary(item) }}</b>
+                        <small v-if="dailyDisplayOdds(item, dailyDisplayPrimary(item))">
+                          @{{ dailyDisplayOdds(item, dailyDisplayPrimary(item)) }}
+                        </small>
+                      </em>
                     </span>
                     <span class="daily-pick-choice secondary">
                       <i>次选</i>
-                      <em>{{ dailyDisplaySecondary(item) }}</em>
+                      <em>
+                        <b>{{ dailyDisplaySecondary(item) }}</b>
+                        <small v-if="dailyDisplayOdds(item, dailyDisplaySecondary(item))">
+                          @{{ dailyDisplayOdds(item, dailyDisplaySecondary(item)) }}
+                        </small>
+                      </em>
                     </span>
                   </span>
                   <strong>
@@ -1351,6 +1361,19 @@ function dailyDisplayPrimary(item) {
 
 function dailyDisplaySecondary(item) {
   return dailyDisplayPlays(item).find(play => play !== dailyDisplayPrimary(item)) || '观望'
+}
+
+function dailyDisplayOdds(item, play) {
+  const label = normalizeDailyPlay(play)
+  if (!label || label === '观望') return ''
+  const score = dailyCandidateScores(item).find(candidate => candidate?.label === label)
+  return formatPickOdds(score?.odds)
+}
+
+function formatPickOdds(value) {
+  const number = Number(value)
+  if (!Number.isFinite(number) || number <= 0) return ''
+  return number.toFixed(2).replace(/\.?0+$/, '')
 }
 
 function radarTierLabel(tier) {
@@ -2606,7 +2629,11 @@ onBeforeUnmount(() => requestController?.abort())
 }
 
 .daily-pick-choice em {
-  min-width: 43px;
+  display: inline-flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 3px;
+  min-width: 58px;
   padding: 4px 8px;
   color: #fff;
   font-size: 12px;
@@ -2617,10 +2644,26 @@ onBeforeUnmount(() => requestController?.abort())
   border-radius: 7px;
 }
 
+.daily-pick-choice em b {
+  color: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+}
+
+.daily-pick-choice em small {
+  color: rgb(255 255 255 / 82%);
+  font-size: 9px;
+  font-weight: 650;
+}
+
 .daily-pick-choice.secondary em {
   color: #e53955;
   background: #fff1f4;
   border: 1px solid #ffd6df;
+}
+
+.daily-pick-choice.secondary em small {
+  color: #e9778a;
 }
 
 .daily-selection-pair > strong {
