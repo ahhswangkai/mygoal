@@ -3593,12 +3593,15 @@ TICKET_IMAGE_MIME_TYPES = {
 TICKET_RECOGNITION_PROMPT = (
     '你是足彩竞彩票据结构化解析助手。只返回JSON，不要输出其他文字。'
     '识别票据中的每一场投注，并输出：'
-    '{"selected_items":[...], "pass_counts":[...], "multiplier": 数字, "warnings":[...]}.'
+    '{"selected_items":[...], "pass_counts":[...], "multiplier": 数字, "ticket_date":"YYYY-MM-DD", "warnings":[...]}.'
     ' selected_items中每项应为：'
     '{"pool":"had|hhad|score|goals|hafu", "opt":"win|draw|lose 或对应玩法选项", '
     '"label":"投注标签", "odd":赔率, "match":{"match_num":"周X001", "league":"联赛", '
     '"home_team":"主队", "away_team":"客队", "date":"YYYY-MM-DD", "time":"HH:MM", "handicap":让球值}, '
     '"match_num":"周X001"}'
+    ' 重要：票面出现“让球胜平负、主队让1球、主队让一球、让平、让胜、让负”等让球玩法时，'
+    'pool必须输出hhad，不要输出had；主队让球handicap为负数（主队让1球=-1），'
+    '主队受让或客队让球handicap为正数。'
     ' pass_counts支持 1,2,3,4,5,6,7,8 与如“2串1/3串1”中的数字。'
 )
 
@@ -3786,6 +3789,112 @@ def _normalize_option(value, pool):
     return option[:32]
 
 
+def _ticket_item_text(item):
+    values = [
+        item.get('pool'),
+        item.get('opt'),
+        item.get('label'),
+        item.get('play'),
+        item.get('selection'),
+        item.get('content'),
+        item.get('remark'),
+    ]
+    match = item.get('match') if isinstance(item.get('match'), dict) else {}
+    values.extend([
+        match.get('pool'),
+        match.get('label'),
+        match.get('handicap_text'),
+        match.get('description'),
+    ])
+    return ''.join(str(value or '') for value in values).replace(' ', '').replace('\u3000', '')
+
+
+def _ticket_item_implies_hhad(item):
+    text = _ticket_item_text(item)
+    if not text:
+        return False
+    hhad_tokens = (
+        '让球胜平负',
+        '让胜平负',
+        '让球',
+        '让胜',
+        '让平',
+        '让负',
+        '主队让',
+        '主让',
+        '客队让',
+        '客让',
+        '主队受让',
+        '客队受让',
+        '受让',
+    )
+    return any(token in text for token in hhad_tokens)
+
+
+CHINESE_HANDICAP_DIGITS = {
+    '零': 0,
+    '〇': 0,
+    '一': 1,
+    '二': 2,
+    '两': 2,
+    '三': 3,
+    '四': 4,
+    '五': 5,
+}
+
+
+def _extract_ticket_handicap_number(text):
+    compact = str(text or '').replace(' ', '').replace('\u3000', '')
+    match = re.search(r'(?:让|受让)([+-]?\d+(?:\.\d+)?)球?', compact)
+    if match:
+        return _safe_float(match.group(1))
+    match = re.search(r'(?:让|受让)([零〇一二两三四五])球?', compact)
+    if match:
+        return CHINESE_HANDICAP_DIGITS.get(match.group(1))
+    return None
+
+
+def _normalize_ticket_handicap_sign(handicap, item):
+    text = _ticket_item_text(item)
+    number = _safe_float(handicap)
+    if number is None:
+        number = _extract_ticket_handicap_number(text)
+    if number is None:
+        return None
+    if abs(number) < 0.0001:
+        return 0.0
+
+    absolute = abs(number)
+    # hhad 的 handicap 以“主队加几球”为准：主队让球是负数，主队受让是正数。
+    if any(token in text for token in ('主队受让', '主受让', '客队让', '客让')):
+        return absolute
+    if any(token in text for token in ('主队让', '主让', '客队受让', '客受让')):
+        return -absolute
+    return number
+
+
+def _parse_ticket_date(value):
+    text = _safe_text(value).strip()
+    if not text:
+        return None
+    for fmt in ('%Y-%m-%d', '%Y/%m/%d', '%Y.%m.%d'):
+        try:
+            return datetime.strptime(text[:10], fmt).date()
+        except ValueError:
+            pass
+    match = re.search(r'(\d{1,2})[/-](\d{1,2})', text)
+    if match:
+        try:
+            return datetime(datetime.now().year, int(match.group(1)), int(match.group(2))).date()
+        except ValueError:
+            return None
+    return None
+
+
+def _candidate_owner_date(candidate):
+    return _parse_ticket_date(candidate.get('owner_date') or candidate.get('date'))
+
+
 def _normalize_match_text(value):
     return re.sub(r'\s+', '', str(value or '').strip().lower())
 
@@ -3846,10 +3955,32 @@ def _collect_match_candidates(match_num, match_info):
         return []
 
     date_text = _safe_text(match_info.get('date'))
+    target_date = _parse_ticket_date(date_text) or datetime.now().date()
     if date_text:
         by_date = [item for item in candidates if _safe_text(item.get('owner_date'))[:10] == date_text[:10]]
         if by_date:
             candidates = by_date
+        else:
+            by_window = [
+                item for item in candidates
+                if _candidate_owner_date(item)
+                and abs((_candidate_owner_date(item) - target_date).days) <= 3
+            ]
+            if by_window:
+                candidates = by_window
+    else:
+        # 周X编号每年会重复；票据缺少日期时，优先匹配最近几天的场次，避免串到历史年份。
+        try:
+            window_days = max(1, int(os.getenv('TICKET_MATCH_DATE_WINDOW_DAYS', '10')))
+        except ValueError:
+            window_days = 10
+        by_recent_window = [
+            item for item in candidates
+            if _candidate_owner_date(item)
+            and abs((_candidate_owner_date(item) - target_date).days) <= window_days
+        ]
+        if by_recent_window:
+            candidates = by_recent_window
     return candidates
 
 
@@ -3949,12 +4080,21 @@ def _normalize_ticket_payload(data):
     option_counts = {}
     total_odds = 1.0
     warnings = list(data.get('warnings') or [])
+    ticket_date = _safe_text(data.get('ticket_date') or data.get('date') or '')
 
     for item in raw_items:
         if not isinstance(item, dict):
             warnings.append('存在非结构化投注项，已跳过')
             continue
+        item = dict(item)
+        initial_match_info = dict(item.get('match')) if isinstance(item.get('match'), dict) else {}
+        if ticket_date and not (initial_match_info.get('date') or item.get('date')):
+            initial_match_info['date'] = ticket_date
+            item['match'] = initial_match_info
         pool = _normalize_pool(item.get('pool'))
+        if pool == 'had' and _ticket_item_implies_hhad(item):
+            pool = 'hhad'
+            warnings.append('检测到让球投注被识别为胜平负，已自动修正为让球胜平负')
         if pool not in POOL_NAMES:
             warnings.append(f'投注项玩法[{item.get("pool")}]不支持，已忽略')
             continue
@@ -4004,6 +4144,9 @@ def _normalize_ticket_payload(data):
             away_team = match_info.get('away_team') or item.get('away_team') or ''
             time_value = match_info.get('time') or ''
             match_id = ''
+
+        if pool == 'hhad':
+            handicap = _normalize_ticket_handicap_sign(handicap, item)
 
         normalized_match = dict(resolved) if isinstance(resolved, dict) else {}
         if not match_id:
