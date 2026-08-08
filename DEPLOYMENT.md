@@ -56,6 +56,9 @@ FAE_LEARNING_MIN_SAMPLES=10
 FAE_SKILL_MIN_NEW_SAMPLES=10
 FAE_ADMIN_USERNAMES=你的登录用户名
 FAE_DAILY_AI_ENABLED=true
+FAE_PREMATCH_AI_LEAD_MINUTES=30
+FAE_PREMATCH_AI_CHECK_MINUTES=5
+FAE_DAILY_AI_BASELINE_ENABLED=false
 FAE_DAILY_AI_HOUR=12
 FAE_DAILY_AI_MINUTE=10
 FAE_DAILY_AI_BATCH_SIZE=1
@@ -73,7 +76,7 @@ sudo systemctl restart mygoal
 
 FAE 会自动运行确定性盘口分类、八维评分、概率、推荐和风险控制，并将结果保存到 MongoDB 的 `fae_analyses` 集合。历史版本写入 `fae_analysis_history`，赛后复盘写入 `fae_reviews`。复盘证据先生成待验证的 Skill 候选，通过推荐页发布后才更新线上参数。
 
-每日全日 AI 研判会先把同一天每场未开赛比赛分别交给火山方舟，按欧赔、亚盘升深、竞彩让球、大小球、市场一致性五项分析，再单独调用一次全日汇总，生成排名和2/3关组合。总览保存到 `fae_daily_ai_runs`，每次运行的逐场结论和赔率快照独立保存到 `fae_daily_ai_matches`。
+全日 AI 研判按比赛开赛时间增量运行：系统每5分钟扫描一次，比赛进入开赛前30分钟窗口后先刷新赔率，再只把本轮临近开赛的比赛交给火山方舟。此前已经完成的赛前结论会合并保留，逐步形成当天完整排名和组合。总览保存到 `fae_daily_ai_runs`，每次运行的逐场结论和赔率快照独立保存到 `fae_daily_ai_matches`。
 
 只有“全部比赛均未开赛”时生成的运行才可用于正式复盘。赛后系统每15分钟按该不可变快照结算 AI 主玩法、2串1、3串1、赔率、收益率及模型一致性冲突，结果保存到 `fae_daily_ai_reviews`。AI 主复盘优先驱动平/让平 Skill 候选；旧 `fae_draw_reviews` 仅保留作历史对照。火山结论与确定性概率严重冲突时会保留原始选择，但正式推荐和复盘使用一致性护栏后的有效选择。
 
@@ -83,8 +86,12 @@ FAE 会自动运行确定性盘口分类、八维评分、概率、推荐和风�
 - `FAE_LEARNING_MIN_SAMPLES=10`：规则至少达到该总复盘样本数，才允许生成候选。
 - `FAE_SKILL_MIN_NEW_SAMPLES=10`：每次 Skill 发布后还需积累的新样本数，避免重复使用同一批赛果升级。
 - `FAE_ADMIN_USERNAMES`：允许生成、发布和回滚 Skill 的登录用户名，多个账号使用英文逗号分隔。
-- `FAE_DAILY_AI_ENABLED=true`：开启每日火山全日研判定时任务。
-- `FAE_DAILY_AI_HOUR/MINUTE`：每天运行时间，默认北京时间 `12:10`。
+- `FAE_DAILY_AI_ENABLED=true`：开启火山全日研判定时任务。
+- `FAE_PREMATCH_AI_LEAD_MINUTES=30`：每场比赛进入开赛前30分钟窗口时研判一次；同一赛前窗口不会重复调用。
+- `FAE_PREMATCH_AI_CHECK_MINUTES=5`：每5分钟扫描一次临近开赛比赛，并在调用模型前刷新该场赔率。
+- 付费研判截止时间固定为竞彩日周一至周五 `22:00`、周六周日 `23:00`；跨到次日凌晨的场次不补跑。
+- `FAE_DAILY_AI_BASELINE_ENABLED=false`：默认关闭每天固定时刻的额外全日基线，避免每场赛前研判之外重复扣费。
+- `FAE_DAILY_AI_HOUR/MINUTE`：仅在基线开关开启时生效，默认北京时间 `12:10`。
 - `FAE_DAILY_AI_BATCH_SIZE=1`：每场独立调用并保存检查点，全部完成后再调用一次短请求汇总全日排名和混合组合。
 - `FAE_DAILY_AI_TIMEOUT=180`：全日详细分析单批最长等待秒数。
 - `FAE_DAILY_AI_MAX_TOKENS=4096`：限制单批输出长度，防止超长响应。

@@ -18,6 +18,7 @@ from bet_settlement import (
 )
 from calculator_math import calculate_max_bonus, calculate_notes
 from crawler import FootballCrawler, is_pregame_match
+from fae_schedule import app_timezone, prematch_analysis_due
 from match_time_utils import sort_matches_by_datetime
 from user_storage import UserStorage
 from football_ai import (
@@ -1143,8 +1144,14 @@ def _run_fae_daily_ai(
     owner_date,
     force=False,
     draw_selection_policy=None,
+    target_match_ids=None,
 ):
-    """Send the whole day's current market snapshot to Ark and persist per match."""
+    """Send current market snapshots to Ark and persist per-match results.
+
+    ``target_match_ids`` powers the T-minus-30 scheduler.  Only those fixtures
+    incur a model call; previously analysed fixtures are retained in the new
+    daily run so the recommendation page remains complete.
+    """
     if not mongo_storage:
         raise FAEError('MongoDB不可用')
     date_str = str(owner_date or '')[:10]
@@ -1155,16 +1162,31 @@ def _run_fae_daily_ai(
         sort_by='match_time',
         sort_order=1,
     )
+    target_ids = {
+        str(value) for value in (target_match_ids or []) if value is not None
+    }
     matches = [
         match for match in all_matches
-        if match.get('status') in (0, '0')
+        if (
+            match.get('status') in (0, '0')
+            and (
+                not target_ids
+                or str(match.get('match_id') or '') in target_ids
+            )
+        )
     ]
+    selected_ids = {
+        str(match.get('match_id') or '') for match in matches
+    }
     retained_matches = []
     for match in all_matches:
-        if match.get('status') in (0, '0'):
+        match_id = str(match.get('match_id') or '')
+        if match_id in selected_ids:
+            continue
+        if not target_ids and match.get('status') in (0, '0'):
             continue
         snapshot = mongo_storage.get_fae_daily_ai_match(
-            match.get('match_id'), date_str
+            match_id, date_str
         )
         if not snapshot:
             continue
@@ -1182,6 +1204,11 @@ def _run_fae_daily_ai(
         result = fae_daily_ai_analyzer.merge_retained_matches(
             result, retained_matches
         )
+        if target_ids:
+            result = fae_daily_ai_analyzer.rebuild_incremental_summary(
+                result,
+                [previous_run.get('daily_summary') or {}],
+            )
         result['cache_hit'] = True
         if not mongo_storage.save_fae_daily_ai_run(result):
             raise FAEError('保留已开赛比赛的赛前研判失败')
@@ -1214,6 +1241,11 @@ def _run_fae_daily_ai(
         cached = fae_daily_ai_analyzer.merge_retained_matches(
             cached, retained_matches
         )
+        if target_ids:
+            cached = fae_daily_ai_analyzer.rebuild_incremental_summary(
+                cached,
+                [(previous_run or {}).get('daily_summary') or {}],
+            )
         if not mongo_storage.save_fae_daily_ai_run(cached):
             raise FAEError('合并已开赛比赛的赛前研判失败')
         cached['cache_hit'] = True
@@ -1230,6 +1262,11 @@ def _run_fae_daily_ai(
                 cached = fae_daily_ai_analyzer.merge_retained_matches(
                     cached, retained_matches
                 )
+                if target_ids:
+                    cached = fae_daily_ai_analyzer.rebuild_incremental_summary(
+                        cached,
+                        [(previous_run or {}).get('daily_summary') or {}],
+                    )
                 if not mongo_storage.save_fae_daily_ai_run(cached):
                     raise FAEError('合并已开赛比赛的赛前研判失败')
                 cached['cache_hit'] = True
@@ -1246,6 +1283,11 @@ def _run_fae_daily_ai(
         result = fae_daily_ai_analyzer.merge_retained_matches(
             result, retained_matches
         )
+        if target_ids:
+            result = fae_daily_ai_analyzer.rebuild_incremental_summary(
+                result,
+                [(previous_run or {}).get('daily_summary') or {}],
+            )
         if not mongo_storage.save_fae_daily_ai_run(result):
             raise FAEError('全日研判已生成，但写入MongoDB失败')
         result['cache_hit'] = False
@@ -2495,6 +2537,84 @@ def _run_scheduled_fae_daily_ai():
     except Exception as exc:
         print(f"❌ FAE 火山全日研判失败 {date_str}: {str(exc)}")
 
+
+def _run_scheduled_fae_prematch_ai():
+    """Run paid Ark analysis once per fixture in its T-minus window."""
+    if not _env_enabled('FAE_DAILY_AI_ENABLED', True):
+        return
+    if not mongo_storage:
+        return
+    try:
+        lead_minutes = max(
+            5, min(180, int(os.getenv('FAE_PREMATCH_AI_LEAD_MINUTES', '30')))
+        )
+    except ValueError:
+        lead_minutes = 30
+    now = datetime.now(app_timezone())
+    owner_dates = sorted({
+        now.strftime('%Y-%m-%d'),
+        (now - timedelta(days=1)).strftime('%Y-%m-%d'),
+    })
+    candidates = mongo_storage.get_matches(filters={
+        'owner_date': {'$in': owner_dates},
+        'status': 0,
+    })
+    due_by_date = {}
+    for match in candidates:
+        match_id = str(match.get('match_id') or '')
+        owner_date = str(match.get('owner_date') or '')[:10]
+        if not match_id or not owner_date:
+            continue
+        latest = mongo_storage.get_fae_daily_ai_match(match_id, owner_date)
+        if not prematch_analysis_due(
+            match,
+            now=now,
+            latest_generated_at=(latest or {}).get('generated_at'),
+            lead_minutes=lead_minutes,
+        ):
+            continue
+        due_by_date.setdefault(owner_date, []).append(match)
+
+    for owner_date, due_matches in sorted(due_by_date.items()):
+        due_ids = [str(item.get('match_id')) for item in due_matches]
+        # Refresh only the due fixtures immediately before the paid model call.
+        # The regular 15-minute crawl remains the broad data refresh.
+        with ThreadPoolExecutor(max_workers=min(8, len(due_ids))) as executor:
+            futures = {
+                executor.submit(crawler.crawl_match_odds, match_id): match_id
+                for match_id in due_ids
+            }
+            for future in as_completed(futures):
+                match_id = futures[future]
+                try:
+                    odds = future.result()
+                    if odds:
+                        mongo_storage.save_odds(match_id, odds)
+                except Exception as exc:
+                    print(
+                        f"⚠️  FAE赛前研判赔率刷新失败 {match_id}: {str(exc)}"
+                    )
+        try:
+            result = _run_fae_daily_ai(
+                owner_date,
+                force=True,
+                target_match_ids=due_ids,
+            )
+            print(
+                f"✅ FAE开赛前{lead_minutes}分钟研判: {owner_date}，"
+                f"本轮 {len(due_ids)} 场，累计保留 "
+                f"{result.get('match_count', 0)} 场"
+            )
+            if _env_enabled('WECOM_PUSH_PREMATCH_AI', False):
+                delivery = _push_wecom_daily_ai(result)
+                if delivery.get('success'):
+                    print("✅ 企业微信赛前研判已发送")
+        except Exception as exc:
+            print(
+                f"❌ FAE开赛前{lead_minutes}分钟研判失败 "
+                f"{owner_date} ({','.join(due_ids)}): {str(exc)}"
+            )
+
 def _crawl_latest():
     try:
         print(f"⏰ 开始定时爬取任务: {datetime.now()}")
@@ -2724,23 +2844,46 @@ def _start_scheduler():
                     id='settle_calculator_bets_every_5m',
                     replace_existing=True,
                 )
-                daily_hour = max(
-                    0, min(23, int(os.getenv('FAE_DAILY_AI_HOUR', '12')))
-                )
-                daily_minute = max(
-                    0, min(59, int(os.getenv('FAE_DAILY_AI_MINUTE', '10')))
-                )
+                try:
+                    prematch_check_minutes = max(
+                        1,
+                        min(
+                            15,
+                            int(os.getenv('FAE_PREMATCH_AI_CHECK_MINUTES', '5')),
+                        ),
+                    )
+                except ValueError:
+                    prematch_check_minutes = 5
                 scheduler.add_job(
-                    _run_scheduled_fae_daily_ai,
-                    CronTrigger(hour=daily_hour, minute=daily_minute),
-                    id='fae_daily_ai',
+                    _run_scheduled_fae_prematch_ai,
+                    CronTrigger(minute=f'*/{prematch_check_minutes}'),
+                    id='fae_prematch_ai',
                     replace_existing=True,
+                    coalesce=True,
+                    max_instances=1,
                 )
+                baseline_label = '关闭'
+                if _env_enabled('FAE_DAILY_AI_BASELINE_ENABLED', False):
+                    daily_hour = max(
+                        0, min(23, int(os.getenv('FAE_DAILY_AI_HOUR', '12')))
+                    )
+                    daily_minute = max(
+                        0,
+                        min(59, int(os.getenv('FAE_DAILY_AI_MINUTE', '10'))),
+                    )
+                    scheduler.add_job(
+                        _run_scheduled_fae_daily_ai,
+                        CronTrigger(hour=daily_hour, minute=daily_minute),
+                        id='fae_daily_ai',
+                        replace_existing=True,
+                    )
+                    baseline_label = f'{daily_hour:02d}:{daily_minute:02d}'
                 scheduler.start()
                 print(
                     "✅ 定时任务调度器已启动 "
                     f"(每15分钟刷新，每5分钟结算投注，"
-                    f"每日{daily_hour:02d}:{daily_minute:02d}全日AI研判)"
+                    f"每{prematch_check_minutes}分钟检查开赛前30分钟研判，"
+                    f"固定全日研判{baseline_label})"
                 )
         else:
             print("⚠️  无法启动定时任务: APScheduler未安装")

@@ -1826,12 +1826,59 @@ class FAEDailyAIAnalyzer:
                 for item in retained
             ]
             warnings.append(
-                "本轮仅重新研判未开赛比赛；已开赛的"
+                "本轮仅重新研判临近开赛比赛；其他场次"
                 + "、".join(labels)
-                + "保留原赛前研判，不进入本轮新增推荐池和组合。"
+                + "保留原赛前研判。"
             )
             summary["warnings"] = list(dict.fromkeys(warnings))[:20]
             result["daily_summary"] = summary
+        return result
+
+    def rebuild_incremental_summary(
+        self,
+        analysis_run: Dict[str, Any],
+        previous_summaries: Iterable[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        """Rebuild the visible daily pools after a partial pre-match run.
+
+        Only due fixtures are sent to Ark, while already analysed fixtures are
+        copied into the new immutable run.  Rebuilding here keeps all analysed
+        matches visible in the rankings instead of replacing the page with the
+        latest one-match batch.
+        """
+        result = dict(analysis_run or {})
+        matches = [
+            dict(item) for item in (result.get("matches") or [])
+            if item.get("match_id")
+        ]
+        summaries = [
+            dict(item) for item in (previous_summaries or [])
+            if isinstance(item, dict)
+        ]
+        current_summary = result.get("daily_summary")
+        if isinstance(current_summary, dict):
+            summaries.append(current_summary)
+        summary = self._merge_summaries(summaries, matches)
+        summary = self._apply_summary_guard(summary, matches)
+        summary = self._apply_no_bet_summary(summary, matches)
+        summary = self.attach_draw_radar_summary(summary, matches)
+        summary = self.attach_league_model_rankings(summary, matches)
+        summary = self.attach_upset_warning_summary(summary, matches)
+        summary = self.attach_odds_band_summary(summary, matches)
+        summary["recommended_combinations"] = self._ensure_mixed_combinations(
+            summary
+        )
+        summary = self.normalize_summary_pool_semantics(summary, matches)
+        summary = self.align_summary_ratings(summary, matches)
+        summary = self.promote_draw_radar_recommendations(summary, matches)
+        summary["recommended_combinations"] = self._ensure_mixed_combinations(
+            summary
+        )
+        summary = self.normalize_summary_memory_governance(
+            summary, result.get("review_memory") or {}
+        )
+        summary = self._humanize_summary_match_ids(summary, matches)
+        result["daily_summary"] = summary
         return result
 
     def analyze(

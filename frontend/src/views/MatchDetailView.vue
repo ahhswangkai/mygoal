@@ -46,7 +46,7 @@
             <div class="daily-detail-card">
               <div class="daily-detail-head">
                 <span><i>AI</i>火山全日研判</span>
-                <small>{{ dailyAiAnalysis.model || 'ark-code-latest' }}</small>
+                <small>最新研判 {{ formatGeneratedAt(dailyAiAnalysis.generated_at) }}</small>
               </div>
               <div class="daily-detail-result">
                 <div class="daily-detail-picks">
@@ -144,7 +144,6 @@
               <div class="daily-detail-foot">
                 <span>参考比分</span>
                 <b>{{ dailyAiContent.score_candidates?.join('　') || '暂无' }}</b>
-                <small>{{ formatGeneratedAt(dailyAiAnalysis.generated_at) }}</small>
               </div>
             </div>
           </DataSection>
@@ -638,7 +637,17 @@ const shortDate = date => String(date || '').slice(5).replace('-', '/')
 const formatGeneratedAt = value => {
   if (!value) return '时间未知'
   const date = new Date(value)
-  return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString('zh-CN', { hour12: false })
+  return Number.isNaN(date.getTime())
+    ? String(value)
+    : date.toLocaleString('zh-CN', {
+        timeZone: 'Asia/Shanghai',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false
+      })
 }
 const starText = value => {
   const rating = Math.max(0, Math.min(5, Number(value) || 0))
