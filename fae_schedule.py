@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime, time, timedelta
-import os
+from datetime import date, datetime, time, timedelta, timezone, tzinfo
 from typing import Any, Dict, Optional
-from zoneinfo import ZoneInfo
 
 
-def app_timezone() -> ZoneInfo:
-    return ZoneInfo(os.getenv("APP_TIMEZONE", "Asia/Shanghai"))
+def app_timezone() -> tzinfo:
+    # China Standard Time has no daylight-saving transitions.  A fixed offset
+    # keeps this module compatible with the production Python 3.8 runtime,
+    # where stdlib zoneinfo is not available.
+    return timezone(timedelta(hours=8), name="Asia/Shanghai")
 
 
 def _aware(value: datetime) -> datetime:

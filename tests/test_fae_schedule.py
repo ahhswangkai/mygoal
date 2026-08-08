@@ -1,14 +1,14 @@
 from datetime import datetime
-from zoneinfo import ZoneInfo
 
 from fae_schedule import (
     analysis_cutoff,
+    app_timezone,
     parse_match_datetime,
     prematch_analysis_due,
 )
 
 
-ZONE = ZoneInfo("Asia/Shanghai")
+ZONE = app_timezone()
 
 
 def dt(value):
