@@ -582,6 +582,200 @@ class DailyAnalysisTests(unittest.TestCase):
         self.assertEqual(analysis["secondary_play"], "让平")
         self.assertTrue(analysis["consistency_guard"]["triggered"])
 
+    def test_low_total_does_not_keep_draw_ahead_of_strong_home_direction(self):
+        source = {
+            "match_id": "013",
+            "match_number": "周六013",
+            "league": "葡超",
+            "euro": {
+                "initial": [1.98, 3.10, 3.32],
+                "current": [1.86, 3.00, 3.87],
+            },
+            "asian": {
+                "initial": [0.92, "平手", 0.94],
+                "current": [0.84, "半球", 1.04],
+            },
+            "sporttery_handicap": {
+                "value": -1,
+                "current": [2.55, 3.10, 2.25],
+            },
+            "total": {
+                "initial": [0.90, 2.50, 0.92],
+                "current": [1.02, 2.25, 0.80],
+            },
+            "fae_core": {
+                "probabilities": {
+                    "home_win": 52,
+                    "draw": 31,
+                    "away_win": 17,
+                },
+            },
+        }
+
+        analysis = FAEDailyAIAnalyzer._normalize_match(source, {
+            "primary_play": "平局",
+            "secondary_play": "主胜",
+            "rating": 3.5,
+        })["analysis"]
+
+        self.assertEqual(analysis["primary_play"], "主胜")
+        self.assertEqual(analysis["secondary_play"], "平局")
+        self.assertTrue(
+            analysis["directional_precision_guard"]["triggered"]
+        )
+        self.assertIn("低总球只压低比分", analysis["verdict"])
+
+    def test_level_asian_low_water_promotes_clear_away_direction_over_draw(self):
+        source = {
+            "match_id": "014",
+            "match_number": "周六014",
+            "league": "瑞典超",
+            "euro": {
+                "initial": [2.30, 3.22, 2.61],
+                "current": [2.62, 3.12, 2.34],
+            },
+            "asian": {
+                "initial": [0.99, "平手", 0.89],
+                "current": [1.07, "平手", 0.81],
+            },
+            "sporttery_handicap": {
+                "value": 1,
+                "current": [1.62, 3.55, 4.20],
+            },
+            "total": {
+                "initial": [0.92, 2.50, 0.90],
+                "current": [0.94, 2.50, 0.88],
+            },
+            "fae_core": {
+                "probabilities": {
+                    "home_win": 30,
+                    "draw": 31,
+                    "away_win": 39,
+                },
+            },
+        }
+
+        primary, guard = FAEDailyAIAnalyzer._directional_precision_guard(
+            source, "平局"
+        )
+
+        self.assertEqual(primary, "客胜")
+        self.assertEqual(guard["secondary_selection"], "平局")
+        self.assertTrue(guard["triggered"])
+
+    def test_true_deepen_high_total_promotes_cover_over_exact_one_goal(self):
+        source = {
+            "match_id": "016",
+            "match_number": "周六016",
+            "league": "荷甲",
+            "euro": {
+                "initial": [1.43, 4.15, 5.30],
+                "current": [1.39, 4.35, 5.55],
+            },
+            "asian": {
+                "initial": [0.88, "0.75", 1.00],
+                "current": [0.88, "1", 1.00],
+            },
+            "sporttery_handicap": {
+                "value": -1,
+                "current": [2.18, 3.40, 2.50],
+            },
+            "total": {
+                "initial": [0.90, 2.75, 0.92],
+                "current": [0.88, 3.00, 0.94],
+            },
+            "fae_core": {
+                "probabilities": {
+                    "home_win": 67,
+                    "draw": 20,
+                    "away_win": 13,
+                    "hhad": {"win": 41, "draw": 34, "lose": 25},
+                },
+            },
+        }
+
+        analysis = FAEDailyAIAnalyzer._normalize_match(source, {
+            "primary_play": "让平",
+            "secondary_play": "让胜",
+            "rating": 4,
+        })["analysis"]
+
+        self.assertEqual(analysis["primary_play"], "让胜")
+        self.assertEqual(analysis["secondary_play"], "让平")
+        self.assertTrue(
+            analysis["directional_precision_guard"]["triggered"]
+        )
+        self.assertIn("穿盘证据强于恰好赢1球", analysis["verdict"])
+
+    def test_extreme_favorite_deepening_is_not_misread_as_exact_margin(self):
+        source = {
+            "euro": {
+                "initial": [1.40, 4.20, 5.65],
+                "current": [1.26, 4.90, 7.60],
+            },
+            "asian": {
+                "initial": [0.83, "1", 1.05],
+                "current": [1.04, "1.25", 0.84],
+            },
+            "sporttery_handicap": {
+                "value": -1,
+                "current": [1.82, 3.60, 3.85],
+            },
+            "total": {
+                "initial": [0.90, 3.00, 0.92],
+                "current": [0.88, 3.00, 0.94],
+            },
+            "current_asian_risk": {
+                "pattern_ids": ["upper_water_rise"],
+            },
+            "fae_core": {
+                "probabilities": {
+                    "home_win": 73,
+                    "draw": 17,
+                    "away_win": 10,
+                    "hhad": {"win": 43, "draw": 33, "lose": 24},
+                },
+            },
+        }
+
+        primary, guard = FAEDailyAIAnalyzer._directional_precision_guard(
+            source, "让平"
+        )
+
+        self.assertEqual(primary, "让胜")
+        self.assertEqual(guard["secondary_selection"], "让平")
+        self.assertTrue(guard["triggered"])
+
+    def test_favorite_odds_retreat_does_not_displace_valid_draw(self):
+        source = {
+            "euro": {
+                "initial": [3.60, 3.45, 1.78],
+                "current": [3.30, 3.34, 1.90],
+            },
+            "asian": {
+                "initial": [0.88, "受半球", 0.96],
+                "current": [0.90, "受平半", 0.94],
+            },
+            "total": {
+                "initial": [0.92, 2.50, 0.90],
+                "current": [1.00, 2.25, 0.82],
+            },
+            "fae_core": {
+                "probabilities": {
+                    "home_win": 26,
+                    "draw": 34,
+                    "away_win": 40,
+                },
+            },
+        }
+
+        primary, guard = FAEDailyAIAnalyzer._directional_precision_guard(
+            source, "平局"
+        )
+
+        self.assertEqual(primary, "平局")
+        self.assertFalse(guard["triggered"])
+
     def test_summary_guard_removes_conflicting_letdraw_pick(self):
         matches = [{
             "match_id": "214",

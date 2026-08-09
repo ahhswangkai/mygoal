@@ -15,7 +15,7 @@ from .provider import ArkNarrativeClient, FAEError, FAEOutputError
 from .version import ENGINE_VERSION
 
 
-DAILY_PROMPT_VERSION = "five-market-daily-v21-backtested-handicap-draw"
+DAILY_PROMPT_VERSION = "five-market-daily-v22-directional-precision-guard"
 
 OFFICIAL_PLAY_SELECTIONS = {"平局", "让平"}
 OFFICIAL_MIN_BET_SCORE = 70.0
@@ -2373,6 +2373,9 @@ class FAEDailyAIAnalyzer:
             "odds_band_model是赔率区间扫描器：favorite_heat表示热门过热，underdog_upset表示下盘爆冷，handicap_draw_value表示让平价值；1.40-1.70热门危险区、1.80-2.20均势区、客场1.70-2.20陷阱区、平赔低位和盘口过深都只能作为降级热门或提高平/让平扫描权重的证据。",
             "普通平局采用历史回测版规则：统一模型只允许正向联赛的均势平进入正式池，必须满足平赔2.75-3.20、亚盘退浅或平手保护、上/下盘水位区间正常；平赔2.85-3.14为核心区间，其余只能小试。另有联赛专属模型：葡超小球平、挪超退盘平、荷甲中低总球平、英超降水平、英冠半球不动平、澳超高平赔中低总球、意甲升盘高水平；巴甲只作为平局基线观察模型，不得因单日命中直接升级；日职中低总球目前只观察。强热门冷平若未命中联赛专属模型，只能观察，禁止进入正式推荐。",
             "让平升级采用历史回测版规则：通用模型只允许正向联赛、竞彩让1球、热门胜赔1.26-1.40、让平赔3.30-3.70，并要求亚盘上盘水位0.65-1.04、下盘水位不低于0.75；热门胜赔1.41-1.55只能小试。另有联赛专属让平口袋：意甲中赔让平、德甲中热门让平、法甲高让平赔、英超中高总球小球让平、西甲小球水位让平、沙特高赔大球让平、欧罗巴低水让平；挪超降水让平当前样本不足只观察。让平必须再通过净胜1球路径检查：若降水不升盘但竞彩受让保护项明显低赔，说明更像热门不穿或失手，不升级让平。≤1.25超热、让2球、低命中联赛、上盘≥1.08不得升级；升盘高水、欧亚背离和退盘只作为风险证据，不能单独推让平。",
+            "小球只表示进球总数受限，不等于平局：若强方胜赔至少下降0.10、对手胜赔至少上升0.10，且亚盘真实升深或强方处于明确低水，必须把强方小胜放主选、平局放防选。",
+            "让平是精确赢球差玩法，不能因用户偏好自动排第一：竞彩让1球时，若热门胜赔不高于1.50、亚盘至少真实升深0.25至一球且大小球不低于2.75，应优先比较穿盘；强方正常低水时主选让胜/让负、让平降为防选。胜赔不高于1.30且亚盘已到一球/球半时，即使上盘水位略高也不得机械主推让平。",
+            "主选和防选必须按当日可核验市场证据强弱排序，不得因为用户主玩平/让平就把精确结果放在更强的胜负或穿盘方向之前。",
             "upset_warning_model是爆冷预警扫描器：盘口降级、热门胜赔升、平赔下降、热门穿盘赔率偏高、强队近期穿盘代理偏弱、弱队近期有球会累加风险分；80分以上只能降低热门方向并提示防冷，禁止单独反买。",
             "historical_goal_margin_model按欧赔强弱、亚盘深度、大小球、竞彩让球数、联赛和时间衰减寻找相似完赛场次；ordinary_draw统计0球分差，handicap_draw统计当前让球数对应的精确净胜球差，两者严禁混用。",
             "只有historical_goal_margin_model中eligible_for_adjustment=true的结果才可参与校准；必须同时比较effective_sample、confidence、market_probability、blended_probability、odds和value_edge，样本不足时只允许写观察。",
@@ -2459,6 +2462,9 @@ class FAEDailyAIAnalyzer:
             "odds_band_model是赔率区间扫描器：favorite_heat、underdog_upset、handicap_draw_value分别对应热门过热、下盘爆冷、让平价值；指数高只能降低热门或增加防选，不得脱离盘口一致性直接反买。",
             "普通平局采用历史回测版规则：统一模型只允许正向联赛的均势平进入正式池，必须满足平赔2.75-3.20、亚盘退浅或平手保护、上/下盘水位区间正常；平赔2.85-3.14为核心区间，其余只能小试。另有联赛专属模型：葡超小球平、挪超退盘平、荷甲中低总球平、英超降水平、英冠半球不动平、澳超高平赔中低总球、意甲升盘高水平；巴甲只作为平局基线观察模型，不得因单日命中直接升级；日职中低总球目前只观察。强热门冷平若未命中联赛专属模型，只能观察，禁止进入正式推荐。",
             "让平升级采用历史回测版规则：通用模型只允许正向联赛、竞彩让1球、热门胜赔1.26-1.40、让平赔3.30-3.70，并要求亚盘上盘水位0.65-1.04、下盘水位不低于0.75；热门胜赔1.41-1.55只能小试。另有联赛专属让平口袋：意甲中赔让平、德甲中热门让平、法甲高让平赔、英超中高总球小球让平、西甲小球水位让平、沙特高赔大球让平、欧罗巴低水让平；挪超降水让平当前样本不足只观察。让平必须再通过净胜1球路径检查：若降水不升盘但竞彩受让保护项明显低赔，说明更像热门不穿或失手，不升级让平。≤1.25超热、让2球、低命中联赛、上盘≥1.08不得升级；升盘高水、欧亚背离和退盘只作为风险证据，不能单独推让平。",
+            "小球只限制比分上限，不自动支持平局：强方胜赔下降、对手胜赔上升，并得到亚盘真实升深或明确低水支持时，优先强方小胜，平局只作防选。",
+            "让平必须和穿盘方向比较：竞彩让1球、热门胜赔不高于1.50、亚盘真实升深至少0.25至一球且大小球不低于2.75时，正常低水应把让胜/让负放主选、让平放防选；不高于1.30的超强热门升至一球/球半后，不得机械把让平排第一。",
+            "主次选按本场市场证据排序，不得因用户偏好平/让平而倒置。",
             "正式推荐只允许平局或让平；主胜、客胜、让胜、让负、大球、小球只保留方向观察。正式推荐必须投注分>=70、价值指数>=60、盘口可信度>=70、星级>=4。",
             "亚盘不配合时胜负方向必须硬降级为观察，不能只写风险提示后继续推荐。",
             "upset_warning_model达到重点防冷时，热门胜负方向必须降级为观察或不下注；防选优先写平局、受让保护项或让平，但不得把爆冷预警写成确定赛果。",
@@ -2609,6 +2615,12 @@ class FAEDailyAIAnalyzer:
         effective_primary_play, guard = cls._selection_consistency_guard(
             source, value_primary_play
         )
+        pre_direction_primary_play = effective_primary_play
+        effective_primary_play, direction_guard = (
+            cls._directional_precision_guard(
+                source, effective_primary_play
+            )
+        )
         non_cover_guard = cls._favorite_non_cover_guard(
             source, effective_primary_play
         )
@@ -2621,6 +2633,9 @@ class FAEDailyAIAnalyzer:
             source,
             effective_primary_play,
             (
+                pre_direction_primary_play
+                if direction_guard.get("triggered")
+                else
                 None
                 if guard.get("triggered")
                 or non_cover_guard.get("triggered")
@@ -2637,7 +2652,7 @@ class FAEDailyAIAnalyzer:
         )
         guard_reasons = [
             str(item.get("reason") or "")
-            for item in (guard, non_cover_guard)
+            for item in (guard, direction_guard, non_cover_guard)
             if item.get("triggered") and item.get("reason")
         ]
         if guard_reasons:
@@ -2675,6 +2690,7 @@ class FAEDailyAIAnalyzer:
                 "model_primary_play": model_primary_play,
                 "value_guard": value_guard,
                 "consistency_guard": guard,
+                "directional_precision_guard": direction_guard,
                 "non_cover_guard": non_cover_guard,
                 "rating": rating,
                 "model_rating": rating,
@@ -3092,9 +3108,13 @@ class FAEDailyAIAnalyzer:
     @staticmethod
     def _total_market_profile(source: Dict[str, Any]) -> Dict[str, Any]:
         values = ((source.get("total") or {}).get("current") or [])
+        initial_values = ((source.get("total") or {}).get("initial") or [])
         over_water = _number(values[0]) if len(values) > 0 else None
         line = _number(values[1]) if len(values) > 1 else None
         under_water = _number(values[2]) if len(values) > 2 else None
+        initial_line = (
+            _number(initial_values[1]) if len(initial_values) > 1 else None
+        )
         if line is None:
             return {"available": False}
         if line <= 2.25:
@@ -3122,10 +3142,237 @@ class FAEDailyAIAnalyzer:
         return {
             "available": True,
             "line": line,
+            "initial_line": initial_line,
+            "line_change": (
+                round(line - initial_line, 3)
+                if initial_line is not None else None
+            ),
             "line_band": line_band,
             "over_water": over_water,
             "under_water": under_water,
             "bias": bias,
+        }
+
+    @classmethod
+    def _directional_precision_guard(
+        cls,
+        source: Dict[str, Any],
+        model_selection: str,
+    ) -> tuple[str, Dict[str, Any]]:
+        """Reorder exact-margin picks when directional markets are stronger.
+
+        A low total limits the score range but does not itself imply a draw.
+        Likewise, a handicap draw is an exact winning-margin outcome and
+        should not stay ahead of the cover outcome when a short-priced
+        favorite truly deepens into a high-total market.  This guard only
+        changes the ordering of the two same-market selections; the usual
+        value, risk and no-bet gates still decide whether either can become an
+        official recommendation.
+        """
+        base = {
+            "triggered": False,
+            "model_selection": model_selection,
+            "effective_selection": model_selection,
+            "secondary_selection": None,
+        }
+        if model_selection not in {"平局", "让平"}:
+            return model_selection, base
+
+        euro = source.get("euro") or {}
+        initial_euro = euro.get("initial") or []
+        current_euro = euro.get("current") or []
+        if len(current_euro) < 3:
+            return model_selection, base
+        current_odds = [_number(value) for value in current_euro[:3]]
+        if any(value is None or value <= 1 for value in current_odds):
+            return model_selection, base
+        win_indexes = (0, 2)
+        favorite_index = min(win_indexes, key=lambda index: current_odds[index])
+        favorite_side = "home" if favorite_index == 0 else "away"
+        favorite_label = "主胜" if favorite_side == "home" else "客胜"
+        opponent_index = 2 if favorite_index == 0 else 0
+        favorite_odds = float(current_odds[favorite_index])
+        favorite_initial = (
+            _number(initial_euro[favorite_index])
+            if len(initial_euro) > favorite_index else None
+        )
+        opponent_initial = (
+            _number(initial_euro[opponent_index])
+            if len(initial_euro) > opponent_index else None
+        )
+        favorite_drop = (
+            round(favorite_initial - favorite_odds, 3)
+            if favorite_initial is not None else None
+        )
+        opponent_rise = (
+            round(current_odds[opponent_index] - opponent_initial, 3)
+            if opponent_initial is not None else None
+        )
+        asian = cls._asian_favorite_depth_profile(source, favorite_side)
+        current_depth = _number(asian.get("current_depth"))
+        line_change = _number(asian.get("line_change"))
+        favorite_water = _number(asian.get("current_favorite_water"))
+        total = cls._total_market_profile(source)
+        total_line = _number(total.get("line"))
+        risk_ids = {
+            str(value)
+            for value in (
+                (source.get("current_asian_risk") or {}).get("pattern_ids")
+                or []
+            )
+        }
+
+        if model_selection == "平局":
+            directional_probability = _number(
+                ((source.get("fae_core") or {}).get("probabilities") or {}).get(
+                    "home_win" if favorite_side == "home" else "away_win"
+                )
+            )
+            draw_probability = _number(
+                ((source.get("fae_core") or {}).get("probabilities") or {}).get(
+                    "draw"
+                )
+            )
+            probability_supports_direction = (
+                directional_probability is None
+                or draw_probability is None
+                or directional_probability >= draw_probability + 4
+            )
+            euro_support = (
+                favorite_odds <= 2.70
+                and favorite_drop is not None
+                and opponent_rise is not None
+                and favorite_drop >= 0.10
+                and opponent_rise >= 0.10
+            )
+            true_deepen = (
+                current_depth is not None
+                and current_depth >= 0.25
+                and line_change is not None
+                and line_change >= 0.24
+                and (favorite_water is None or favorite_water <= 1.02)
+            )
+            low_water_support = (
+                current_depth is not None
+                and current_depth >= 0
+                and favorite_water is not None
+                and favorite_water <= 0.86
+            )
+            unstable_direction = bool(risk_ids & {
+                "handicap_retreat",
+                "upper_water_rise",
+                "deepen_high_water",
+                "euro_asian_divergence",
+                "overheated_shallow",
+            })
+            triggered = bool(
+                euro_support
+                and probability_supports_direction
+                and (true_deepen or low_water_support)
+                and not unstable_direction
+            )
+            if not triggered:
+                return model_selection, {
+                    **base,
+                    "candidate_selection": favorite_label,
+                    "favorite_odds": favorite_odds,
+                    "favorite_odds_drop": favorite_drop,
+                    "opponent_odds_rise": opponent_rise,
+                    "asian_depth": current_depth,
+                    "asian_line_change": line_change,
+                    "favorite_water": favorite_water,
+                    "total_line": total_line,
+                }
+            score_context = (
+                "低总球只压低比分，不等于平局"
+                if total_line is not None and total_line <= 2.50
+                else "胜负方向的欧亚证据强于精确平局"
+            )
+            reason = (
+                f"方向强度护栏：欧赔{favorite_label}下降"
+                f"{favorite_drop:g}、对手胜赔上升{opponent_rise:g}，"
+                f"亚盘{'真实升深' if true_deepen else '低水支持'}；"
+                f"{score_context}，主选改为{favorite_label}、平局降为防选"
+            )
+            return favorite_label, {
+                **base,
+                "triggered": True,
+                "effective_selection": favorite_label,
+                "secondary_selection": "平局",
+                "favorite_side": favorite_side,
+                "favorite_odds": favorite_odds,
+                "favorite_odds_drop": favorite_drop,
+                "opponent_odds_rise": opponent_rise,
+                "asian_depth": current_depth,
+                "asian_line_change": line_change,
+                "favorite_water": favorite_water,
+                "total_line": total_line,
+                "reason": reason,
+            }
+
+        handicap = _number(
+            (source.get("sporttery_handicap") or {}).get("value")
+        )
+        if handicap is None or abs(handicap) != 1:
+            return model_selection, base
+        aligned_favorite = (
+            (favorite_side == "home" and handicap < 0)
+            or (favorite_side == "away" and handicap > 0)
+        )
+        if not aligned_favorite:
+            return model_selection, base
+        cover_selection = "让胜" if favorite_side == "home" else "让负"
+        high_total = total_line is not None and total_line >= 2.75
+        true_deepen = (
+            current_depth is not None
+            and current_depth >= 1.0
+            and line_change is not None
+            and line_change >= 0.24
+        )
+        normal_cover = (
+            favorite_odds <= 1.50
+            and true_deepen
+            and high_total
+            and favorite_water is not None
+            and favorite_water <= 0.95
+        )
+        extreme_favorite_cover = (
+            favorite_odds <= 1.30
+            and current_depth is not None
+            and current_depth >= 1.25
+            and true_deepen
+            and high_total
+            and favorite_water is not None
+            and favorite_water <= 1.08
+        )
+        if not (normal_cover or extreme_favorite_cover):
+            return model_selection, {
+                **base,
+                "candidate_selection": cover_selection,
+                "favorite_odds": favorite_odds,
+                "asian_depth": current_depth,
+                "asian_line_change": line_change,
+                "favorite_water": favorite_water,
+                "total_line": total_line,
+            }
+        reason = (
+            f"赢球差护栏：热门胜赔{favorite_odds:g}，亚盘真实升深至"
+            f"{current_depth:g}球，大小球{total_line:g}；高进球环境下"
+            f"穿盘证据强于恰好赢1球，主选改为{cover_selection}、"
+            "让平降为防选"
+        )
+        return cover_selection, {
+            **base,
+            "triggered": True,
+            "effective_selection": cover_selection,
+            "secondary_selection": "让平",
+            "favorite_side": favorite_side,
+            "favorite_odds": favorite_odds,
+            "asian_depth": current_depth,
+            "asian_line_change": line_change,
+            "favorite_water": favorite_water,
+            "total_line": total_line,
+            "reason": reason,
         }
 
     @classmethod
@@ -5843,6 +6090,12 @@ class FAEDailyAIAnalyzer:
             effective_primary_play, guard = cls._selection_consistency_guard(
                 source, value_primary_play
             )
+            pre_direction_primary_play = effective_primary_play
+            effective_primary_play, direction_guard = (
+                cls._directional_precision_guard(
+                    source, effective_primary_play
+                )
+            )
             non_cover_guard = cls._favorite_non_cover_guard(
                 source, effective_primary_play
             )
@@ -5855,13 +6108,18 @@ class FAEDailyAIAnalyzer:
             analysis["primary_play"] = effective_primary_play
             analysis["value_guard"] = value_guard
             analysis["consistency_guard"] = guard
+            analysis["directional_precision_guard"] = direction_guard
             analysis["non_cover_guard"] = non_cover_guard
-            if (
+            secondary_hint = analysis.get("secondary_play")
+            if direction_guard.get("triggered"):
+                secondary_hint = pre_direction_primary_play
+            elif (
                 guard.get("triggered")
                 or value_guard.get("triggered")
                 or non_cover_guard.get("triggered")
             ):
-                analysis["secondary_play"] = None
+                secondary_hint = None
+            analysis["secondary_play"] = secondary_hint
             value_profile = cls._play_value_profile(
                 source, effective_primary_play
             )
@@ -5872,6 +6130,9 @@ class FAEDailyAIAnalyzer:
             cap = 5.0
             adjustments = []
             historical_risk_notes = []
+            decision_guard_notes = [
+                str(direction_guard.get("reason") or "")
+            ] if direction_guard.get("triggered") else []
             warnings = [str(value) for value in source.get("data_warnings") or []]
             signals = (
                 (source.get("fae_core") or {}).get("rule_signals") or []
@@ -6151,9 +6412,10 @@ class FAEDailyAIAnalyzer:
                 cls._label_probability_language(value)
                 for value in analysis.get("evidence") or []
             ]
-            if adjustments or historical_risk_notes:
+            if adjustments or historical_risk_notes or decision_guard_notes:
                 analysis["risks"] = list(dict.fromkeys(
                     list(analysis.get("risks") or [])
+                    + decision_guard_notes
                     + historical_risk_notes
                     + no_bet_reasons
                     + adjustments
