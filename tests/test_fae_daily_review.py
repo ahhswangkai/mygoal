@@ -167,6 +167,13 @@ class DailyAIReviewTests(unittest.TestCase):
         self.assertEqual(
             review["summary"]["two_option"]["handicap"]["hit_rate"], 100.0
         )
+        overall = review["summary"]["two_option"]["overall"]
+        self.assertEqual(review["summary"]["two_option"]["raw_rows"], 2)
+        self.assertEqual(review["summary"]["two_option"]["unique_matches"], 1)
+        self.assertEqual(overall["total"], 1)
+        self.assertEqual(overall["equal_stake"], 2.0)
+        self.assertEqual(overall["equal_stake_return"], 2.0)
+        self.assertEqual(overall["equal_stake_roi"], 0.0)
 
     def test_aggregates_history_calibration_brier_score(self):
         reviews = [{

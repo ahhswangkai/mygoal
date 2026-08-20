@@ -210,6 +210,59 @@ class FAEAIReviewAnalyzerTests(unittest.TestCase):
         self.assertEqual(first, second)
         self.assertNotEqual(first, changed)
 
+    def test_deterministic_handicap_settlement_corrects_ai_semantics(self):
+        analyzer = FAEAIReviewAnalyzer(FakeReviewClient())
+        audit_input = analyzer.build_input(
+            snapshot(), review(status="miss", score="2:0")
+        )
+        match_input = audit_input["matches"][0]
+        self.assertEqual(
+            match_input["result"]["handicap_settlement"]["actual_outcome"],
+            "让胜",
+        )
+        parsed = {
+            "summary": {
+                "conclusion": "周六201主队赢2球归为让负。",
+                "what_failed": [],
+            },
+            "market_lessons": {
+                "sporttery": "周六201最终结果为让负。",
+            },
+            "matches": [{
+                "match_id": "201",
+                "verdict": "判断失误",
+                "diagnosis": "主队赢2球归为让负，双选因此命中。",
+                "correct_signals": [],
+                "missed_signals": ["最终结算为让负"],
+                "data_quality_issues": [],
+                "counterfactual": "下次重新核对。",
+                "rule_tags": ["让球"],
+            }],
+            "learning_candidates": [{
+                "scope": "sporttery",
+                "target": "让球结算",
+                "action": "increase",
+                "delta": 0.1,
+                "confidence": "high",
+                "minimum_samples": 10,
+                "reason": "周六201归为让负。",
+                "evidence_match_ids": ["201"],
+            }],
+        }
+
+        normalized = analyzer._normalize(parsed, audit_input["matches"])
+        row = normalized["matches"][0]
+
+        self.assertTrue(row["semantic_guard"]["triggered"])
+        self.assertEqual(row["actual_handicap_outcome"], "让胜")
+        self.assertIn("确定性结果为让胜", row["diagnosis"])
+        self.assertNotIn("归为让负", row["diagnosis"])
+        self.assertIn("周六201主队赢2球归为让胜", normalized["summary"]["conclusion"])
+        self.assertEqual(normalized["learning_candidates"], [])
+        self.assertEqual(
+            normalized["semantic_guard"]["blocked_learning_candidates"], 1
+        )
+
     def test_humanizes_raw_match_ids_in_all_visible_review_prose(self):
         raw_id = "1362711"
         data = {

@@ -14,7 +14,7 @@ from .provider import ArkNarrativeClient, FAEOutputError
 from .version import ENGINE_VERSION
 
 
-AI_REVIEW_PROMPT_VERSION = "fae-deep-review-v8-two-option"
+AI_REVIEW_PROMPT_VERSION = "fae-deep-review-v9-deterministic-handicap"
 SETTLED_STATUSES = {"hit", "miss", "push"}
 LEARNING_SCOPES = {
     "euro",
@@ -27,6 +27,72 @@ LEARNING_SCOPES = {
     "combination",
     "history_calibration",
 }
+
+
+def _deterministic_handicap_settlement(
+    score: Any,
+    handicap: Any,
+) -> Dict[str, Any]:
+    """Calculate the Sporttery handicap outcome from immutable facts."""
+    parsed = re.fullmatch(
+        r"\s*(\d+)\s*[:-]\s*(\d+)\s*", str(score or "")
+    )
+    try:
+        handicap_value = float(handicap)
+    except (TypeError, ValueError):
+        handicap_value = None
+    if not parsed or handicap_value is None:
+        return {}
+    home, away = int(parsed.group(1)), int(parsed.group(2))
+    adjusted_home = home + handicap_value
+    actual = (
+        "让胜" if adjusted_home > away
+        else "让平" if adjusted_home == away
+        else "让负"
+    )
+    handicap_text = f"{handicap_value:+g}"
+    return {
+        "handicap": handicap_value,
+        "score": f"{home}:{away}",
+        "adjusted_score": f"{adjusted_home:g}:{away}",
+        "actual_outcome": actual,
+        "explanation": (
+            f"主队竞彩让球{handicap_text}，全场{home}:{away}，"
+            f"让球后{adjusted_home:g}:{away}，确定性结果为{actual}"
+        ),
+    }
+
+
+_HANDICAP_RESULT_CLAIM = re.compile(
+    r"(?P<prefix>"
+    r"(?:竞彩让球|让球)?(?:实际|最终|确定性)?(?:结果|结算)"
+    r"\s*(?:是|为|：|:)?\s*"
+    r"|(?:实际|最终|确定性)\s*(?:是|为|：|:)?\s*"
+    r"|归为\s*|归\s*|判为\s*"
+    r")(?P<label>让胜|让平|让负)"
+)
+
+
+def _sanitize_handicap_result_claim(
+    value: Any,
+    actual_outcome: Any,
+) -> tuple[str, bool]:
+    """Replace only explicit result claims that contradict settlement."""
+    text = re.sub(r"\s+", " ", str(value or "")).strip()
+    actual = str(actual_outcome or "")
+    if actual not in {"让胜", "让平", "让负"} or not text:
+        return text, False
+    changed = False
+
+    def replace(match: re.Match) -> str:
+        nonlocal changed
+        label = match.group("label")
+        if label == actual:
+            return match.group(0)
+        changed = True
+        return f"{match.group('prefix')}{actual}"
+
+    return _HANDICAP_RESULT_CLAIM.sub(replace, text), changed
 
 
 class FAEAIReviewAnalyzer:
@@ -84,6 +150,13 @@ class FAEAIReviewAnalyzer:
             analysis = source.get("analysis") or {}
             input_snapshot = source.get("input_snapshot") or {}
             handicap_result = handicap_by_id.get(match_id) or {}
+            sporttery_handicap = input_snapshot.get(
+                "sporttery_handicap"
+            ) or {}
+            handicap_settlement = _deterministic_handicap_settlement(
+                result.get("result_score"),
+                sporttery_handicap.get("value"),
+            )
             matches.append({
                 "match_id": match_id,
                 "match_number": result.get("match_number"),
@@ -180,6 +253,7 @@ class FAEAIReviewAnalyzer:
                     "observation_status": result.get("observation_status"),
                     "return": result.get("return"),
                     "profit": result.get("profit"),
+                    "handicap_settlement": handicap_settlement,
                 },
             })
         combinations = [{
@@ -347,11 +421,13 @@ class FAEAIReviewAnalyzer:
             "升降属于走势而非盘口名；让平必须结合输入中的具体让球数解释。",
             "必须分别复核正式主选与handicap_prediction中的竞彩让球参考；普通主胜命中不能掩盖让胜、让平或让负未中。",
             "必须单独复核two_option_predictions：主选+防选或让球双选任一命中即为覆盖命中；这只评估方向覆盖，不得包装成单注ROI。",
+            "review_summary.two_option.overall已经按比赛去重，并额外提供equal_stake_roi；不得使用raw_rows重复计算同一场，也不得只报覆盖率而忽略等额双选收益。",
             "所有已完赛比赛都必须复盘，包括prediction.no_bet=true的不下注比赛和selection=观望的观察比赛；不下注不是跳过，而是风险控制决策，需要判断合理还是过保守。",
             "prediction.no_bet=true时，result.status通常为skipped，result.observation_status表示如果按赛前观察方向下注会命中、未中或走盘；若observation_status=miss，优先复核不下注是否避免错误，若observation_status=hit，必须复核是否过度保守。",
             "selection=观望且没有具体下注方向时，不能按命中率评价，只复核是否正确识别了数据不足、盘口冲突或风险。",
             "必须单独复核draw_radar_predictions：核心候选与观察候选分开统计；观察命中不能事后包装成正式推荐，核心未中也必须记录。",
             "竞彩让球必须严格按保存的让球数计算：主队-1时，赢2球以上为让胜、恰好赢1球为让平、其余为让负；确定性结算结果优先于文字推断。",
+            "每场result.handicap_settlement.actual_outcome是程序计算的唯一让球赛果，禁止自行重算或改写；诊断中提到让球赛果时必须逐字使用该字段。",
             "market_risk_context中的水位模式仅表示赛前风险结构；可以检验该预警是否有效，但不得把退盘、升水或欧亚背离直接写成比赛失利的真实原因。",
             "必须复核historical_goal_margin_model：普通平局只核对0球分差，让平只核对赛前竞彩让球数对应的精确净胜球差，严禁用普通平局赛果替代让平结算。",
             "若historical_calibration.applied=true，要说明它相对core_probability是降低还是提高了概率，以及本场结果是否支持该次校准；单场支持或反对都不得直接升级为规律。",
@@ -379,6 +455,9 @@ class FAEAIReviewAnalyzer:
         source_matches: Iterable[Dict[str, Any]],
     ) -> Dict[str, Any]:
         source_rows = list(source_matches)
+        source_by_id = {
+            str(item.get("match_id") or ""): item for item in source_rows
+        }
         allowed_ids = {
             str(item.get("match_id") or "") for item in source_rows
         }
@@ -399,6 +478,12 @@ class FAEAIReviewAnalyzer:
             no_bet = bool((source.get("prediction") or {}).get("no_bet"))
             handicap_prediction = source.get("handicap_prediction") or {}
             handicap_status = handicap_prediction.get("status")
+            handicap_settlement = (
+                (source.get("result") or {}).get("handicap_settlement") or {}
+            )
+            actual_handicap_outcome = handicap_settlement.get(
+                "actual_outcome"
+            )
             two_options = source.get("two_option_predictions") or []
             two_option_hit = any(
                 item.get("status") == "hit" for item in two_options
@@ -439,6 +524,43 @@ class FAEAIReviewAnalyzer:
                 "观望复盘",
             }:
                 verdict = fallback_verdict
+            diagnosis, diagnosis_corrected = _sanitize_handicap_result_claim(
+                cls._text(
+                    generated.get("diagnosis"),
+                    "模型未返回完整诊断，请以确定性结算结果为准。",
+                    600,
+                ),
+                actual_handicap_outcome,
+            )
+
+            def sanitized_list(value: Any) -> tuple[List[str], bool]:
+                values = cls._list(value, 6, 220)
+                result_values = []
+                corrected = False
+                for entry in values:
+                    clean, changed = _sanitize_handicap_result_claim(
+                        entry, actual_handicap_outcome
+                    )
+                    result_values.append(clean)
+                    corrected = corrected or changed
+                return result_values, corrected
+
+            correct_signals, correct_corrected = sanitized_list(
+                generated.get("correct_signals")
+            )
+            missed_signals, missed_corrected = sanitized_list(
+                generated.get("missed_signals")
+            )
+            semantic_corrected = bool(
+                diagnosis_corrected
+                or correct_corrected
+                or missed_corrected
+            )
+            if semantic_corrected:
+                diagnosis = (
+                    f"{handicap_settlement.get('explanation')}。"
+                    f"{diagnosis}"
+                )[:600]
             normalized_matches.append({
                 "match_id": match_id,
                 "match_number": source.get("match_number"),
@@ -453,6 +575,8 @@ class FAEAIReviewAnalyzer:
                     "selection_text"
                 ),
                 "handicap_result_status": handicap_status,
+                "actual_handicap_outcome": actual_handicap_outcome,
+                "handicap_settlement": handicap_settlement,
                 "two_option_predictions": two_options,
                 "two_option_verdict": cls._text(
                     generated.get("two_option_verdict"),
@@ -471,17 +595,9 @@ class FAEAIReviewAnalyzer:
                     "push": "让球走盘",
                 }.get(handicap_status, "未推荐"),
                 "verdict": verdict,
-                "diagnosis": cls._text(
-                    generated.get("diagnosis"),
-                    "模型未返回完整诊断，请以确定性结算结果为准。",
-                    600,
-                ),
-                "correct_signals": cls._list(
-                    generated.get("correct_signals"), 6, 220
-                ),
-                "missed_signals": cls._list(
-                    generated.get("missed_signals"), 6, 220
-                ),
+                "diagnosis": diagnosis,
+                "correct_signals": correct_signals,
+                "missed_signals": missed_signals,
                 "data_quality_issues": cls._list(
                     generated.get("data_quality_issues"), 6, 220
                 ),
@@ -491,7 +607,45 @@ class FAEAIReviewAnalyzer:
                 "rule_tags": cls._list(
                     generated.get("rule_tags"), 5, 60
                 ),
+                "semantic_guard": {
+                    "triggered": semantic_corrected,
+                    "actual_handicap_outcome": actual_handicap_outcome,
+                    "reason": (
+                        "大模型文字与确定性竞彩让球结算冲突，已程序校正"
+                        if semantic_corrected else None
+                    ),
+                },
             })
+
+        semantic_conflict_ids = {
+            str(item.get("match_id") or "")
+            for item in normalized_matches
+            if (item.get("semantic_guard") or {}).get("triggered")
+        }
+        blocked_learning_candidates = 0
+
+        def sanitize_global(value: Any) -> str:
+            text = re.sub(r"\s+", " ", str(value or "")).strip()
+            for source in source_rows:
+                match_number = str(source.get("match_number") or "")
+                if not match_number or match_number not in text:
+                    continue
+                settlement = (
+                    (source.get("result") or {})
+                    .get("handicap_settlement") or {}
+                )
+                text, _ = _sanitize_handicap_result_claim(
+                    text, settlement.get("actual_outcome")
+                )
+            return text
+
+        def sanitize_global_list(
+            value: Any, limit: int, item_limit: int
+        ) -> List[str]:
+            return [
+                sanitize_global(item)[:item_limit]
+                for item in cls._list(value, limit, item_limit)
+            ]
 
         summary = (
             parsed.get("summary")
@@ -543,8 +697,23 @@ class FAEAIReviewAnalyzer:
                 )
                 if str(value) in allowed_ids
             ))[:12]
+            if semantic_conflict_ids.intersection(evidence_ids):
+                blocked_learning_candidates += 1
+                continue
             target = cls._text(item.get("target"), "", 160)
             reason = cls._text(item.get("reason"), "", 400)
+            if len(evidence_ids) == 1:
+                evidence_source = source_by_id.get(evidence_ids[0]) or {}
+                settlement = (
+                    (evidence_source.get("result") or {})
+                    .get("handicap_settlement") or {}
+                )
+                target, _ = _sanitize_handicap_result_claim(
+                    target, settlement.get("actual_outcome")
+                )
+                reason, _ = _sanitize_handicap_result_claim(
+                    reason, settlement.get("actual_outcome")
+                )
             if not target or not reason:
                 continue
             candidates.append({
@@ -561,27 +730,32 @@ class FAEAIReviewAnalyzer:
 
         return {
             "summary": {
-                "conclusion": cls._text(
+                "conclusion": sanitize_global(cls._text(
                     summary.get("conclusion"),
                     "AI 深度复盘已完成，请结合逐场诊断查看。",
                     1000,
-                ),
-                "what_worked": cls._list(
+                )),
+                "what_worked": sanitize_global_list(
                     summary.get("what_worked"), 6, 260
                 ),
-                "what_failed": cls._list(
+                "what_failed": sanitize_global_list(
                     summary.get("what_failed"), 6, 260
                 ),
-                "risk_patterns": cls._list(
+                "risk_patterns": sanitize_global_list(
                     summary.get("risk_patterns"), 6, 260
                 ),
-                "next_actions": cls._list(
+                "next_actions": sanitize_global_list(
                     summary.get("next_actions"), 6, 260
                 ),
             },
             "market_lessons": {
-                key: cls._text(
-                    lessons.get(key), "本次样本不足，暂不调整。", 500
+                key: (
+                    "竞彩让球采用确定性结算：主队-1时，赢2球及以上为让胜、"
+                    "恰好赢1球为让平，其余为让负；本次已拦截大模型语义冲突。"
+                    if key == "sporttery" and semantic_conflict_ids
+                    else sanitize_global(cls._text(
+                        lessons.get(key), "本次样本不足，暂不调整。", 500
+                    ))
                 )
                 for key in (
                     "euro", "asian", "sporttery", "total", "consistency"
@@ -603,6 +777,11 @@ class FAEAIReviewAnalyzer:
                 ),
             },
             "learning_candidates": candidates[:12],
+            "semantic_guard": {
+                "triggered": bool(semantic_conflict_ids),
+                "corrected_match_ids": sorted(semantic_conflict_ids),
+                "blocked_learning_candidates": blocked_learning_candidates,
+            },
         }
 
     @classmethod

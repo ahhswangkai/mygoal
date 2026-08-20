@@ -15,7 +15,7 @@ from .provider import ArkNarrativeClient, FAEError, FAEOutputError
 from .version import ENGINE_VERSION
 
 
-DAILY_PROMPT_VERSION = "five-market-daily-v22-directional-precision-guard"
+DAILY_PROMPT_VERSION = "five-market-daily-v23-draw-official-hard-gate"
 
 OFFICIAL_PLAY_SELECTIONS = {"平局", "让平"}
 OFFICIAL_MIN_BET_SCORE = 70.0
@@ -23,16 +23,18 @@ OFFICIAL_MIN_VALUE_SCORE = 60.0
 OFFICIAL_MIN_MARKET_CONFIDENCE = 70.0
 OFFICIAL_MIN_RATING = 4.0
 
-# “正式推荐”仍只允许平/让平，但不能只用综合主选分一票否决。
-# 平/让平雷达有自己的历史样本、进球差概率和赔率价值，因此单独设
-# “核心/小试”两层：核心可进重点，小试可进正式池但降星。
+# “正式推荐”仍只允许平/让平。雷达观察层只负责排序和复盘，不能
+# 被后置汇总重新升级；正式池必须同时满足核心层、非负赔率价值与
+# 赔率区间风险硬门槛。
 RADAR_OFFICIAL_POOL_LIMITS = {"平局": 2, "让平": 2}
+RADAR_DISPLAY_LIMITS = {"ordinary_draw": 3, "handicap_draw": 3}
 RADAR_OFFICIAL_SMALL_MIN_SCORE = {"平局": 88.0, "让平": 80.0}
 RADAR_OFFICIAL_SMALL_MIN_PROBABILITY = {"平局": 29.0, "让平": 27.0}
-RADAR_OFFICIAL_SMALL_MIN_VALUE = {"平局": -8.0, "让平": -1.0}
+RADAR_OFFICIAL_SMALL_MIN_VALUE = {"平局": 0.0, "让平": 0.0}
 RADAR_OFFICIAL_MIN_SAMPLE = {"平局": 60.0, "让平": 60.0}
 RADAR_OFFICIAL_MIN_MARKET_CONFIDENCE = 55.0
 RADAR_OFFICIAL_MAX_RISK_IDS = {"平局": 1, "让平": 1}
+HANDICAP_DRAW_WEEKLY_RISK_ODDS = (3.50, 4.00)
 ASIAN_HARD_DOWNGRADE_RISKS = {
     "deepen_high_water",
     "upper_water_rise",
@@ -2635,6 +2637,9 @@ class FAEDailyAIAnalyzer:
             (
                 pre_direction_primary_play
                 if direction_guard.get("triggered")
+                else guard.get("model_selection")
+                if guard.get("guard_type")
+                == "exact_margin_market_alignment"
                 else
                 None
                 if guard.get("triggered")
@@ -5052,11 +5057,80 @@ class FAEDailyAIAnalyzer:
             row = dict(item or {})
             analysis = dict(row.get("analysis") or {})
             analysis["draw_radar"] = {
-                "ordinary_draw": cls._draw_radar_candidate(row, "平局"),
-                "handicap_draw": cls._draw_radar_candidate(row, "让平"),
+                "ordinary_draw": cls._apply_draw_radar_candidate_guard(
+                    cls._draw_radar_candidate(row, "平局")
+                ),
+                "handicap_draw": cls._apply_draw_radar_candidate_guard(
+                    cls._draw_radar_candidate(row, "让平")
+                ),
             }
             row["analysis"] = analysis
             result.append(row)
+        return result
+
+    @classmethod
+    def _draw_radar_hard_veto_reasons(
+        cls, candidate: Dict[str, Any]
+    ) -> List[str]:
+        """Return deterministic reasons that forbid formal recommendation."""
+        if not candidate:
+            return ["缺少平/让平雷达候选"]
+        reasons = [
+            str(value) for value in candidate.get("official_veto_reasons") or []
+            if str(value).strip()
+        ]
+        draw_band_signal = candidate.get("draw_odds_band_signal") or {}
+        if draw_band_signal.get("block_official"):
+            reasons.append("历史赔率区间规则明确禁止升级正式推荐")
+        odds_value = _number(candidate.get("odds_value"))
+        if odds_value is None:
+            reasons.append("缺少赔率价值数据，不得升级正式推荐")
+        elif odds_value < 0:
+            reasons.append("赔率价值为负，不得升级正式推荐")
+        selection = str(candidate.get("selection") or "")
+        odds = _number(candidate.get("odds"))
+        low, high = HANDICAP_DRAW_WEEKLY_RISK_ODDS
+        if selection == "让平" and odds is not None and low <= odds < high:
+            reasons.append(
+                "让平赔率3.50–3.99近7日回测处于高风险区间"
+            )
+        if candidate.get("tier") != "core":
+            reasons.append("雷达仅为观察层，不能覆盖正式推荐门槛")
+        return list(dict.fromkeys(reasons))
+
+    @classmethod
+    def _apply_draw_radar_candidate_guard(
+        cls, candidate: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Downgrade candidates vetoed by immutable weekly risk guards."""
+        result = dict(candidate or {})
+        reasons = cls._draw_radar_hard_veto_reasons(result)
+        # The tier-only reason describes an already-observational candidate;
+        # other reasons can actively downgrade a previously computed core row.
+        structural_reasons = [
+            value for value in reasons
+            if "仅为观察层" not in value
+        ]
+        if structural_reasons and result.get("tier") == "core":
+            result["original_tier"] = "core"
+            result["tier"] = "watch"
+            result["rating"] = cls._rating(
+                min(3.5, float(result.get("rating") or 3.5))
+            )
+            reason = str(result.get("reason") or "")
+            reason = reason.replace("达到独立核心门槛。", "")
+            guard_note = "、".join(structural_reasons)
+            reason_prefix = reason.rstrip("。；")
+            result["reason"] = (
+                (reason_prefix + "；" if reason_prefix else "")
+                + f"{guard_note}，仅列观察。"
+            )
+        result["official_veto_reasons"] = (
+            cls._draw_radar_hard_veto_reasons(result)
+        )
+        result["formal_eligible"] = not bool(
+            result["official_veto_reasons"]
+        )
         return result
 
     @classmethod
@@ -5068,10 +5142,10 @@ class FAEDailyAIAnalyzer:
         """Expose core/watch radar rows even when official pools exclude them."""
         result = dict(summary or {})
         radar = {
-            "version": "draw-radar-v1",
+            "version": "draw-radar-v2",
             "policy": (
-                "核心候选可参与组合；观察候选只记录和复盘，"
-                "负赔率价值不得升级为核心。"
+                "每天普通平局与竞彩让平各展示前三；只有核心且非负"
+                "赔率价值候选可参与组合，观察层和高风险赔率区间只复盘。"
             ),
             "ordinary_draw": [],
             "handicap_draw": [],
@@ -5100,7 +5174,7 @@ class FAEDailyAIAnalyzer:
                     float(item.get("probability") or 0),
                 ),
                 reverse=True,
-            )[:6]
+            )[:RADAR_DISPLAY_LIMITS.get(key, 3)]
         result["draw_radar"] = radar
         return result
 
@@ -5117,6 +5191,8 @@ class FAEDailyAIAnalyzer:
         if selection not in OFFICIAL_PLAY_SELECTIONS:
             return None
         if not candidate.get("match_id"):
+            return None
+        if cls._draw_radar_hard_veto_reasons(candidate):
             return None
 
         analysis = match.get("analysis") or {}
@@ -5182,9 +5258,6 @@ class FAEDailyAIAnalyzer:
             return None
         if market_confidence < RADAR_OFFICIAL_MIN_MARKET_CONFIDENCE:
             return None
-        if draw_band_signal.get("block_official"):
-            return None
-
         if selection == "平局":
             if draw_band_kind in {
                 "backtested_balanced_draw_value",
@@ -5318,6 +5391,7 @@ class FAEDailyAIAnalyzer:
             "全部玩法均未达到投注门槛",
         )
         prepared = []
+        base_rows = []
 
         def candidate_priority(candidate: Dict[str, Any]) -> tuple:
             draw_band = candidate.get("draw_odds_band_signal") or {}
@@ -5340,6 +5414,44 @@ class FAEDailyAIAnalyzer:
             analysis = dict(row.get("analysis") or {})
             analysis.pop("radar_recommendation", None)
             row["analysis"] = analysis
+            primary = str(analysis.get("primary_play") or "")
+            radar_key = (
+                "ordinary_draw" if primary == "平局"
+                else "handicap_draw" if primary == "让平"
+                else ""
+            )
+            primary_candidate = dict(
+                ((analysis.get("draw_radar") or {}).get(radar_key) or {})
+            )
+            if radar_key and not cls._radar_official_level(
+                primary_candidate, row
+            ):
+                veto_reasons = cls._draw_radar_hard_veto_reasons(
+                    primary_candidate
+                )
+                if not veto_reasons:
+                    veto_reasons = ["平/让平雷达未达到正式核心硬门槛"]
+                existing_reasons = [
+                    str(value)
+                    for value in analysis.get("no_bet_reasons") or []
+                ]
+                analysis.update({
+                    "decision": "观察",
+                    "no_bet": True,
+                    "no_bet_reasons": list(dict.fromkeys(
+                        existing_reasons + veto_reasons
+                    )),
+                    "rating": cls._rating(min(
+                        3.5, float(analysis.get("rating") or 3.5)
+                    )),
+                    "formal_veto": {
+                        "selection": primary,
+                        "reasons": veto_reasons,
+                    },
+                })
+                analysis["star_text"] = cls._stars(analysis["rating"])
+                row["analysis"] = analysis
+            base_rows.append(row)
             radar = analysis.get("draw_radar") or {}
             candidates = []
             for key in ("ordinary_draw", "handicap_draw"):
@@ -5380,7 +5492,7 @@ class FAEDailyAIAnalyzer:
             if index in selected_indexes
         }
         result = []
-        for index, item in enumerate(matches):
+        for index, item in enumerate(base_rows):
             row = dict(item or {})
             analysis = dict(row.get("analysis") or {})
             analysis.pop("radar_recommendation", None)
@@ -5465,9 +5577,18 @@ class FAEDailyAIAnalyzer:
             for key, items in (result.get("pools") or {}).items()
         }
         by_selection = {"平局": [], "让平": []}
+        eligible_ids = {"平局": set(), "让平": set()}
         promoted_ids = set()
         for match in matches:
             analysis = match.get("analysis") or {}
+            primary = str(analysis.get("primary_play") or "")
+            match_id = str(match.get("match_id") or "")
+            if (
+                primary in eligible_ids
+                and match_id
+                and not analysis.get("no_bet")
+            ):
+                eligible_ids[primary].add(match_id)
             official = analysis.get("radar_recommendation") or {}
             selection = str(official.get("selection") or "")
             if selection not in by_selection:
@@ -5482,6 +5603,8 @@ class FAEDailyAIAnalyzer:
             existing = {
                 str(item.get("match_id") or ""): dict(item)
                 for item in pools.get(key) or []
+                if str(item.get("match_id") or "")
+                in eligible_ids[selection]
             }
             rows = sorted(
                 by_selection[selection],
@@ -6113,6 +6236,11 @@ class FAEDailyAIAnalyzer:
             secondary_hint = analysis.get("secondary_play")
             if direction_guard.get("triggered"):
                 secondary_hint = pre_direction_primary_play
+            elif (
+                guard.get("guard_type")
+                == "exact_margin_market_alignment"
+            ):
+                secondary_hint = guard.get("model_selection")
             elif (
                 guard.get("triggered")
                 or value_guard.get("triggered")
@@ -6845,7 +6973,15 @@ class FAEDailyAIAnalyzer:
         source: Dict[str, Any],
         model_selection: str,
     ) -> tuple[str, Dict[str, Any]]:
-        """Override only a severe, auditable handicap conclusion conflict."""
+        """Override an auditable handicap conclusion conflict.
+
+        ``让平`` is an exact-margin outcome.  It must not stay ahead of a
+        directional handicap outcome when both the deterministic probability
+        ranking and the market's shortest price point to that same outcome.
+        This narrower guard prevents a ``让平 / 让负`` pair from omitting an
+        clearly leading ``让胜`` (and vice versa) without turning every small
+        probability difference into an override.
+        """
         labels = {"让胜": "win", "让平": "draw", "让负": "lose"}
         base = {
             "triggered": False,
@@ -6894,35 +7030,78 @@ class FAEDailyAIAnalyzer:
             top_return - model_return
             if top_return is not None and model_return is not None else None
         )
-        triggered = (
+        strong_conflict = (
             probability_gap >= 20
             and return_gap is not None
             and return_gap >= 0.20
         )
+        priced = {
+            label: value for label, value in odds.items()
+            if value is not None and value > 1
+        }
+        shortest_selection = (
+            min(priced, key=priced.get) if len(priced) == 3 else None
+        )
+        directional_guard_will_handle = False
+        if model_selection == "让平":
+            _, directional_preview = cls._directional_precision_guard(
+                source, model_selection
+            )
+            directional_guard_will_handle = bool(
+                directional_preview.get("triggered")
+            )
+        exact_margin_conflict = bool(
+            model_selection == "让平"
+            and top_selection in {"让胜", "让负"}
+            and probability_gap >= 5
+            and shortest_selection == top_selection
+            and not directional_guard_will_handle
+        )
+        triggered = strong_conflict or exact_margin_conflict
         if not triggered:
             return model_selection, {
                 **base,
                 "candidate_selection": top_selection,
                 "probability_gap": round(probability_gap, 1),
+                "shortest_price_selection": shortest_selection,
                 "expected_return_gap": (
                     round(return_gap, 3) if return_gap is not None else None
                 ),
             }
-        reason = (
-            f"一致性护栏：模型原选{model_selection}，但赛前可验证概率"
-            f"{model_probability:g}%显著低于{top_selection}{top_probability:g}%，"
-            f"正式推荐改为{top_selection}"
-        )
+        if exact_margin_conflict:
+            reason = (
+                f"精确分差护栏：{model_selection}只是精确净胜球结果，"
+                f"赛前可验证概率{model_probability:g}%低于"
+                f"{top_selection}{top_probability:g}%，且{top_selection}为"
+                "竞彩让球最低赔率项；主选改为方向项，让平降为防选"
+            )
+        else:
+            reason = (
+                f"一致性护栏：模型原选{model_selection}，但赛前可验证概率"
+                f"{model_probability:g}%显著低于{top_selection}{top_probability:g}%，"
+                f"正式推荐改为{top_selection}"
+            )
         return top_selection, {
             "triggered": True,
+            "guard_type": (
+                "exact_margin_market_alignment"
+                if exact_margin_conflict else "severe_probability_conflict"
+            ),
             "model_selection": model_selection,
             "effective_selection": top_selection,
             "model_probability": model_probability,
             "effective_probability": top_probability,
             "probability_gap": round(probability_gap, 1),
-            "model_expected_return": round(model_return, 3),
-            "effective_expected_return": round(top_return, 3),
-            "expected_return_gap": round(return_gap, 3),
+            "shortest_price_selection": shortest_selection,
+            "model_expected_return": (
+                round(model_return, 3) if model_return is not None else None
+            ),
+            "effective_expected_return": (
+                round(top_return, 3) if top_return is not None else None
+            ),
+            "expected_return_gap": (
+                round(return_gap, 3) if return_gap is not None else None
+            ),
             "reason": reason,
         }
 

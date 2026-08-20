@@ -123,9 +123,9 @@ def summarize_ai_settled(rows: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
 def summarize_two_option(rows: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
     """Summarize coverage accuracy for primary + hedge selections.
 
-    A two-option row is an analytical coverage check, not a real single-stake
-    bet.  We therefore report hit rate and average option count, but avoid
-    presenting ROI as if the pair were one ordinary ticket.
+    A two-option row is an analytical coverage check.  Coverage accuracy and
+    the explicitly labelled equal-stake return are both reported: staking one
+    unit on each option is not the same as treating the pair as one ticket.
     """
     row_list = list(rows)
     settled = [
@@ -142,6 +142,18 @@ def summarize_two_option(rows: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
         for row in row_list
         if row.get("selections")
     ]
+    financial = [
+        row for row in settled
+        if _number(row.get("equal_stake_stake")) is not None
+        and _number(row.get("equal_stake_return")) is not None
+    ]
+    equal_stake = round(sum(
+        _number(row.get("equal_stake_stake")) or 0 for row in financial
+    ), 2)
+    equal_return = round(sum(
+        _number(row.get("equal_stake_return")) or 0 for row in financial
+    ), 2)
+    equal_profit = round(equal_return - equal_stake, 2)
     return {
         "total": len(row_list),
         "settled": len(settled),
@@ -160,7 +172,38 @@ def summarize_two_option(rows: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
             round(sum(option_counts) / len(option_counts), 2)
             if option_counts else 0
         ),
+        "equal_stake": equal_stake,
+        "equal_stake_return": equal_return,
+        "equal_stake_profit": equal_profit,
+        "equal_stake_roi": (
+            round(equal_profit / equal_stake * 100, 1)
+            if equal_stake else 0
+        ),
     }
+
+
+def unique_two_option_rows(
+    rows: Iterable[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Return one canonical two-option decision per match.
+
+    The same handicap pair can be emitted once as ``主选防选`` and again as
+    ``竞彩让球双选``.  Keep those raw rows for category diagnostics, while the
+    overall headline uses the main pair first and falls back to the handicap
+    pair.  This prevents one match from inflating the daily hit rate twice.
+    """
+    by_match: Dict[str, Dict[str, Any]] = {}
+    for row in rows:
+        match_id = str(row.get("match_id") or "")
+        if not match_id:
+            continue
+        current = by_match.get(match_id)
+        if current is None or (
+            current.get("result_type") != "two_option_main"
+            and row.get("result_type") == "two_option_main"
+        ):
+            by_match[match_id] = row
+    return list(by_match.values())
 
 
 def summarize_history_calibration(
@@ -249,6 +292,7 @@ class FAEDailyAIReviewEngine:
                 item, matches_by_id.get(str(item.get("match_id"))) or {}
             )
         ]
+        unique_two_options = unique_two_option_rows(two_option_results)
         draw_radar_results = [
             result
             for item in matches
@@ -350,7 +394,9 @@ class FAEDailyAIReviewEngine:
                 "singles": summarize_ai_settled(match_results),
                 "handicap": summarize_ai_settled(handicap_results),
                 "two_option": {
-                    "overall": summarize_two_option(two_option_results),
+                    "overall": summarize_two_option(unique_two_options),
+                    "raw_rows": len(two_option_results),
+                    "unique_matches": len(unique_two_options),
                     "main": summarize_two_option([
                         row for row in two_option_results
                         if row.get("result_type") == "two_option_main"
@@ -507,6 +553,24 @@ class FAEDailyAIReviewEngine:
                 None,
             )
             first = settled[0] if settled else {}
+            financial = [
+                item for item in settled
+                if item.get("status") in {"hit", "miss", "push"}
+                and _number(item.get("return")) is not None
+            ]
+            equal_stake = (
+                float(len(financial))
+                if len(financial) == len(settled) else None
+            )
+            equal_return = (
+                round(sum(_number(item.get("return")) or 0 for item in financial), 2)
+                if equal_stake is not None else None
+            )
+            equal_profit = (
+                round(equal_return - equal_stake, 2)
+                if equal_return is not None and equal_stake is not None
+                else None
+            )
             rows.append({
                 "match_id": str(source.get("match_id") or ""),
                 "match_number": source.get("match_number"),
@@ -538,6 +602,13 @@ class FAEDailyAIReviewEngine:
                 "no_bet_reasons": analysis.get("no_bet_reasons") or [],
                 "return": None,
                 "profit": None,
+                "equal_stake_stake": equal_stake,
+                "equal_stake_return": equal_return,
+                "equal_stake_profit": equal_profit,
+                "equal_stake_roi": (
+                    round(equal_profit / equal_stake * 100, 1)
+                    if equal_profit is not None and equal_stake else None
+                ),
             })
         return rows
 

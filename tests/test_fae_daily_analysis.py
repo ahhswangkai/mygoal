@@ -353,6 +353,171 @@ class DailyAnalysisTests(unittest.TestCase):
         self.assertLessEqual(candidate["rating"], 3.5)
         self.assertIn("仅列观察", candidate["reason"])
 
+    def test_draw_radar_hard_veto_downgrades_negative_value_core(self):
+        candidate = FAEDailyAIAnalyzer._apply_draw_radar_candidate_guard({
+            "match_id": "201",
+            "selection": "平局",
+            "tier": "core",
+            "rating": 4.5,
+            "odds": 3.4,
+            "odds_value": -0.1,
+            "draw_odds_band_signal": {},
+            "reason": "达到独立核心门槛。",
+        })
+
+        self.assertEqual(candidate["tier"], "watch")
+        self.assertFalse(candidate["formal_eligible"])
+        self.assertTrue(any(
+            "赔率价值为负" in reason
+            for reason in candidate["official_veto_reasons"]
+        ))
+
+    def test_draw_radar_hard_veto_respects_block_official_signal(self):
+        candidate = FAEDailyAIAnalyzer._apply_draw_radar_candidate_guard({
+            "match_id": "202",
+            "selection": "平局",
+            "tier": "core",
+            "rating": 4.5,
+            "odds": 3.2,
+            "odds_value": 8.0,
+            "draw_odds_band_signal": {"block_official": True},
+            "reason": "达到独立核心门槛。",
+        })
+
+        self.assertEqual(candidate["tier"], "watch")
+        self.assertTrue(any(
+            "区间规则明确禁止" in reason
+            for reason in candidate["official_veto_reasons"]
+        ))
+
+    def test_handicap_draw_350_to_399_is_weekly_risk_watch_only(self):
+        candidate = FAEDailyAIAnalyzer._apply_draw_radar_candidate_guard({
+            "match_id": "203",
+            "selection": "让平",
+            "tier": "core",
+            "rating": 5.0,
+            "odds": 3.55,
+            "odds_value": 12.0,
+            "draw_odds_band_signal": {},
+            "reason": "达到独立核心门槛。",
+        })
+
+        self.assertEqual(candidate["tier"], "watch")
+        self.assertLessEqual(candidate["rating"], 3.5)
+        self.assertTrue(any(
+            "3.50–3.99" in reason
+            for reason in candidate["official_veto_reasons"]
+        ))
+
+    def test_observation_radar_cannot_override_existing_formal_pick(self):
+        candidate = FAEDailyAIAnalyzer._apply_draw_radar_candidate_guard({
+            "match_id": "204",
+            "selection": "让平",
+            "tier": "watch",
+            "rating": 3.5,
+            "score": 88,
+            "probability": 30,
+            "odds": 3.4,
+            "odds_value": 10.0,
+            "effective_sample": 100,
+            "risk_pattern_ids": [],
+            "draw_odds_band_signal": {
+                "kind": "backtested_league_one_goal_value",
+                "official_score_min": 84,
+            },
+            "reason": "仅列观察。",
+        })
+        row = {
+            "match_id": "204",
+            "analysis": {
+                "primary_play": "让平",
+                "decision": "可考虑",
+                "no_bet": False,
+                "rating": 4.5,
+                "draw_radar": {"handicap_draw": candidate},
+                "market_confidence": {"score": 80},
+            },
+            "input_snapshot": {},
+        }
+
+        result = (
+            FAEDailyAIAnalyzer.apply_draw_radar_recommendation_overrides(
+                [row]
+            )[0]["analysis"]
+        )
+
+        self.assertTrue(result["no_bet"])
+        self.assertEqual(result["decision"], "观察")
+        self.assertEqual(result["formal_veto"]["selection"], "让平")
+
+    def test_draw_radar_summary_only_keeps_top_three_per_market(self):
+        matches = []
+        for index in range(5):
+            matches.append({
+                "analysis": {
+                    "draw_radar": {
+                        "ordinary_draw": {
+                            "match_id": str(index),
+                            "tier": "watch",
+                            "score": 60 + index,
+                            "probability": 25,
+                        },
+                        "handicap_draw": {
+                            "match_id": str(index),
+                            "tier": "watch",
+                            "score": 70 + index,
+                            "probability": 25,
+                        },
+                    },
+                },
+            })
+
+        radar = FAEDailyAIAnalyzer.attach_draw_radar_summary(
+            {}, matches
+        )["draw_radar"]
+
+        self.assertEqual(
+            [row["match_id"] for row in radar["ordinary_draw"]],
+            ["4", "3", "2"],
+        )
+        self.assertEqual(
+            [row["match_id"] for row in radar["handicap_draw"]],
+            ["4", "3", "2"],
+        )
+
+    def test_summary_promotion_removes_hard_vetoed_formal_pool_row(self):
+        summary = {
+            "pools": {
+                "draw": [],
+                "handicap_draw": [{
+                    "match_id": "205",
+                    "selection": "让平",
+                    "rating": 4.5,
+                }],
+                "avoid": [],
+            },
+        }
+        matches = [{
+            "match_id": "205",
+            "analysis": {
+                "primary_play": "让平",
+                "no_bet": True,
+                "draw_radar": {
+                    "handicap_draw": {
+                        "match_id": "205",
+                        "selection": "让平",
+                        "tier": "watch",
+                    },
+                },
+            },
+        }]
+
+        result = FAEDailyAIAnalyzer.promote_draw_radar_recommendations(
+            summary, matches
+        )
+
+        self.assertEqual(result["pools"]["handicap_draw"], [])
+
     def test_only_positive_value_core_radar_rows_can_form_combinations(self):
         draw = self.radar_match(
             "202",
@@ -581,6 +746,28 @@ class DailyAnalysisTests(unittest.TestCase):
         self.assertEqual(analysis["primary_play"], "让胜")
         self.assertEqual(analysis["secondary_play"], "让平")
         self.assertTrue(analysis["consistency_guard"]["triggered"])
+
+    def test_exact_margin_pick_yields_to_probability_and_shortest_price(self):
+        source = build_daily_match_input(match("201"))
+        source["fae_core"]["probabilities"] = {
+            "hhad": {"win": 42, "draw": 35, "lose": 23}
+        }
+        source["sporttery_handicap"]["current"] = [1.74, 3.70, 3.51]
+
+        result = FAEDailyAIAnalyzer._normalize_match(source, {
+            "primary_play": "让平",
+            "secondary_play": "让负",
+            "rating": 3.5,
+        })
+        analysis = result["analysis"]
+
+        self.assertEqual(analysis["model_primary_play"], "让平")
+        self.assertEqual(analysis["primary_play"], "让胜")
+        self.assertEqual(analysis["secondary_play"], "让平")
+        self.assertEqual(
+            analysis["consistency_guard"]["guard_type"],
+            "exact_margin_market_alignment",
+        )
 
     def test_low_total_does_not_keep_draw_ahead_of_strong_home_direction(self):
         source = {
