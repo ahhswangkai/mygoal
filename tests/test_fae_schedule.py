@@ -33,6 +33,13 @@ def test_parse_short_match_time_rolls_over_new_year():
     assert parsed == dt("2027-01-01T00:30:00")
 
 
+def test_parse_full_match_time_accepts_trailing_crawler_marker():
+    parsed = parse_match_datetime(
+        match("2026-08-22", "2026-08-22T18:30:00Z")
+    )
+    assert parsed == dt("2026-08-22T18:30:00")
+
+
 def test_weekday_analysis_runs_at_exact_cutoff():
     item = match("2026-08-10", "08-10 22:30")  # Monday
     assert analysis_cutoff(item).hour == 22

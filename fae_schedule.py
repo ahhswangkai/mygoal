@@ -41,7 +41,12 @@ def parse_match_datetime(match: Dict[str, Any]) -> Optional[datetime]:
         return None
     zone = app_timezone()
     normalized = raw.replace("/", "-").replace("T", " ")
-    normalized = normalized.removesuffix("Z").strip()
+    # Production currently runs Python 3.8, where str.removesuffix is not
+    # available.  Match times are already stored as China-local wall time, so
+    # a trailing crawler marker is removed without converting the time zone.
+    if normalized.endswith("Z"):
+        normalized = normalized[:-1]
+    normalized = normalized.strip()
     for fmt in (
         "%Y-%m-%d %H:%M:%S",
         "%Y-%m-%d %H:%M",

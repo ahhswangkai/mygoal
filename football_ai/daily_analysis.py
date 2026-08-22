@@ -15,7 +15,7 @@ from .provider import ArkNarrativeClient, FAEError, FAEOutputError
 from .version import ENGINE_VERSION
 
 
-DAILY_PROMPT_VERSION = "five-market-daily-v23-draw-official-hard-gate"
+DAILY_PROMPT_VERSION = "five-market-daily-v24-dynamic-handicap-hedge"
 
 OFFICIAL_PLAY_SELECTIONS = {"平局", "让平"}
 OFFICIAL_MIN_BET_SCORE = 70.0
@@ -35,6 +35,8 @@ RADAR_OFFICIAL_MIN_SAMPLE = {"平局": 60.0, "让平": 60.0}
 RADAR_OFFICIAL_MIN_MARKET_CONFIDENCE = 55.0
 RADAR_OFFICIAL_MAX_RISK_IDS = {"平局": 1, "让平": 1}
 HANDICAP_DRAW_WEEKLY_RISK_ODDS = (3.50, 4.00)
+HANDICAP_SECONDARY_MODEL_WEIGHT = 0.65
+HANDICAP_SECONDARY_MARKET_WEIGHT = 0.35
 ASIAN_HARD_DOWNGRADE_RISKS = {
     "deepen_high_water",
     "upper_water_rise",
@@ -2378,6 +2380,7 @@ class FAEDailyAIAnalyzer:
             "小球只表示进球总数受限，不等于平局：若强方胜赔至少下降0.10、对手胜赔至少上升0.10，且亚盘真实升深或强方处于明确低水，必须把强方小胜放主选、平局放防选。",
             "让平是精确赢球差玩法，不能因用户偏好自动排第一：竞彩让1球时，若热门胜赔不高于1.50、亚盘至少真实升深0.25至一球且大小球不低于2.75，应优先比较穿盘；强方正常低水时主选让胜/让负、让平降为防选。胜赔不高于1.30且亚盘已到一球/球半时，即使上盘水位略高也不得机械主推让平。",
             "主选和防选必须按当日可核验市场证据强弱排序，不得因为用户主玩平/让平就把精确结果放在更强的胜负或穿盘方向之前。",
+            "竞彩让球防选不得默认填写让平：确定主选后，必须在剩余两个让球结果中重新比较模型概率与去水市场概率，选择覆盖概率更高的一项；让平只有真实排第二时才保留。",
             "upset_warning_model是爆冷预警扫描器：盘口降级、热门胜赔升、平赔下降、热门穿盘赔率偏高、强队近期穿盘代理偏弱、弱队近期有球会累加风险分；80分以上只能降低热门方向并提示防冷，禁止单独反买。",
             "historical_goal_margin_model按欧赔强弱、亚盘深度、大小球、竞彩让球数、联赛和时间衰减寻找相似完赛场次；ordinary_draw统计0球分差，handicap_draw统计当前让球数对应的精确净胜球差，两者严禁混用。",
             "只有historical_goal_margin_model中eligible_for_adjustment=true的结果才可参与校准；必须同时比较effective_sample、confidence、market_probability、blended_probability、odds和value_edge，样本不足时只允许写观察。",
@@ -2467,6 +2470,7 @@ class FAEDailyAIAnalyzer:
             "小球只限制比分上限，不自动支持平局：强方胜赔下降、对手胜赔上升，并得到亚盘真实升深或明确低水支持时，优先强方小胜，平局只作防选。",
             "让平必须和穿盘方向比较：竞彩让1球、热门胜赔不高于1.50、亚盘真实升深至少0.25至一球且大小球不低于2.75时，正常低水应把让胜/让负放主选、让平放防选；不高于1.30的超强热门升至一球/球半后，不得机械把让平排第一。",
             "主次选按本场市场证据排序，不得因用户偏好平/让平而倒置。",
+            "竞彩让球主选确定后，防选必须重新比较剩余两项的模型概率与去水市场概率，不得机械保留让平；让平只有真实排第二时才可作为防选。",
             "正式推荐只允许平局或让平；主胜、客胜、让胜、让负、大球、小球只保留方向观察。正式推荐必须投注分>=70、价值指数>=60、盘口可信度>=70、星级>=4。",
             "亚盘不配合时胜负方向必须硬降级为观察，不能只写风险提示后继续推荐。",
             "upset_warning_model达到重点防冷时，热门胜负方向必须降级为观察或不下注；防选优先写平局、受让保护项或让平，但不得把爆冷预警写成确定赛果。",
@@ -2631,7 +2635,7 @@ class FAEDailyAIAnalyzer:
                 non_cover_guard.get("effective_selection")
                 or effective_primary_play
             )
-        secondary_play = cls._secondary_play(
+        secondary_decision = cls._secondary_play_decision(
             source,
             effective_primary_play,
             (
@@ -2647,6 +2651,7 @@ class FAEDailyAIAnalyzer:
                 else generated.get("secondary_play")
             ),
         )
+        secondary_play = secondary_decision["selection"]
         verdict = cls._text(
             generated.get("verdict"),
             (
@@ -2689,6 +2694,7 @@ class FAEDailyAIAnalyzer:
                 )[:30],
                 "primary_play": effective_primary_play,
                 "secondary_play": secondary_play,
+                "secondary_selection_guard": secondary_decision,
                 "handicap_play": cls._handicap_play(
                     source, effective_primary_play
                 ),
@@ -2726,6 +2732,25 @@ class FAEDailyAIAnalyzer:
         primary_play: str,
         generated_secondary: Any = None,
     ) -> str:
+        return str(cls._secondary_play_decision(
+            source, primary_play, generated_secondary
+        ).get("selection") or "观望")
+
+    @classmethod
+    def _secondary_play_decision(
+        cls,
+        source: Dict[str, Any],
+        primary_play: str,
+        generated_secondary: Any = None,
+    ) -> Dict[str, Any]:
+        """Choose a same-market hedge and expose its auditable ranking.
+
+        Handicap coverage previously kept the model's original ``让平`` after
+        a guard changed the primary direction.  That could omit a more likely
+        directional outcome.  Handicap hedges now re-rank both remaining
+        outcomes with calibrated model probability and de-vig market
+        probability; expected return is used only as a tie-breaker.
+        """
         allowed = {
             "平局", "让平", "让胜", "让负", "主胜", "客胜",
             "大球", "小球", "观望",
@@ -2740,11 +2765,156 @@ class FAEDailyAIAnalyzer:
             else allowed
         )
         candidate = str(generated_secondary or "").strip()
+        if primary_play in {"让胜", "让平", "让负"}:
+            labels = ("让胜", "让平", "让负")
+            probability_keys = {
+                "让胜": "win", "让平": "draw", "让负": "lose",
+            }
+            hhad = (
+                (((source.get("fae_core") or {}).get("probabilities") or {})
+                 .get("hhad") or {})
+            )
+            odds_values = (
+                (source.get("sporttery_handicap") or {}).get("current")
+                or (source.get("sporttery_handicap") or {}).get("initial")
+                or []
+            )
+            odds = {
+                label: (
+                    _number(odds_values[index])
+                    if len(odds_values) > index else None
+                )
+                for index, label in enumerate(labels)
+            }
+            inverse = {
+                label: 1 / value
+                for label, value in odds.items()
+                if value is not None and value > 1
+            }
+            inverse_total = sum(inverse.values())
+            rows = []
+            for label in labels:
+                profile = cls._play_value_profile(source, label)
+                model_probability = _number(profile.get("probability"))
+                if model_probability is None:
+                    model_probability = _number(
+                        hhad.get(probability_keys[label])
+                    )
+                market_probability = _number(
+                    profile.get("market_implied_probability")
+                )
+                if market_probability is None and inverse_total > 0:
+                    market_probability = (
+                        inverse.get(label, 0) / inverse_total * 100
+                    )
+                components = []
+                if model_probability is not None:
+                    components.append((
+                        model_probability, HANDICAP_SECONDARY_MODEL_WEIGHT
+                    ))
+                if market_probability is not None:
+                    components.append((
+                        market_probability, HANDICAP_SECONDARY_MARKET_WEIGHT
+                    ))
+                component_weight = sum(value[1] for value in components)
+                coverage_score = (
+                    sum(value * weight for value, weight in components)
+                    / component_weight
+                    if component_weight else None
+                )
+                current_odds = _number(profile.get("odds"))
+                if current_odds is None:
+                    current_odds = odds.get(label)
+                expected_return = (
+                    model_probability / 100 * current_odds
+                    if (
+                        model_probability is not None
+                        and current_odds is not None
+                    ) else None
+                )
+                rows.append({
+                    "selection": label,
+                    "model_probability": (
+                        round(model_probability, 2)
+                        if model_probability is not None else None
+                    ),
+                    "market_probability": (
+                        round(market_probability, 2)
+                        if market_probability is not None else None
+                    ),
+                    "coverage_score": (
+                        round(coverage_score, 2)
+                        if coverage_score is not None else None
+                    ),
+                    "odds": (
+                        round(current_odds, 3)
+                        if current_odds is not None else None
+                    ),
+                    "expected_return": (
+                        round(expected_return, 3)
+                        if expected_return is not None else None
+                    ),
+                })
+            alternatives = [
+                row for row in rows
+                if row["selection"] != primary_play
+            ]
+            ranked = [
+                row for row in alternatives
+                if row.get("coverage_score") is not None
+            ]
+            selected = (
+                max(
+                    ranked,
+                    key=lambda row: (
+                        float(row.get("coverage_score") or 0),
+                        float(row.get("expected_return") or 0),
+                        float(row.get("model_probability") or 0),
+                        float(row.get("market_probability") or 0),
+                    ),
+                )["selection"]
+                if ranked
+                else candidate
+                if candidate in same_market
+                and candidate not in {primary_play, "观望"}
+                else "观望"
+            )
+            selected_row = next(
+                (row for row in rows if row["selection"] == selected), {}
+            )
+            changed = bool(
+                candidate in same_market
+                and candidate not in {primary_play, "观望"}
+                and candidate != selected
+            )
+            reason = (
+                f"让球双选动态次选：主选{primary_play}后，"
+                f"{selected}覆盖分{selected_row.get('coverage_score')}最高"
+            )
+            if changed:
+                reason += f"，替换原防选{candidate}"
+            return {
+                "selection": selected,
+                "strategy": "hhad-model-market-coverage-v1",
+                "generated_secondary": candidate or None,
+                "changed": changed,
+                "model_weight": HANDICAP_SECONDARY_MODEL_WEIGHT,
+                "market_weight": HANDICAP_SECONDARY_MARKET_WEIGHT,
+                "candidates": rows,
+                "reason": reason,
+            }
         if (
             candidate in same_market
             and candidate not in {primary_play, "观望"}
         ):
-            return candidate
+            return {
+                "selection": candidate,
+                "strategy": "same-market-model-secondary",
+                "generated_secondary": candidate,
+                "changed": False,
+                "candidates": [],
+                "reason": "保留大模型同市场防选",
+            }
         probabilities = (
             (source.get("fae_core") or {}).get("probabilities") or {}
         )
@@ -2760,7 +2930,20 @@ class FAEDailyAIAnalyzer:
                 opposite = "客胜" if primary_play == "主胜" else "主胜"
                 opposite_probability = dict(groups).get(opposite, 0)
                 if draw_probability >= opposite_probability - 3:
-                    return "平局"
+                    return {
+                        "selection": "平局",
+                        "strategy": "ordinary-draw-defense",
+                        "generated_secondary": candidate or None,
+                        "changed": bool(candidate and candidate != "平局"),
+                        "candidates": [
+                            {
+                                "selection": label,
+                                "model_probability": probability,
+                            }
+                            for label, probability in groups
+                        ],
+                        "reason": "胜负主选优先使用平局作为邻近防选",
+                    }
         elif primary_play in {"让胜", "让平", "让负"}:
             hhad = probabilities.get("hhad") or {}
             groups = [
@@ -2775,7 +2958,21 @@ class FAEDailyAIAnalyzer:
                 ("小球", _number(totals.get("under")) or 0),
             ]
         alternatives = [item for item in groups if item[0] != primary_play]
-        return max(alternatives, key=lambda item: item[1])[0] if alternatives else "观望"
+        selected = (
+            max(alternatives, key=lambda item: item[1])[0]
+            if alternatives else "观望"
+        )
+        return {
+            "selection": selected,
+            "strategy": "same-market-probability-fallback",
+            "generated_secondary": candidate or None,
+            "changed": bool(candidate and candidate != selected),
+            "candidates": [
+                {"selection": label, "model_probability": probability}
+                for label, probability in groups
+            ],
+            "reason": "同市场按模型概率选择防选",
+        }
 
     @classmethod
     def _compatible_handicap_selections(
@@ -5540,11 +5737,13 @@ class FAEDailyAIAnalyzer:
             })
             if selection == "让平":
                 analysis["handicap_play"] = "让平"
-            analysis["secondary_play"] = cls._secondary_play(
+            secondary_decision = cls._secondary_play_decision(
                 row.get("input_snapshot") or {},
                 selection,
                 analysis.get("secondary_play"),
             )
+            analysis["secondary_play"] = secondary_decision["selection"]
+            analysis["secondary_selection_guard"] = secondary_decision
             analysis["score_candidates"] = cls._compatible_scores(
                 analysis, row.get("input_snapshot") or {}
             )
@@ -6487,17 +6686,19 @@ class FAEDailyAIAnalyzer:
                 cap = min(cap, 2.5)
                 adjustments.append("未达到投注门槛，正式结论为不下注")
             rating = cls._rating(min(value_rating, cap))
+            secondary_decision = cls._secondary_play_decision(
+                source,
+                effective_primary_play,
+                analysis.get("secondary_play"),
+            )
             analysis.update({
                 "model_rating": model_rating,
                 "value_rating": value_rating,
                 "rating": rating,
                 "star_text": cls._stars(rating),
                 "rating_adjustments": list(dict.fromkeys(adjustments)),
-                "secondary_play": cls._secondary_play(
-                    source,
-                    effective_primary_play,
-                    analysis.get("secondary_play"),
-                ),
+                "secondary_play": secondary_decision["selection"],
+                "secondary_selection_guard": secondary_decision,
                 "handicap_play": cls._handicap_play(
                     source, effective_primary_play
                 ),

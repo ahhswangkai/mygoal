@@ -744,8 +744,76 @@ class DailyAnalysisTests(unittest.TestCase):
 
         self.assertEqual(analysis["model_primary_play"], "让负")
         self.assertEqual(analysis["primary_play"], "让胜")
-        self.assertEqual(analysis["secondary_play"], "让平")
+        self.assertEqual(analysis["secondary_play"], "让负")
         self.assertTrue(analysis["consistency_guard"]["triggered"])
+
+    def test_handicap_secondary_replaces_letdraw_with_market_backed_cover(self):
+        source = {
+            "sporttery_handicap": {
+                "value": -1,
+                "current": [2.50, 3.32, 2.34],
+            },
+            "fae_core": {
+                "probabilities": {
+                    "hhad": {"win": 31, "draw": 31, "lose": 38},
+                },
+            },
+        }
+
+        decision = FAEDailyAIAnalyzer._secondary_play_decision(
+            source, "让负", "让平"
+        )
+
+        self.assertEqual(decision["selection"], "让胜")
+        self.assertTrue(decision["changed"])
+        self.assertEqual(
+            decision["strategy"], "hhad-model-market-coverage-v1"
+        )
+        self.assertIn("替换原防选让平", decision["reason"])
+
+    def test_handicap_secondary_uses_direction_over_lower_letdraw_probability(self):
+        source = {
+            "sporttery_handicap": {
+                "value": -1,
+                "current": [2.95, 3.60, 1.95],
+            },
+            "fae_core": {
+                "probabilities": {
+                    "hhad": {"win": 29, "draw": 27, "lose": 44},
+                },
+            },
+        }
+
+        decision = FAEDailyAIAnalyzer._secondary_play_decision(
+            source, "让负", "让平"
+        )
+
+        self.assertEqual(decision["selection"], "让胜")
+        scores = {
+            row["selection"]: row["coverage_score"]
+            for row in decision["candidates"]
+        }
+        self.assertGreater(scores["让胜"], scores["让平"])
+
+    def test_handicap_secondary_keeps_letdraw_when_it_really_ranks_second(self):
+        source = {
+            "sporttery_handicap": {
+                "value": -1,
+                "current": [1.74, 3.70, 3.51],
+            },
+            "fae_core": {
+                "probabilities": {
+                    "hhad": {"win": 42, "draw": 35, "lose": 23},
+                },
+            },
+        }
+
+        decision = FAEDailyAIAnalyzer._secondary_play_decision(
+            source, "让胜", "让平"
+        )
+
+        self.assertEqual(decision["selection"], "让平")
+        self.assertFalse(decision["changed"])
 
     def test_exact_margin_pick_yields_to_probability_and_shortest_price(self):
         source = build_daily_match_input(match("201"))
@@ -764,6 +832,36 @@ class DailyAnalysisTests(unittest.TestCase):
         self.assertEqual(analysis["model_primary_play"], "让平")
         self.assertEqual(analysis["primary_play"], "让胜")
         self.assertEqual(analysis["secondary_play"], "让平")
+        self.assertEqual(
+            analysis["secondary_selection_guard"]["strategy"],
+            "hhad-model-market-coverage-v1",
+        )
+        self.assertEqual(
+            analysis["consistency_guard"]["guard_type"],
+            "exact_margin_market_alignment",
+        )
+
+    def test_exact_margin_guard_re_ranks_both_remaining_handicap_outcomes(self):
+        source = build_daily_match_input(match("202"))
+        source["fae_core"]["probabilities"] = {
+            "hhad": {"win": 31, "draw": 31, "lose": 38}
+        }
+        source["sporttery_handicap"]["current"] = [2.50, 3.32, 2.34]
+
+        result = FAEDailyAIAnalyzer._normalize_match(source, {
+            "primary_play": "让平",
+            "secondary_play": "让胜",
+            "rating": 3.5,
+        })
+        analysis = result["analysis"]
+
+        self.assertEqual(analysis["model_primary_play"], "让平")
+        self.assertEqual(analysis["primary_play"], "让负")
+        self.assertEqual(analysis["secondary_play"], "让胜")
+        self.assertTrue(analysis["consistency_guard"]["triggered"])
+        self.assertEqual(
+            analysis["secondary_selection_guard"]["selection"], "让胜"
+        )
         self.assertEqual(
             analysis["consistency_guard"]["guard_type"],
             "exact_margin_market_alignment",
