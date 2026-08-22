@@ -30,6 +30,7 @@ from football_ai import (
     FAEReviewEngine,
     FootballAIEngine,
     ArkNarrativeClient,
+    DAILY_AI_MAX_BATCH_SIZE,
     ENGINE_VERSION,
     SKILL_DEFINITIONS,
     build_daily_match_input,
@@ -1251,7 +1252,14 @@ def _run_fae_daily_ai(
         cached['cache_hit'] = True
         return cached
     batch_size = max(
-        1, min(30, int(os.getenv('FAE_DAILY_AI_BATCH_SIZE', '1')))
+        1,
+        min(
+            DAILY_AI_MAX_BATCH_SIZE,
+            int(os.getenv(
+                'FAE_DAILY_AI_BATCH_SIZE',
+                str(DAILY_AI_MAX_BATCH_SIZE),
+            )),
+        ),
     )
     with fae_daily_ai_lock:
         if not force:
@@ -1820,20 +1828,27 @@ def run_fae_daily_ai():
             _push_wecom_daily_ai(data)
             if payload.get('push_wecom') is not False else None
         )
+        if data.get('cache_hit'):
+            message = '赔率数据未变化，已返回上次全日研判'
+        elif data.get('partial_success'):
+            message = (
+                f"分批研判完成：大模型成功 "
+                f"{data.get('ai_analyzed_match_count', 0)} 场，"
+                f"暂用FAE核心 {data.get('fallback_match_count', 0)} 场"
+            )
+        else:
+            message = (
+                f"已重新研判 "
+                f"{data.get('analyzed_match_count', data.get('match_count', 0))} 场，"
+                f"保留 {data.get('retained_match_count', 0)} 场已开赛的赛前研判"
+            )
         return jsonify({
             'success': True,
             'data': data,
             'cache_hit': bool(data.get('cache_hit')),
             'wecom_delivery': wecom_delivery,
             'draw_selection_policy': data.get('draw_selection_policy'),
-            'message': (
-                '赔率数据未变化，已返回上次全日研判'
-                if data.get('cache_hit')
-                else (
-                    f"已重新研判 {data.get('analyzed_match_count', data.get('match_count', 0))} 场，"
-                    f"保留 {data.get('retained_match_count', 0)} 场已开赛的赛前研判"
-                )
-            ),
+            'message': message,
         })
     except FAEError as exc:
         app.logger.warning('FAE daily AI failed for %s: %s', date_str, exc)

@@ -15,7 +15,7 @@ from .provider import ArkNarrativeClient, FAEError, FAEOutputError
 from .version import ENGINE_VERSION
 
 
-DAILY_PROMPT_VERSION = "five-market-daily-v24-dynamic-handicap-hedge"
+DAILY_PROMPT_VERSION = "five-market-daily-v25-batched-partial-recovery"
 
 OFFICIAL_PLAY_SELECTIONS = {"平局", "让平"}
 OFFICIAL_MIN_BET_SCORE = 70.0
@@ -37,6 +37,7 @@ RADAR_OFFICIAL_MAX_RISK_IDS = {"平局": 1, "让平": 1}
 HANDICAP_DRAW_WEEKLY_RISK_ODDS = (3.50, 4.00)
 HANDICAP_SECONDARY_MODEL_WEIGHT = 0.65
 HANDICAP_SECONDARY_MARKET_WEIGHT = 0.35
+DAILY_AI_MAX_BATCH_SIZE = 10
 ASIAN_HARD_DOWNGRADE_RISKS = {
     "deepen_high_water",
     "upper_water_rise",
@@ -1889,7 +1890,7 @@ class FAEDailyAIAnalyzer:
         self,
         owner_date: str,
         match_inputs: Iterable[Dict[str, Any]],
-        batch_size: int = 20,
+        batch_size: int = DAILY_AI_MAX_BATCH_SIZE,
         batch_cache_get: Optional[Callable[[str], Optional[Dict[str, Any]]]] = None,
         batch_cache_save: Optional[Callable[[Dict[str, Any]], Any]] = None,
         review_memory: Optional[Dict[str, Any]] = None,
@@ -1904,12 +1905,23 @@ class FAEDailyAIAnalyzer:
         if not self.configured:
             raise FAEOutputError("火山方舟尚未配置，无法运行全日分析")
         memory = dict(review_memory or {})
-        size = max(1, min(30, int(batch_size or 20)))
+        size = max(
+            1,
+            min(
+                DAILY_AI_MAX_BATCH_SIZE,
+                int(batch_size or DAILY_AI_MAX_BATCH_SIZE),
+            ),
+        )
         outputs = []
         provider_batches = []
+        successful_match_ids = set()
+        failed_match_ids = set()
         for index in range(0, len(rows), size):
             batch = rows[index:index + size]
             batch_number = index // size + 1
+            batch_match_ids = [
+                str(item.get("match_id")) for item in batch
+            ]
             prompt = (
                 self._build_single_prompt(
                     owner_date,
@@ -1931,12 +1943,43 @@ class FAEDailyAIAnalyzer:
                 outputs.append(cached["output"])
                 provider_batches.append({
                     **(cached.get("provider_meta") or {}),
+                    "status": "completed",
                     "cache_hit": True,
                     "batch_hash": batch_hash,
+                    "batch_number": batch_number,
+                    "match_count": len(batch),
+                    "match_ids": batch_match_ids,
+                })
+                successful_match_ids.update(batch_match_ids)
+                continue
+            try:
+                text, metadata = self.client.generate(prompt)
+                parsed = self._extract_json(text)
+            except FAEError as exc:
+                # A transient provider timeout must not discard completed
+                # checkpoints from other groups.  The failed group falls back
+                # to deterministic FAE output and is retried on a forced run.
+                message = str(exc)[:300]
+                outputs.append({
+                    "daily_summary": {
+                        "warnings": [
+                            f"第{batch_number}批大模型研判失败，"
+                            "本批暂用FAE核心结论，可稍后重新研判。"
+                        ],
+                    },
+                    "matches": [],
+                })
+                failed_match_ids.update(batch_match_ids)
+                provider_batches.append({
+                    "status": "failed",
+                    "cache_hit": False,
+                    "batch_hash": batch_hash,
+                    "batch_number": batch_number,
+                    "match_count": len(batch),
+                    "match_ids": batch_match_ids,
+                    "error": message,
                 })
                 continue
-            text, metadata = self.client.generate(prompt)
-            parsed = self._extract_json(text)
             if len(batch) == 1:
                 generated_match = (
                     parsed.get("match")
@@ -1951,19 +1994,22 @@ class FAEDailyAIAnalyzer:
             outputs.append(parsed)
             batch_metadata = {
                 **metadata,
+                "status": "completed",
                 "cache_hit": False,
                 "batch_hash": batch_hash,
+                "batch_number": batch_number,
+                "match_count": len(batch),
+                "match_ids": batch_match_ids,
             }
             provider_batches.append(batch_metadata)
+            successful_match_ids.update(batch_match_ids)
             if batch_cache_save:
                 batch_cache_save({
                     "batch_hash": batch_hash,
                     "owner_date": str(owner_date)[:10],
                     "kind": "detail",
                     "batch_number": batch_number,
-                    "match_ids": [
-                        str(item.get("match_id")) for item in batch
-                    ],
+                    "match_ids": batch_match_ids,
                     "model": self.client.model,
                     "prompt_version": DAILY_PROMPT_VERSION,
                     "review_memory_hash": memory.get("memory_hash"),
@@ -1971,6 +2017,17 @@ class FAEDailyAIAnalyzer:
                     "provider_meta": metadata,
                     "generated_at": datetime.now(timezone.utc).isoformat(),
                 })
+
+        if not successful_match_ids:
+            errors = [
+                str(item.get("error") or "")
+                for item in provider_batches
+                if item.get("status") == "failed"
+            ]
+            detail = next((item for item in errors if item), "未知错误")
+            raise FAEOutputError(
+                f"全部{len(provider_batches)}批大模型研判失败: {detail}"
+            )
 
         normalized_matches = []
         summaries = []
@@ -2146,6 +2203,17 @@ class FAEDailyAIAnalyzer:
             "generated_at": generated_at,
             "match_count": len(stored_matches),
             "batch_count": len(outputs),
+            "completed_batch_count": sum(
+                1 for item in provider_batches
+                if item.get("status") == "completed"
+            ),
+            "failed_batch_count": sum(
+                1 for item in provider_batches
+                if item.get("status") == "failed"
+            ),
+            "ai_analyzed_match_count": len(successful_match_ids),
+            "fallback_match_count": len(failed_match_ids),
+            "partial_success": bool(failed_match_ids),
             "daily_summary": daily_summary,
             "review_memory": memory,
             "matches": stored_matches,

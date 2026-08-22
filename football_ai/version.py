@@ -2,7 +2,7 @@
 
 ENGINE_NAME = "Football AI Engine"
 ENGINE_CODE = "FAE"
-ENGINE_VERSION = "2.13.1"
+ENGINE_VERSION = "2.13.2"
 SCHEMA_VERSION = "2.5"
 
 DIMENSION_WEIGHTS = {
@@ -83,6 +83,7 @@ VERSION_MANIFEST = {
         "平/让平正式推荐硬门槛：观察层、负赔率价值和历史高风险赔率区间禁止后置晋级",
         "平局与让平雷达每日各展示前三，减少低质量候选噪声",
         "让球双选动态次选：按校准模型概率与去水市场概率重排防选，避免固定保留让平遗漏方向项",
+        "全日研判最多10场一批，单批失败不再丢弃其他批次的已完成结果",
     ],
     "learning_policy": {
         "minimum_samples": 10,

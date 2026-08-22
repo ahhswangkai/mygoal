@@ -3,6 +3,7 @@
 from .engine import FootballAIEngine
 from .ai_review import AI_REVIEW_PROMPT_VERSION, FAEAIReviewAnalyzer
 from .daily_analysis import (
+    DAILY_AI_MAX_BATCH_SIZE,
     DAILY_PROMPT_VERSION,
     FAEDailyAIAnalyzer,
     build_daily_match_input,
@@ -52,6 +53,7 @@ __all__ = [
     "FAEAIReviewAnalyzer",
     "FootballAIEngine",
     "DAILY_PROMPT_VERSION",
+    "DAILY_AI_MAX_BATCH_SIZE",
     "build_daily_match_input",
     "evaluate_historical_market_rules",
     "build_review_memory",

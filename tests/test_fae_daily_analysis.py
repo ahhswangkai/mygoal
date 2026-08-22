@@ -2,9 +2,11 @@ import json
 import unittest
 
 from football_ai.daily_analysis import (
+    DAILY_AI_MAX_BATCH_SIZE,
     FAEDailyAIAnalyzer,
     build_daily_match_input,
 )
+from football_ai.provider import FAEOutputError, FAEProviderError
 
 
 class FakeDailyArkClient:
@@ -64,6 +66,49 @@ class FakeDailyArkClient:
             "response_id": "daily-test",
             "usage": {"total_tokens": 500},
         }
+
+
+class PartialBatchArkClient:
+    configured = True
+    model = "ark-partial-test"
+
+    def __init__(self):
+        self.detail_batch_sizes = []
+
+    def generate(self, prompt):
+        if "全日总编" in prompt:
+            return json.dumps({
+                "daily_summary": {
+                    "core_conclusion": "已合并成功批次。",
+                    "warnings": [],
+                    "pools": {},
+                    "recommended_combinations": [],
+                },
+            }, ensure_ascii=False), {"response_id": "synthesis"}
+
+        marker = (
+            "# 当日比赛输入\n"
+            if "# 当日比赛输入\n" in prompt
+            else "# 比赛输入\n"
+        )
+        payload = json.loads(prompt.split(marker, 1)[1])
+        rows = payload if isinstance(payload, list) else [payload]
+        self.detail_batch_sizes.append(len(rows))
+        if len(self.detail_batch_sizes) == 2:
+            raise FAEProviderError("模拟第二批超时")
+        return json.dumps({
+            "daily_summary": {},
+            "matches": [
+                {
+                    "match_id": str(item["match_id"]),
+                    "direction": "主胜",
+                    "primary_play": "主胜",
+                    "secondary_play": "平局",
+                    "rating": 3,
+                }
+                for item in rows
+            ],
+        }, ensure_ascii=False), {"response_id": "detail-test"}
 
 
 def match(match_id, total_initial="2.5", total_current="2.5"):
@@ -664,6 +709,62 @@ class DailyAnalysisTests(unittest.TestCase):
         self.assertIn("禁止使用历史0%命中区间", client.prompt)
         self.assertIn("联赛历史画像", client.prompt)
         self.assertEqual(result["review_memory"]["memory_hash"], "memory-1")
+
+    def test_daily_analysis_caps_batches_at_ten_and_keeps_partial_success(self):
+        client = PartialBatchArkClient()
+        analyzer = FAEDailyAIAnalyzer(client)
+        rows = [
+            build_daily_match_input(match(str(index)))
+            for index in range(1, 22)
+        ]
+        checkpoints = []
+
+        result = analyzer.analyze(
+            "2026-07-18",
+            rows,
+            batch_size=100,
+            batch_cache_save=checkpoints.append,
+        )
+
+        self.assertEqual(DAILY_AI_MAX_BATCH_SIZE, 10)
+        self.assertEqual(client.detail_batch_sizes, [10, 10, 1])
+        self.assertEqual(result["batch_count"], 3)
+        self.assertEqual(result["completed_batch_count"], 2)
+        self.assertEqual(result["failed_batch_count"], 1)
+        self.assertEqual(result["ai_analyzed_match_count"], 11)
+        self.assertEqual(result["fallback_match_count"], 10)
+        self.assertTrue(result["partial_success"])
+        failed_rows = [
+            item for item in result["matches"]
+            if item["analysis_source"] == "fae-core-fallback"
+        ]
+        self.assertEqual(len(failed_rows), 10)
+        self.assertTrue(any(
+            "本批暂用FAE核心结论" in warning
+            for warning in result["daily_summary"]["warnings"]
+        ))
+        self.assertEqual(
+            len([item for item in checkpoints if item["kind"] == "detail"]),
+            2,
+        )
+
+    def test_daily_analysis_still_fails_when_every_provider_batch_fails(self):
+        class AlwaysFailingClient:
+            configured = True
+            model = "ark-failing-test"
+
+            @staticmethod
+            def generate(_prompt):
+                raise FAEProviderError("模拟方舟不可用")
+
+        analyzer = FAEDailyAIAnalyzer(AlwaysFailingClient())
+        rows = [
+            build_daily_match_input(match(str(index)))
+            for index in range(1, 12)
+        ]
+
+        with self.assertRaisesRegex(FAEOutputError, "全部2批大模型研判失败"):
+            analyzer.analyze("2026-07-18", rows, batch_size=10)
 
     def test_input_hash_is_order_independent(self):
         analyzer = FAEDailyAIAnalyzer(FakeDailyArkClient())
