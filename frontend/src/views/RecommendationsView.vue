@@ -1119,7 +1119,7 @@ const dailyPoolGroups = computed(() => {
     Object.entries(source).map(([key, items]) => [
       key,
       [...(items || [])].filter(item => (
-        !dailyMatch(item.match_id).retained_from_pregame
+        isVisibleDailyMatch(dailyMatch(item.match_id))
       ))
     ])
   )
@@ -1154,7 +1154,7 @@ const drawRadarGroups = computed(() => {
   ].map(group => ({
     ...group,
     items: group.items.filter(item => (
-      !dailyMatch(item.match_id).retained_from_pregame
+      isVisibleDailyMatch(dailyMatch(item.match_id))
     )).sort((left, right) => (
       Number(right.probability || 0) - Number(left.probability || 0)
     )).slice(0, 3)
@@ -1170,7 +1170,7 @@ const leagueModelGroups = computed(() => {
   ].map(group => ({
     ...group,
     items: group.items.filter(item => (
-      !dailyMatch(item.match_id).retained_from_pregame
+      isVisibleDailyMatch(dailyMatch(item.match_id))
     )).sort((left, right) => (
       Number(right.index || 0) - Number(left.index || 0)
     ))
@@ -1179,7 +1179,7 @@ const leagueModelGroups = computed(() => {
 const upsetWarningItems = computed(() => (
   faeDailyAi.value?.daily_summary?.upset_warning?.items || []
 ).filter(item => (
-  !dailyMatch(item.match_id).retained_from_pregame
+  isVisibleDailyMatch(dailyMatch(item.match_id))
 )).sort((left, right) => (
   Number(right.score || 0) - Number(left.score || 0)
 )))
@@ -1192,7 +1192,7 @@ const oddsBandGroups = computed(() => {
   ].map(group => ({
     ...group,
     items: group.items.filter(item => (
-      !dailyMatch(item.match_id).retained_from_pregame
+      isVisibleDailyMatch(dailyMatch(item.match_id))
     )).sort((left, right) => (
       Number(right.index || 0) - Number(left.index || 0)
     ))
@@ -1206,13 +1206,13 @@ const historicalCalibrationCount = computed(() => (
 ).filter(item => item.analysis?.historical_calibration?.applied).length)
 const visibleDailyMatches = computed(() => (
   faeDailyAi.value?.matches || []
-).filter(item => !item.retained_from_pregame))
+).filter(isVisibleDailyMatch))
 const visibleDailyCombinations = computed(() => (
   faeDailyAi.value?.daily_summary?.recommended_combinations || []
 ).filter(combo => (
   (combo.picks || []).length > 0
   && (combo.picks || []).every(pick => (
-    !dailyMatch(pick.match_id).retained_from_pregame
+    isVisibleDailyMatch(dailyMatch(pick.match_id))
   ))
 )))
 const reviewNoBetCount = computed(() => (
@@ -1392,6 +1392,12 @@ function starText(stars) {
 
 function dailyMatch(matchId) {
   return dailyMatchMap.value[String(matchId)] || {}
+}
+
+function isVisibleDailyMatch(item) {
+  const status = item?.current_status
+  if (status === null || status === undefined || status === '') return true
+  return Number(status) === 0
 }
 
 const DAILY_RESULT_PLAY_LABELS = new Set(['主胜', '平局', '客胜', '让胜', '让平', '让负'])
