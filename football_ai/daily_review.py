@@ -10,6 +10,9 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 SUPPORTED_SELECTIONS = (
     "主胜", "平局", "客胜", "让胜", "让平", "让负", "大球", "小球"
 )
+TWO_OPTION_SELECTIONS = {
+    "主胜", "平局", "客胜", "让胜", "让平", "让负"
+}
 
 
 def _number(value: Any) -> Optional[float]:
@@ -525,7 +528,10 @@ class FAEDailyAIReviewEngine:
             selections = []
             for value in group["selections"]:
                 selection = str(value or "")
-                if selection in SUPPORTED_SELECTIONS and selection not in selections:
+                if (
+                    selection in TWO_OPTION_SELECTIONS
+                    and selection not in selections
+                ):
                     selections.append(selection)
             if len(selections) < 2:
                 continue

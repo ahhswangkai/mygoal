@@ -32,13 +32,13 @@
       </section>
 
       <nav class="recommendation-tabs">
-        <button :class="{ active: activeSection === 'dailyAi' }" @click="activeSection = 'dailyAi'">
+        <button :class="{ active: activeSection === 'dailyAi' }" @click="selectSection('dailyAi')">
           AI研判
         </button>
-        <button :class="{ active: activeSection === 'review' }" @click="activeSection = 'review'">
+        <button :class="{ active: activeSection === 'review' }" @click="selectSection('review')">
           赛后复盘
         </button>
-        <button :class="{ active: activeSection === 'skills' }" @click="activeSection = 'skills'">
+        <button :class="{ active: activeSection === 'skills' }" @click="selectSection('skills')">
           Skill 迭代
         </button>
       </nav>
@@ -371,6 +371,7 @@
               v-for="item in visibleDailyMatches"
               :key="item.match_id"
               class="daily-match-card"
+              @toggle="toggleDailyMatch($event, item.match_id)"
             >
               <summary>
                 <span class="daily-match-info">
@@ -411,7 +412,7 @@
                   </span>
                 </span>
               </summary>
-              <div class="daily-match-body">
+              <div v-if="expandedDailyMatches.has(String(item.match_id))" class="daily-match-body">
                 <div
                   v-if="item.analysis?.consistency_guard?.triggered"
                   class="daily-guardrail-note"
@@ -507,7 +508,10 @@
       </template>
 
       <template v-else-if="activeSection === 'review'">
-        <section class="review-panel">
+        <div v-if="reviewLoading && !faeReview" class="recommendation-state">
+          正在加载赛后复盘…
+        </div>
+        <section v-else class="review-panel">
           <header class="panel-heading review-panel-heading">
             <div>
               <strong>AI 研判主复盘</strong>
@@ -868,7 +872,10 @@
       </template>
 
       <template v-else>
-        <section class="skill-center-panel">
+        <div v-if="skillsLoading && !skillsLoaded" class="recommendation-state">
+          正在加载 Skill 版本…
+        </div>
+        <section v-else class="skill-center-panel">
           <header class="panel-heading skill-center-heading">
             <div>
               <strong>FAE Skill 版本中心</strong>
@@ -1061,17 +1068,24 @@ const dailyAiCanManage = ref(false)
 const dailyAiBusy = ref(false)
 const dailyAiMessage = ref('')
 const dailyAiError = ref('')
+const expandedDailyMatches = ref(new Set())
 const faeReview = ref(null)
+const reviewLoading = ref(false)
+const reviewLoadedDate = ref('')
 const reviewAiBusy = ref(false)
 const reviewAiMessage = ref('')
 const reviewAiError = ref('')
 const faeStats = ref({})
 const faeSkills = ref({ active: [], candidates: [], deployments: [] })
+const skillsLoading = ref(false)
+const skillsLoaded = ref(false)
 const skillBusy = ref(false)
 const skillMessage = ref('')
 const skillError = ref('')
 const skillConfirmation = ref(null)
 let requestController = null
+let reviewRequestController = null
+let skillsRequestController = null
 
 const formatDateParam = date => {
   const year = date.getFullYear()
@@ -1243,33 +1257,20 @@ async function fetchData() {
   error.value = ''
   try {
     const date = encodeURIComponent(selectedDate.value)
-    const [reviewResponse, statsResponse, skillsResponse, dailyAiResponse] = await Promise.all([
-      fetch(`/api/fae/daily-ai/review?date=${date}`, { signal: controller.signal }),
-      fetch('/api/fae/daily-ai/review/stats', { signal: controller.signal }),
-      fetch('/api/fae/skills', { signal: controller.signal }),
-      fetch(`/api/fae/daily-ai?date=${date}`, {
-        signal: controller.signal,
-        credentials: 'same-origin'
-      })
-    ])
-    const [reviewPayload, statsPayload, skillsPayload, dailyAiPayload] = await Promise.all([
-      reviewResponse.json(),
-      statsResponse.json(),
-      skillsResponse.json(),
-      dailyAiResponse.json()
-    ])
-    faeReview.value = reviewResponse.ok && reviewPayload.success ? reviewPayload.data : null
-    faeStats.value = statsResponse.ok && statsPayload.success ? (statsPayload.data || {}) : {}
-    faeSkills.value = skillsResponse.ok && skillsPayload.success
-      ? (skillsPayload.data || { active: [], candidates: [], deployments: [] })
-      : { active: [], candidates: [], deployments: [] }
+    const dailyAiResponse = await fetch(`/api/fae/daily-ai?date=${date}&compact=1`, {
+      signal: controller.signal,
+      credentials: 'same-origin'
+    })
+    const dailyAiPayload = await dailyAiResponse.json()
     faeDailyAi.value = dailyAiResponse.ok && dailyAiPayload.success
       ? dailyAiPayload.data
       : null
     dailyAiConfigured.value = Boolean(
-      dailyAiPayload.configured || reviewPayload.ai_review_configured
+      dailyAiPayload.configured
     )
     dailyAiCanManage.value = Boolean(dailyAiPayload.can_manage)
+    if (activeSection.value === 'review') void loadReviewData(true)
+    if (activeSection.value === 'skills') void loadSkillsData(true)
   } catch (e) {
     if (e.name === 'AbortError') return
     error.value = e.message || '推荐加载失败，请稍后重试'
@@ -1281,16 +1282,97 @@ async function fetchData() {
   }
 }
 
+async function loadReviewData(force = false) {
+  const dateValue = selectedDate.value
+  if (!force && reviewLoadedDate.value === dateValue) return
+  reviewRequestController?.abort()
+  reviewRequestController = new AbortController()
+  const controller = reviewRequestController
+  reviewLoading.value = true
+  reviewAiError.value = ''
+  try {
+    const date = encodeURIComponent(dateValue)
+    const [reviewResponse, statsResponse] = await Promise.all([
+      fetch(`/api/fae/daily-ai/review?date=${date}`, { signal: controller.signal }),
+      fetch('/api/fae/daily-ai/review/stats', { signal: controller.signal })
+    ])
+    const [reviewPayload, statsPayload] = await Promise.all([
+      reviewResponse.json(),
+      statsResponse.json()
+    ])
+    if (selectedDate.value !== dateValue) return
+    faeReview.value = reviewResponse.ok && reviewPayload.success
+      ? reviewPayload.data
+      : null
+    faeStats.value = statsResponse.ok && statsPayload.success
+      ? (statsPayload.data || {})
+      : {}
+    reviewLoadedDate.value = dateValue
+    dailyAiConfigured.value = Boolean(
+      dailyAiConfigured.value || reviewPayload.ai_review_configured
+    )
+  } catch (e) {
+    if (e.name === 'AbortError') return
+    reviewAiError.value = e.message || '赛后复盘加载失败'
+  } finally {
+    if (reviewRequestController === controller) {
+      reviewLoading.value = false
+      reviewRequestController = null
+    }
+  }
+}
+
+async function loadSkillsData(force = false) {
+  if (!force && skillsLoaded.value) return
+  skillsRequestController?.abort()
+  skillsRequestController = new AbortController()
+  const controller = skillsRequestController
+  skillsLoading.value = true
+  skillError.value = ''
+  try {
+    const response = await fetch('/api/fae/skills', { signal: controller.signal })
+    const payload = await response.json()
+    faeSkills.value = response.ok && payload.success
+      ? (payload.data || { active: [], candidates: [], deployments: [] })
+      : { active: [], candidates: [], deployments: [] }
+    skillsLoaded.value = true
+  } catch (e) {
+    if (e.name === 'AbortError') return
+    skillError.value = e.message || 'Skill 版本加载失败'
+  } finally {
+    if (skillsRequestController === controller) {
+      skillsLoading.value = false
+      skillsRequestController = null
+    }
+  }
+}
+
+function selectSection(section) {
+  activeSection.value = section
+  if (section === 'review') void loadReviewData()
+  if (section === 'skills') void loadSkillsData()
+}
+
 function selectDate(date) {
   if (selectedDate.value === date) return
   selectedDate.value = date
   faeReview.value = null
+  reviewLoadedDate.value = ''
   faeDailyAi.value = null
+  expandedDailyMatches.value = new Set()
   dailyAiMessage.value = ''
   dailyAiError.value = ''
   reviewAiMessage.value = ''
   reviewAiError.value = ''
   fetchData()
+}
+
+function toggleDailyMatch(event, matchId) {
+  const next = new Set(expandedDailyMatches.value)
+  const key = String(matchId || '')
+  if (event.currentTarget?.open) next.add(key)
+  else next.delete(key)
+  expandedDailyMatches.value = next
 }
 
 function goToDetail(matchId) {
@@ -1507,6 +1589,7 @@ async function runDailyAi(force) {
       body: JSON.stringify({
         date: selectedDate.value,
         force,
+        compact: true,
         push_wecom: true
       })
     })
@@ -1519,6 +1602,8 @@ async function runDailyAi(force) {
       throw new Error(payload.message || '全日研判运行失败')
     }
     faeDailyAi.value = payload.data || null
+    faeReview.value = null
+    reviewLoadedDate.value = ''
     dailyAiMessage.value = payload.message || '全日研判已完成'
   } catch (e) {
     dailyAiError.value = e.message || '全日研判运行失败'
@@ -1550,6 +1635,7 @@ async function runAiReview(forceAi) {
       throw new Error(payload.message || 'AI 深度复盘运行失败')
     }
     faeReview.value = payload.data || null
+    reviewLoadedDate.value = selectedDate.value
     reviewAiMessage.value = payload.message || 'AI 深度复盘已完成'
   } catch (e) {
     reviewAiError.value = e.message || 'AI 深度复盘运行失败'
@@ -1796,7 +1882,11 @@ function formatSkillTime(value) {
 }
 
 onMounted(fetchData)
-onBeforeUnmount(() => requestController?.abort())
+onBeforeUnmount(() => {
+  requestController?.abort()
+  reviewRequestController?.abort()
+  skillsRequestController?.abort()
+})
 </script>
 
 <style scoped>

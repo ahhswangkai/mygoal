@@ -5,6 +5,7 @@ from football_ai.daily_analysis import (
     DAILY_AI_MAX_BATCH_SIZE,
     FAEDailyAIAnalyzer,
     build_daily_match_input,
+    compact_daily_ai_run,
 )
 from football_ai.provider import FAEOutputError, FAEProviderError
 
@@ -708,6 +709,7 @@ class DailyAnalysisTests(unittest.TestCase):
         self.assertIn("热门方向没有真实升深", client.prompt)
         self.assertIn("禁止使用历史0%命中区间", client.prompt)
         self.assertIn("联赛历史画像", client.prompt)
+        self.assertIn("大球、小球只能写入market_analysis.total", client.prompt)
         self.assertEqual(result["review_memory"]["memory_hash"], "memory-1")
 
     def test_daily_analysis_caps_batches_at_ten_and_keeps_partial_success(self):
@@ -1785,6 +1787,58 @@ class DailyAnalysisTests(unittest.TestCase):
 
         self.assertEqual(aligned["pools"]["avoid"], [])
         self.assertNotIn("2串1", aligned["core_conclusion"])
+
+    def test_compact_daily_run_keeps_list_fields_and_drops_prompt_inputs(self):
+        source = {
+            "run_id": "run-1",
+            "input_hash": "secret-large-hash",
+            "provider_meta": {"usage": {"prompt_tokens": 1000}},
+            "daily_summary": {"core_conclusion": "今日结论"},
+            "matches": [{
+                "match_id": "201",
+                "match_number": "周六201",
+                "home_team": "主队",
+                "away_team": "客队",
+                "analysis": {
+                    "primary_play": "让平",
+                    "secondary_play": "让负",
+                    "verdict": "模型结论",
+                    "historical_odds_rules": ["large-audit-only-field"],
+                },
+                "input_snapshot": {
+                    "euro": {"current": [1.5, 3.8, 5.5]},
+                    "fundamentals": {"large": "payload"},
+                    "historical_goal_margin_model": {"version": "v1"},
+                    "fae_core": {"recommendation": {"category_scores": [{
+                        "label": "让平",
+                        "odds": 3.5,
+                        "bet_score": 72,
+                        "no_bet": False,
+                        "no_bet_reasons": ["audit-only"],
+                    }] }},
+                },
+            }],
+        }
+
+        compact = compact_daily_ai_run(source)
+
+        self.assertTrue(compact["compact"])
+        self.assertNotIn("provider_meta", compact)
+        self.assertNotIn("input_hash", compact)
+        row = compact["matches"][0]
+        self.assertEqual(row["analysis"]["primary_play"], "让平")
+        self.assertNotIn("historical_odds_rules", row["analysis"])
+        self.assertNotIn("fundamentals", row["input_snapshot"])
+        self.assertEqual(
+            row["input_snapshot"]["fae_core"]["recommendation"]
+            ["category_scores"][0],
+            {
+                "label": "让平",
+                "odds": 3.5,
+                "bet_score": 72,
+                "no_bet": False,
+            },
+        )
 
 
 if __name__ == "__main__":

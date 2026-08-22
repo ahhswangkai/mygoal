@@ -7,6 +7,7 @@ from .daily_analysis import (
     DAILY_PROMPT_VERSION,
     FAEDailyAIAnalyzer,
     build_daily_match_input,
+    compact_daily_ai_run,
 )
 from .daily_review import (
     FAEDailyAIReviewEngine,
@@ -55,6 +56,7 @@ __all__ = [
     "DAILY_PROMPT_VERSION",
     "DAILY_AI_MAX_BATCH_SIZE",
     "build_daily_match_input",
+    "compact_daily_ai_run",
     "evaluate_historical_market_rules",
     "build_review_memory",
     "aggregate_daily_ai_reviews",

@@ -175,6 +175,25 @@ class DailyAIReviewTests(unittest.TestCase):
         self.assertEqual(overall["equal_stake_return"], 2.0)
         self.assertEqual(overall["equal_stake_roi"], 0.0)
 
+    def test_total_goals_are_not_emitted_as_two_option_coverage(self):
+        snapshot = {
+            **self.snapshot,
+            "matches": [source(
+                "209", "大球", secondary_play="小球"
+            )],
+            "daily_summary": {"recommended_combinations": []},
+        }
+        results = {
+            "209": {"status": 2, "home_score": 2, "away_score": 1},
+        }
+
+        review = FAEDailyAIReviewEngine().review(snapshot, results)
+
+        self.assertEqual(review["two_option_results"], [])
+        self.assertEqual(
+            review["summary"]["two_option"]["overall"]["total"], 0
+        )
+
     def test_aggregates_history_calibration_brier_score(self):
         reviews = [{
             "owner_date": f"2026-07-{10 + index:02d}",

@@ -34,6 +34,7 @@ from football_ai import (
     ENGINE_VERSION,
     SKILL_DEFINITIONS,
     build_daily_match_input,
+    compact_daily_ai_run,
 )
 
 from db_storage import MongoDBStorage
@@ -1141,6 +1142,28 @@ def _build_daily_ai_inputs(
     return rows
 
 
+def _persist_fae_daily_ai_run(result, failure_message):
+    """Persist one run and synchronously rebuild its deterministic review.
+
+    The review rebuild never spends another Ark call.  It only rebinds the
+    main/secondary selections and their settlement rows to this exact run_id;
+    the regular review scheduler remains responsible for AI deep diagnosis.
+    """
+    if not mongo_storage.save_fae_daily_ai_run(result):
+        raise FAEError(failure_message)
+    try:
+        _review_fae_daily_ai(
+            str(result.get('owner_date') or '')[:10],
+            run_ai=False,
+            snapshot=result,
+        )
+    except Exception:
+        app.logger.exception(
+            'FAE deterministic review sync failed for run %s',
+            result.get('run_id'),
+        )
+
+
 def _run_fae_daily_ai(
     owner_date,
     force=False,
@@ -1211,8 +1234,9 @@ def _run_fae_daily_ai(
                 [previous_run.get('daily_summary') or {}],
             )
         result['cache_hit'] = True
-        if not mongo_storage.save_fae_daily_ai_run(result):
-            raise FAEError('保留已开赛比赛的赛前研判失败')
+        _persist_fae_daily_ai_run(
+            result, '保留已开赛比赛的赛前研判失败'
+        )
         return result
     league_profiles = mongo_storage.get_fae_league_profiles(
         date_str,
@@ -1247,8 +1271,9 @@ def _run_fae_daily_ai(
                 cached,
                 [(previous_run or {}).get('daily_summary') or {}],
             )
-        if not mongo_storage.save_fae_daily_ai_run(cached):
-            raise FAEError('合并已开赛比赛的赛前研判失败')
+        _persist_fae_daily_ai_run(
+            cached, '合并已开赛比赛的赛前研判失败'
+        )
         cached['cache_hit'] = True
         return cached
     batch_size = max(
@@ -1275,8 +1300,9 @@ def _run_fae_daily_ai(
                         cached,
                         [(previous_run or {}).get('daily_summary') or {}],
                     )
-                if not mongo_storage.save_fae_daily_ai_run(cached):
-                    raise FAEError('合并已开赛比赛的赛前研判失败')
+                _persist_fae_daily_ai_run(
+                    cached, '合并已开赛比赛的赛前研判失败'
+                )
                 cached['cache_hit'] = True
                 return cached
         result = fae_daily_ai_analyzer.analyze(
@@ -1296,8 +1322,9 @@ def _run_fae_daily_ai(
                 result,
                 [(previous_run or {}).get('daily_summary') or {}],
             )
-        if not mongo_storage.save_fae_daily_ai_run(result):
-            raise FAEError('全日研判已生成，但写入MongoDB失败')
+        _persist_fae_daily_ai_run(
+            result, '全日研判已生成，但写入MongoDB失败'
+        )
         result['cache_hit'] = False
         return result
 
@@ -1357,11 +1384,16 @@ def _review_fae_draw_plan(owner_date):
     return saved.get('review') if saved.get('saved') else None
 
 
-def _review_fae_daily_ai(owner_date, force_ai=False):
+def _review_fae_daily_ai(
+    owner_date,
+    force_ai=False,
+    run_ai=True,
+    snapshot=None,
+):
     """Settle the immutable Ark run and cache an AI post-match diagnosis."""
     if not mongo_storage:
         return None
-    snapshot = mongo_storage.get_fae_daily_ai_snapshot(owner_date)
+    snapshot = snapshot or mongo_storage.get_fae_daily_ai_snapshot(owner_date)
     if not snapshot:
         return None
     matches = {
@@ -1383,65 +1415,76 @@ def _review_fae_daily_ai(owner_date, force_ai=False):
             and row.get('result_score')
         )
     )
-    existing = mongo_storage.get_fae_daily_ai_review(owner_date) or {}
+    existing = mongo_storage.get_fae_daily_ai_review(
+        owner_date, run_id=snapshot.get('run_id')
+    ) or {}
+    desired_hash = (
+        fae_ai_review_analyzer.input_hash(snapshot, review)
+        if reviewable_count else None
+    )
+    cached = existing.get('ai_deep_review') or {}
     if (
-        ai_review_enabled
+        not force_ai
+        and desired_hash
+        and cached.get('input_hash') == desired_hash
+    ):
+        review['ai_deep_review'] = cached
+        review['ai_deep_review_cache_hit'] = True
+    if (
+        run_ai
+        and ai_review_enabled
         and fae_ai_review_analyzer.configured
         and reviewable_count
+        and not review.get('ai_deep_review')
     ):
-        desired_hash = fae_ai_review_analyzer.input_hash(snapshot, review)
-        cached = existing.get('ai_deep_review') or {}
-        if not force_ai and cached.get('input_hash') == desired_hash:
-            review['ai_deep_review'] = cached
-            review['ai_deep_review_cache_hit'] = True
-        else:
-            try:
-                # A manual request and the 15-minute scheduler can overlap.
-                # Re-check inside the lock before spending another Ark call.
-                with fae_ai_review_lock:
-                    latest = (
-                        mongo_storage.get_fae_daily_ai_review(owner_date)
-                        or {}
+        try:
+            # A manual request and the 15-minute scheduler can overlap.
+            # Re-check inside the lock before spending another Ark call.
+            with fae_ai_review_lock:
+                latest = mongo_storage.get_fae_daily_ai_review(
+                    owner_date, run_id=snapshot.get('run_id')
+                ) or {}
+                latest_ai = latest.get('ai_deep_review') or {}
+                if (
+                    not force_ai
+                    and latest_ai.get('input_hash') == desired_hash
+                ):
+                    review['ai_deep_review'] = latest_ai
+                    review['ai_deep_review_cache_hit'] = True
+                else:
+                    review['ai_deep_review'] = (
+                        fae_ai_review_analyzer.analyze(snapshot, review)
                     )
-                    latest_ai = latest.get('ai_deep_review') or {}
-                    if (
-                        not force_ai
-                        and latest_ai.get('input_hash') == desired_hash
-                    ):
-                        review['ai_deep_review'] = latest_ai
-                        review['ai_deep_review_cache_hit'] = True
-                    else:
-                        review['ai_deep_review'] = (
-                            fae_ai_review_analyzer.analyze(snapshot, review)
-                        )
-                        review['ai_deep_review_cache_hit'] = False
-            except FAEError as exc:
-                # Deterministic settlement must remain available even when Ark
-                # is temporarily unavailable. Preserve the last diagnosis.
-                if cached:
-                    review['ai_deep_review'] = cached
-                    review['ai_deep_review_stale'] = True
-                review['ai_deep_review_error'] = str(exc)
-                app.logger.warning(
-                    'FAE AI deep review failed for %s: %s',
-                    owner_date,
-                    exc,
-                )
-            except Exception as exc:
-                if cached:
-                    review['ai_deep_review'] = cached
-                    review['ai_deep_review_stale'] = True
-                review['ai_deep_review_error'] = f'AI 深度复盘失败: {exc}'
-                app.logger.exception(
-                    'Unexpected FAE AI deep review error for %s',
-                    owner_date,
-                )
-    elif reviewable_count:
+                    review['ai_deep_review_cache_hit'] = False
+        except FAEError as exc:
+            # Deterministic settlement must remain available even when Ark
+            # is temporarily unavailable. Preserve this run's last diagnosis.
+            if cached:
+                review['ai_deep_review'] = cached
+                review['ai_deep_review_stale'] = True
+            review['ai_deep_review_error'] = str(exc)
+            app.logger.warning(
+                'FAE AI deep review failed for %s: %s',
+                owner_date,
+                exc,
+            )
+        except Exception as exc:
+            if cached:
+                review['ai_deep_review'] = cached
+                review['ai_deep_review_stale'] = True
+            review['ai_deep_review_error'] = f'AI 深度复盘失败: {exc}'
+            app.logger.exception(
+                'Unexpected FAE AI deep review error for %s',
+                owner_date,
+            )
+    elif run_ai and reviewable_count:
         review['ai_deep_review_unavailable'] = (
             'AI 深度复盘未启用'
             if not ai_review_enabled
             else '火山方舟尚未配置'
         )
+    elif reviewable_count and not run_ai:
+        review['ai_deep_review_pending'] = True
     if review.get('ai_deep_review'):
         review['ai_deep_review'] = (
             fae_ai_review_analyzer.humanize_review_match_ids(
@@ -1718,8 +1761,11 @@ def get_fae_daily_ai():
     date_str = str(
         request.args.get('date') or datetime.now().strftime('%Y-%m-%d')
     )[:10]
-    data = mongo_storage.get_fae_daily_ai_run(date_str)
-    if data:
+    compact = str(request.args.get('compact') or '').lower() in (
+        '1', 'true', 'yes', 'on'
+    )
+    data = mongo_storage.get_fae_daily_ai_run(date_str, compact=compact)
+    if data and not compact:
         data['matches'] = fae_daily_ai_analyzer.calibrate_daily_matches(
             data.get('matches') or []
         )
@@ -1798,12 +1844,17 @@ def get_fae_daily_ai():
                 data.get('matches') or [],
             )
         )
-    return jsonify({
+    if data and compact:
+        data = compact_daily_ai_run(data)
+    response = jsonify({
         'success': True,
         'data': data,
         'configured': fae_daily_ai_analyzer.configured,
         'can_manage': bool(_fae_admin_user()),
     })
+    if compact:
+        response.headers['Cache-Control'] = 'private, max-age=30'
+    return response
 
 
 @app.route('/api/fae/daily-ai', methods=['POST'])
@@ -1842,9 +1893,13 @@ def run_fae_daily_ai():
                 f"{data.get('analyzed_match_count', data.get('match_count', 0))} 场，"
                 f"保留 {data.get('retained_match_count', 0)} 场已开赛的赛前研判"
             )
+        response_data = (
+            compact_daily_ai_run(data)
+            if payload.get('compact') else data
+        )
         return jsonify({
             'success': True,
-            'data': data,
+            'data': response_data,
             'cache_hit': bool(data.get('cache_hit')),
             'wecom_delivery': wecom_delivery,
             'draw_selection_policy': data.get('draw_selection_policy'),
@@ -1930,7 +1985,13 @@ def get_fae_daily_ai_review():
     if not mongo_storage:
         return jsonify({'success': False, 'message': 'MongoDB不可用'}), 500
     date_str = request.args.get('date') or datetime.now().strftime('%Y-%m-%d')
-    data = mongo_storage.get_fae_daily_ai_review(date_str)
+    latest_run_id = mongo_storage.get_latest_fae_daily_ai_run_id(date_str)
+    data = (
+        mongo_storage.get_fae_daily_ai_review(
+            date_str, run_id=latest_run_id
+        )
+        if latest_run_id else None
+    )
     if data and data.get('ai_deep_review'):
         data['ai_deep_review'] = (
             fae_ai_review_analyzer.humanize_review_match_ids(
@@ -1948,6 +2009,7 @@ def get_fae_daily_ai_review():
             'FAE_AI_REVIEW_ENABLED', 'true'
         ).lower() in ('1', 'true', 'yes', 'on'),
         'ai_review_configured': fae_ai_review_analyzer.configured,
+        'run_id': latest_run_id,
     })
 
 

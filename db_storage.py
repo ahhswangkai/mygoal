@@ -955,7 +955,7 @@ class MongoDBStorage:
             self.logger.error(f"保存 FAE 全日研判失败: {str(e)}")
             return False
 
-    def get_fae_daily_ai_run(self, owner_date, input_hash=None):
+    def get_fae_daily_ai_run(self, owner_date, input_hash=None, compact=False):
         """Read a daily run, optionally requiring an exact input cache key."""
         try:
             query = {'owner_date': str(owner_date or '')[:10]}
@@ -968,14 +968,76 @@ class MongoDBStorage:
             )
             if not run:
                 return None
+            projection = {'_id': 0}
+            if compact:
+                projection = {
+                    '_id': 0,
+                    'match_id': 1,
+                    'match_number': 1,
+                    'owner_date': 1,
+                    'home_team': 1,
+                    'away_team': 1,
+                    'league': 1,
+                    'match_time': 1,
+                    'status_at_prediction': 1,
+                    'current_status': 1,
+                    'retained_from_pregame': 1,
+                    'retained_from_run_id': 1,
+                    'generated_at': 1,
+                    'analysis.primary_play': 1,
+                    'analysis.secondary_play': 1,
+                    'analysis.handicap_play': 1,
+                    'analysis.predicted_result': 1,
+                    'analysis.star_text': 1,
+                    'analysis.rating': 1,
+                    'analysis.no_bet': 1,
+                    'analysis.model_primary_play': 1,
+                    'analysis.consistency_guard': 1,
+                    'analysis.verdict': 1,
+                    'analysis.prediction_probability': 1,
+                    'analysis.market_implied_probability': 1,
+                    'analysis.value_score': 1,
+                    'analysis.market_confidence': 1,
+                    'analysis.bet_score': 1,
+                    'analysis.decision': 1,
+                    'analysis.historical_calibration': 1,
+                    'analysis.draw_radar': 1,
+                    'analysis.market_analysis': 1,
+                    'analysis.evidence': 1,
+                    'analysis.risks': 1,
+                    'analysis.score_candidates': 1,
+                    'input_snapshot.euro.current': 1,
+                    'input_snapshot.asian.current': 1,
+                    'input_snapshot.sporttery_handicap.value': 1,
+                    'input_snapshot.sporttery_handicap.current': 1,
+                    'input_snapshot.total.current': 1,
+                    'input_snapshot.historical_goal_margin_model': 1,
+                    'input_snapshot.fae_core.recommendation.category_scores.label': 1,
+                    'input_snapshot.fae_core.recommendation.category_scores.odds': 1,
+                    'input_snapshot.fae_core.recommendation.category_scores.bet_score': 1,
+                    'input_snapshot.fae_core.recommendation.category_scores.no_bet': 1,
+                }
             matches = list(self.fae_daily_ai_matches_collection.find(
                 {'run_id': run.get('run_id')},
-                {'_id': 0},
+                projection,
             ).sort([('match_time', ASCENDING), ('match_number', ASCENDING)]))
             run['matches'] = matches
             return run
         except Exception as e:
             self.logger.error(f"读取 FAE 全日研判失败: {str(e)}")
+            return None
+
+    def get_latest_fae_daily_ai_run_id(self, owner_date):
+        """Read only the current immutable run identity for one match day."""
+        try:
+            run = self.fae_daily_ai_runs_collection.find_one(
+                {'owner_date': str(owner_date or '')[:10]},
+                {'_id': 0, 'run_id': 1},
+                sort=[('generated_at', DESCENDING)],
+            )
+            return str((run or {}).get('run_id') or '') or None
+        except Exception as e:
+            self.logger.error(f"读取 FAE 最新研判ID失败: {str(e)}")
             return None
 
     def get_wecom_delivery(self, delivery_key):
@@ -1129,10 +1191,13 @@ class MongoDBStorage:
             self.logger.error(f"保存 FAE 全日AI复盘失败: {str(e)}")
             return {'saved': False, 'message': str(e)}
 
-    def get_fae_daily_ai_review(self, owner_date):
+    def get_fae_daily_ai_review(self, owner_date, run_id=None):
         try:
+            query = {'owner_date': str(owner_date or '')[:10]}
+            if run_id:
+                query['run_id'] = str(run_id)
             return self.fae_daily_ai_reviews_collection.find_one(
-                {'owner_date': str(owner_date or '')[:10]},
+                query,
                 {'_id': 0},
                 sort=[('reviewed_at', DESCENDING)],
             )
@@ -1141,9 +1206,7 @@ class MongoDBStorage:
             return None
 
     def get_fae_daily_ai_review_stats(self):
-        reviews = list(
-            self.fae_daily_ai_reviews_collection.find({}, {'_id': 0})
-        )
+        reviews = self._latest_fae_daily_ai_reviews()
         weight_docs = list(self.fae_draw_strategy_weights_collection.find(
             {}, {'_id': 0}
         ))
@@ -1162,6 +1225,25 @@ class MongoDBStorage:
                 'action': 'hold',
             })
         return aggregate_daily_ai_reviews(reviews, weights)
+
+    def _latest_fae_daily_ai_reviews(self, query=None, limit=None):
+        """Return one latest review per match day.
+
+        Prematch refreshes create immutable run_ids during the same day.  Only
+        the newest run may feed aggregate hit rates, learning memory and Skill
+        candidates; otherwise one match day would be counted repeatedly.
+        """
+        pipeline = [
+            {'$match': query or {}},
+            {'$sort': {'owner_date': 1, 'reviewed_at': -1}},
+            {'$group': {'_id': '$owner_date', 'review': {'$first': '$$ROOT'}}},
+            {'$replaceRoot': {'newRoot': '$review'}},
+            {'$project': {'_id': 0}},
+            {'$sort': {'owner_date': -1}},
+        ]
+        if limit:
+            pipeline.append({'$limit': max(1, int(limit))})
+        return list(self.fae_daily_ai_reviews_collection.aggregate(pipeline))
 
     def get_fae_review_memory(self, before_date):
         """Return compact review memory using only strictly earlier match days."""
@@ -1190,16 +1272,14 @@ class MongoDBStorage:
                     'FAE_REVIEW_MEMORY_MIN_EVIDENCE', '10'
                 )),
             )
-            reviews = list(
-                self.fae_daily_ai_reviews_collection.find(
-                    {
-                        'owner_date': {
-                            '$lt': str(before_date or '')[:10]
-                        },
-                        'ai_deep_review.status': 'completed',
+            reviews = self._latest_fae_daily_ai_reviews(
+                {
+                    'owner_date': {
+                        '$lt': str(before_date or '')[:10]
                     },
-                    {'_id': 0},
-                ).sort('owner_date', DESCENDING).limit(window_days)
+                    'ai_deep_review.status': 'completed',
+                },
+                limit=window_days,
             )
             return build_review_memory(
                 reviews,
@@ -1725,9 +1805,7 @@ class MongoDBStorage:
             rule_stats = list(self.fae_rule_weights_collection.find(
                 {}, {'_id': 0}
             ))
-            ai_reviews = list(
-                self.fae_daily_ai_reviews_collection.find({}, {'_id': 0})
-            )
+            ai_reviews = self._latest_fae_daily_ai_reviews()
             if ai_reviews:
                 draw_stats = aggregate_daily_ai_reviews(ai_reviews)
             else:
@@ -2432,9 +2510,7 @@ class MongoDBStorage:
             return {'saved': False, 'message': str(e)}
 
     def _recalculate_fae_draw_strategy_weights(self, apply=False):
-        ai_reviews = list(
-            self.fae_daily_ai_reviews_collection.find({}, {'_id': 0})
-        )
+        ai_reviews = self._latest_fae_daily_ai_reviews()
         if ai_reviews:
             stats = aggregate_daily_ai_reviews(ai_reviews)
         else:

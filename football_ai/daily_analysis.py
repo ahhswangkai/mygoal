@@ -49,6 +49,111 @@ ASIAN_HARD_DOWNGRADE_RISKS = {
 
 DRAW_SELECTION_POLICY_DEFAULT = "conservative"
 
+
+DAILY_AI_COMPACT_ANALYSIS_FIELDS = (
+    "primary_play",
+    "secondary_play",
+    "handicap_play",
+    "predicted_result",
+    "star_text",
+    "rating",
+    "no_bet",
+    "model_primary_play",
+    "consistency_guard",
+    "verdict",
+    "prediction_probability",
+    "market_implied_probability",
+    "value_score",
+    "market_confidence",
+    "bet_score",
+    "decision",
+    "historical_calibration",
+    "draw_radar",
+    "market_analysis",
+    "evidence",
+    "risks",
+    "score_candidates",
+)
+
+DAILY_AI_COMPACT_SCORE_FIELDS = (
+    "label",
+    "odds",
+    "bet_score",
+    "no_bet",
+)
+
+
+def compact_daily_ai_run(source: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Return the recommendation-list view without prompt-only model inputs.
+
+    A full match snapshot intentionally keeps fundamentals, league history and
+    calibration evidence for audits and detail pages.  The recommendation list
+    only needs final decisions, current odds and the small goal-margin card.
+    Projecting that shape cuts large match days from megabytes to a few hundred
+    kilobytes without changing the persisted analysis.
+    """
+    if not source:
+        return source
+    result = {
+        key: value for key, value in dict(source).items()
+        if key not in {"matches", "provider_meta", "input_hash"}
+    }
+    compact_matches = []
+    for item in source.get("matches") or []:
+        analysis = item.get("analysis") or {}
+        snapshot = item.get("input_snapshot") or {}
+        fae_core = snapshot.get("fae_core") or {}
+        recommendation = fae_core.get("recommendation") or {}
+        scores = []
+        for score in recommendation.get("category_scores") or []:
+            scores.append({
+                key: score.get(key)
+                for key in DAILY_AI_COMPACT_SCORE_FIELDS
+                if key in score
+            })
+        compact_matches.append({
+            key: item.get(key)
+            for key in (
+                "match_id",
+                "match_number",
+                "owner_date",
+                "home_team",
+                "away_team",
+                "league",
+                "match_time",
+                "status_at_prediction",
+                "current_status",
+                "retained_from_pregame",
+                "retained_from_run_id",
+                "generated_at",
+            )
+            if key in item
+        } | {
+            "analysis": {
+                key: analysis.get(key)
+                for key in DAILY_AI_COMPACT_ANALYSIS_FIELDS
+                if key in analysis
+            },
+            "input_snapshot": {
+                "euro": {"current": (snapshot.get("euro") or {}).get("current")},
+                "asian": {"current": (snapshot.get("asian") or {}).get("current")},
+                "sporttery_handicap": {
+                    "value": (snapshot.get("sporttery_handicap") or {}).get("value"),
+                    "current": (snapshot.get("sporttery_handicap") or {}).get("current"),
+                },
+                "total": {"current": (snapshot.get("total") or {}).get("current")},
+                "historical_goal_margin_model": snapshot.get(
+                    "historical_goal_margin_model"
+                ) or {},
+                "fae_core": {
+                    "recommendation": {"category_scores": scores}
+                },
+            },
+        })
+    result["matches"] = compact_matches
+    result["compact"] = True
+    return result
+
 # 通过可切换策略统一控制平/让平的门槛。便于AB测试、回测复盘和线上快速回退。
 DRAW_SELECTION_POLICIES = {
     "conservative": {
@@ -2430,6 +2535,7 @@ class FAEDailyAIAnalyzer:
             "固定按五项检查：欧赔方向、亚盘是否真正升深、竞彩让球盘、大小球、市场一致性。",
             "升降属于走势，不属于盘口名称；必须区分升盘与降水。",
             "竞彩让平必须结合具体让球数解释：主队-1时让平代表主队赢1球，主队+1时代表客队赢1球。",
+            "primary_play与secondary_play用于双选覆盖，只允许主胜、平局、客胜、让胜、让平、让负或观望；大球、小球只能写入market_analysis.total作为辅助证据，严禁作为主选、防选或双选项。",
             "严格区分客队小胜与竞彩让负：away_small_win只放客队明确为胜负方向且预计净胜1球的比赛；竞彩让负必须放入handicap_lose，禁止放入away_small_win。",
             "正式推荐只服务用户主玩法：平局和让平。主胜、客胜、让胜、让负、大球、小球只能写方向观察或风险解释，禁止进入核心推荐和组合。",
             "正式推荐必须同时满足投注分>=70、价值指数>=60、盘口可信度>=70、星级>=4；不满足任一条件必须写不下注。",
@@ -2525,6 +2631,7 @@ class FAEDailyAIAnalyzer:
             "固定检查欧赔、亚盘真实升深、竞彩让球、大小球、市场一致性。",
             "升降是走势而非盘口名；严格区分升盘和水位变化。",
             "让平必须结合让球数解释；大小球跳动达到0.75优先标异常。",
+            "primary_play与secondary_play用于双选覆盖，只允许主胜、平局、客胜、让胜、让平、让负或观望；大球、小球只作为market_analysis.total辅助证据，严禁作为主选、防选或双选项。",
             "不得编造近期状态、伤停、首发、天气、战意或赛程。",
             "fundamentals来自500赛前页；预计阵容不能写成官方首发，伤停栏目未列球员不能写成确认无伤停。",
             "fundamentals.cache_status=stale时必须降低基本面权重并提示时效风险。",
