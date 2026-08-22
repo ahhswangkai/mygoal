@@ -111,7 +111,7 @@ def compact_daily_ai_run(source: Optional[Dict[str, Any]]) -> Optional[Dict[str,
                 for key in DAILY_AI_COMPACT_SCORE_FIELDS
                 if key in score
             })
-        compact_matches.append({
+        compact_item = {
             key: item.get(key)
             for key in (
                 "match_id",
@@ -128,7 +128,8 @@ def compact_daily_ai_run(source: Optional[Dict[str, Any]]) -> Optional[Dict[str,
                 "generated_at",
             )
             if key in item
-        } | {
+        }
+        compact_item.update({
             "analysis": {
                 key: analysis.get(key)
                 for key in DAILY_AI_COMPACT_ANALYSIS_FIELDS
@@ -150,6 +151,7 @@ def compact_daily_ai_run(source: Optional[Dict[str, Any]]) -> Optional[Dict[str,
                 },
             },
         })
+        compact_matches.append(compact_item)
     result["matches"] = compact_matches
     result["compact"] = True
     return result
