@@ -1439,6 +1439,32 @@ class DailyAnalysisTests(unittest.TestCase):
         )
         self.assertIn("不下注", guarded["pools"]["avoid"][0]["reason"])
 
+    def test_actionable_two_option_is_not_moved_to_avoid_pool(self):
+        summary = {
+            "warnings": [],
+            "pools": {
+                "avoid": [{"match_id": "208", "reason": "单选不下注"}],
+            },
+            "recommended_combinations": [],
+        }
+        matches = [{
+            "match_id": "208",
+            "match_number": "周日208",
+            "analysis": {
+                "no_bet": True,
+                "two_option_recommendation": {"actionable": True},
+            },
+        }]
+
+        guarded = FAEDailyAIAnalyzer._apply_no_bet_summary(
+            summary, matches
+        )
+
+        self.assertEqual(guarded["pools"]["avoid"], [])
+        self.assertTrue(any(
+            "双选独立入池" in item for item in guarded["warnings"]
+        ))
+
     def test_value_guard_prefers_materially_stronger_bettable_play(self):
         source = {
             "fae_core": {
@@ -1872,6 +1898,45 @@ class DailyAnalysisTests(unittest.TestCase):
         )
 
         self.assertEqual(aligned["pools"]["core"], [])
+
+    def test_two_option_core_pool_ignores_single_no_bet(self):
+        summary = {"pools": {"avoid": []}}
+        matches = [{
+            "match_id": "208",
+            "match_number": "周日208",
+            "analysis": {
+                "primary_play": "让负",
+                "secondary_play": "让平",
+                "no_bet": True,
+                "rating": 2.5,
+                "two_option_recommendation": {
+                    "actionable": True,
+                    "daily_rank": 1,
+                    "market": "竞彩让球",
+                    "selections": ["让负", "让平"],
+                    "selection_text": "让负 / 让平",
+                    "odds": {"让负": 1.41, "让平": 3.9},
+                    "coverage_score": 85.36,
+                    "market_confidence": 68,
+                    "rank_score": 98.06,
+                    "reason": "达到双选门槛",
+                },
+            },
+        }]
+
+        aligned = FAEDailyAIAnalyzer.align_summary_ratings(
+            summary, matches
+        )
+
+        self.assertEqual(aligned["pools"]["core"], [])
+        self.assertEqual(
+            aligned["pools"]["two_option_core"][0]["match_id"],
+            "208",
+        )
+        self.assertEqual(
+            aligned["pools"]["two_option_core"][0]["selection_text"],
+            "让负 / 让平",
+        )
 
     def test_stale_memory_avoidance_is_removed_without_current_risk(self):
         summary = {

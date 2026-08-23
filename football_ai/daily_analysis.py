@@ -3517,6 +3517,10 @@ class FAEDailyAIAnalyzer:
                 and analysis.get("decision") == "双选可考虑"
             ):
                 analysis["decision"] = "不下注"
+            profile["recommendation_level"] = (
+                "core" if shortlisted else "watch"
+            )
+            analysis["two_option_recommendation"] = profile
             row["analysis"] = analysis
         return rows
 
@@ -7513,7 +7517,10 @@ class FAEDailyAIAnalyzer:
             if key in source_pools
         }
         for key, items in source_pools.items():
-            if key in {"core", "away_small_win", "handicap_lose"}:
+            if key in {
+                "core", "two_option_core", "away_small_win",
+                "handicap_lose",
+            }:
                 continue
             rows = []
             for item in items or []:
@@ -7647,6 +7654,54 @@ class FAEDailyAIAnalyzer:
                 "reason": "，".join(reason_parts),
                 "role": "主选",
             })
+        two_option_candidates = sorted(
+            (
+                item for item in matches
+                if (((item.get("analysis") or {})
+                    .get("two_option_recommendation") or {})
+                    .get("actionable"))
+            ),
+            key=lambda item: (
+                int(((((item.get("analysis") or {})
+                       .get("two_option_recommendation") or {})
+                      .get("daily_rank")) or 999)),
+                -float(((((item.get("analysis") or {})
+                          .get("two_option_recommendation") or {})
+                         .get("rank_score")) or 0)),
+            ),
+        )[:TWO_OPTION_DAILY_LIMIT]
+        pools["two_option_core"] = []
+        for item in two_option_candidates:
+            analysis = item.get("analysis") or {}
+            profile = analysis.get("two_option_recommendation") or {}
+            selections = list(profile.get("selections") or [])[:2]
+            odds = profile.get("odds") or {}
+            priced = " / ".join(
+                "{}@{:g}".format(
+                    selection, float(odds.get(selection))
+                )
+                if _number(odds.get(selection)) is not None else selection
+                for selection in selections
+            )
+            coverage = float(profile.get("coverage_score") or 0)
+            confidence = float(profile.get("market_confidence") or 0)
+            pools["two_option_core"].append({
+                "match_id": str(item.get("match_id") or ""),
+                "market": profile.get("market"),
+                "selections": selections,
+                "selection_text": profile.get("selection_text"),
+                "odds": odds,
+                "coverage_score": round(coverage, 2),
+                "market_confidence": round(confidence, 1),
+                "daily_rank": profile.get("daily_rank"),
+                "rank_score": profile.get("rank_score"),
+                "reason": (
+                    f"{priced}，覆盖分{coverage:g}，"
+                    f"盘口可信度{confidence:g}；"
+                    f"{profile.get('reason') or '达到双选正式门槛'}"
+                ),
+                "role": "双选核心",
+            })
         result["pools"] = pools
         core_parts = []
         for item in candidates:
@@ -7676,20 +7731,30 @@ class FAEDailyAIAnalyzer:
                 "基本面缺失" not in value
                 for value in (item.get("analysis") or {}).get("rating_adjustments") or []
             )
+            and not (((item.get("analysis") or {})
+                     .get("two_option_recommendation") or {})
+                    .get("actionable"))
         ]
         calibrated_text = (
             "校准后核心：" + "；".join(core_parts) + "。"
             if core_parts else "校准后核心：今天没有达到4星正式门槛的平/让平单选核心。"
         )
-        two_option_rows = [
-            item for item in matches
-            if (((item.get("analysis") or {})
-                .get("two_option_recommendation") or {})
-                .get("actionable"))
-        ]
+        two_option_rows = sorted(
+            (
+                item for item in matches
+                if (((item.get("analysis") or {})
+                    .get("two_option_recommendation") or {})
+                    .get("actionable"))
+            ),
+            key=lambda item: int(
+                (((item.get("analysis") or {})
+                  .get("two_option_recommendation") or {})
+                 .get("daily_rank")) or 999
+            ),
+        )
         if two_option_rows:
             calibrated_text += (
-                "高覆盖双选可考虑：" + "、".join(
+                "高覆盖双选正式推荐：" + "、".join(
                     "{}{}".format(
                         item.get("match_number") or item.get("match_id"),
                         (((item.get("analysis") or {})
@@ -7697,7 +7762,8 @@ class FAEDailyAIAnalyzer:
                          .get("selection_text") or ""),
                     )
                     for item in two_option_rows
-                ) + "；双选不是单选核心，需按组合成本控制投入。"
+                ) + "；双选按独立门槛入池，不继承单选不下注结论，"
+                "仍需按组合成本控制投入。"
             )
         if downgraded:
             calibrated_text += (
@@ -7707,7 +7773,10 @@ class FAEDailyAIAnalyzer:
                 ) + "因赔率价值不足、市场背离或盘口异常退出高星核心。"
             )
         if not result.get("recommended_combinations"):
-            calibrated_text += "平局与让平候选未同时达到门槛，不强行生成2/3关。"
+            calibrated_text += (
+                "平局与让平单选候选未同时达到门槛，"
+                "不强行生成单选2/3关。"
+            )
         no_bet_labels = [
             str(item.get("match_number") or item.get("match_id"))
             for item in matches
@@ -7960,10 +8029,20 @@ class FAEDailyAIAnalyzer:
                 item for item in pools.get(key) or []
                 if str(item.get("match_id") or "") not in no_bet
             ]
-        avoid = list(pools.get("avoid") or [])
+        two_option_core_ids = {
+            str(item.get("match_id") or "")
+            for item in matches
+            if (((item.get("analysis") or {})
+                .get("two_option_recommendation") or {})
+                .get("actionable"))
+        }
+        avoid = [
+            item for item in pools.get("avoid") or []
+            if str(item.get("match_id") or "") not in two_option_core_ids
+        ]
         avoid_ids = {str(item.get("match_id") or "") for item in avoid}
         for match_id, item in no_bet.items():
-            if match_id in avoid_ids:
+            if match_id in avoid_ids or match_id in two_option_core_ids:
                 continue
             analysis = item.get("analysis") or {}
             reasons = analysis.get("no_bet_reasons") or ["投注分未达门槛"]
@@ -7988,11 +8067,23 @@ class FAEDailyAIAnalyzer:
         labels = [
             str((item.get("match_number") or match_id))
             for match_id, item in no_bet.items()
+            if match_id not in two_option_core_ids
         ]
-        warnings.append(
-            "不下注场次：" + "、".join(labels)
-            + "；方向分析保留，但不进入推荐榜和组合。"
-        )
+        if labels:
+            warnings.append(
+                "单选不下注场次：" + "、".join(labels)
+                + "；方向分析保留，但不进入单选推荐榜和组合。"
+            )
+        if two_option_core_ids:
+            core_labels = [
+                str(item.get("match_number") or item.get("match_id"))
+                for item in matches
+                if str(item.get("match_id") or "") in two_option_core_ids
+            ]
+            warnings.append(
+                "双选独立入池：" + "、".join(core_labels)
+                + "；不受单选不下注状态影响。"
+            )
         result["warnings"] = list(dict.fromkeys(warnings))[:20]
         return result
 

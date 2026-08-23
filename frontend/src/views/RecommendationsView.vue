@@ -304,7 +304,11 @@
           </section>
 
           <div v-if="dailyPoolGroups.length" class="daily-pools">
-            <section v-for="group in dailyPoolGroups" :key="group.key">
+            <section
+              v-for="group in dailyPoolGroups"
+              :key="group.key"
+              :class="{ 'two-option-pool': group.key === 'two_option_core' }"
+            >
               <h2>{{ group.title }}</h2>
               <button
                 v-for="item in group.items"
@@ -318,7 +322,8 @@
                 </span>
                 <span class="daily-pool-meta">
                   <i v-if="item.role">{{ item.role }}</i>
-                  <strong v-if="item.rating">{{ starText(item.rating) }}</strong>
+                  <strong v-if="group.key === 'two_option_core'">{{ item.selection_text }}</strong>
+                  <strong v-else-if="item.rating">{{ starText(item.rating) }}</strong>
                 </span>
                 <small>{{ displayDailyText(item.reason) }}</small>
               </button>
@@ -351,7 +356,7 @@
           </section>
           <section v-else class="daily-ai-combos daily-ai-combos-empty">
             <h2>AI 推荐 2 / 3 关</h2>
-            <p>今日没有同时达到门槛的平局与让平候选，不强行凑组合。</p>
+            <p>今日没有同时达到门槛的平局与让平单选候选，不强行凑单选组合；双选请看上方“双选核心”。</p>
           </section>
 
           <section v-if="shouldShowDailyMatchList && visibleDailyMatches.length" class="daily-match-section">
@@ -1127,6 +1132,7 @@ const dateOptions = Array.from({ length: 7 }, (_, index) => {
 
 const showModelPanels = false
 const dailyPoolLabels = {
+  two_option_core: '双选核心',
   draw: '平局精选',
   handicap_draw: '让平精选'
 }
@@ -2459,6 +2465,16 @@ onBeforeUnmount(() => {
   background: #fafafa;
   border: 1px solid #eee7e9;
   border-radius: 9px;
+}
+
+.daily-pools section.two-option-pool {
+  grid-column: 1 / -1;
+  background: linear-gradient(135deg, #fff7f8, #fff);
+  border-color: #f4cbd2;
+}
+
+.daily-pools section.two-option-pool h2 {
+  color: #dc3150;
 }
 
 .daily-pools h2,
