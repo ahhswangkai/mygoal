@@ -305,6 +305,37 @@ class BetSettlementTests(unittest.TestCase):
 
 
 class UserStorageSettlementTests(unittest.TestCase):
+    def test_storage_files_bet_under_dominant_match_date(self):
+        with tempfile.TemporaryDirectory() as directory:
+            storage = UserStorage(os.path.join(directory, 'users.db'))
+            user = storage.create_user('dated', '按比赛日期', 'secret123')
+            selected = [
+                {**item('1', 'hhad', 'draw', 3.8), 'date': '2026-08-16'},
+                {**item('2', 'hhad', 'draw', 3.05), 'date': '2026-08-16'},
+                # One malformed OCR date must not move the entire ticket.
+                {**item('3', 'hhad', 'draw', 3.5), 'date': '2025-08-17'},
+            ]
+            bet = {
+                'id': 'dated-bet',
+                'status': 'pending',
+                'multiplier': 11,
+                'pass_counts': [2, 3],
+                'selected_items': selected,
+                'match_count': 3,
+                'option_count': 3,
+                'notes': 4,
+                'stake': 88,
+                'total_odds': 40.57,
+                'max_bonus': 0,
+                'description': '3场 · 2，3关 · 11倍',
+                'created_at': '2026-08-23T09:16:35Z',
+            }
+
+            saved = storage.create_bet(user['id'], bet)
+
+            self.assertEqual(saved['created_at'], '2026-08-16T09:16:35Z')
+            self.assertEqual(storage.get_stats(user['id'])['daily'][0]['date'], '2026-08-16')
+
     def test_storage_repairs_legacy_inflated_max_bonus(self):
         with tempfile.TemporaryDirectory() as directory:
             database_path = os.path.join(directory, 'users.db')
@@ -384,6 +415,10 @@ class UserStorageSettlementTests(unittest.TestCase):
                 'id': 'bet-2',
                 'status': 'pending',
                 'created_at': '2026-06-30T15:59:59Z',
+                'selected_items': [
+                    {**selected_item, 'date': '2026-06-30'}
+                    for selected_item in bet['selected_items']
+                ],
             }
             storage.create_bet(user['id'], previous_month_bet)
 

@@ -124,7 +124,82 @@ class UserStorage:
             for column, statement in migrations.items():
                 if column not in columns:
                     conn.execute(statement)
+            self._repair_bet_created_dates(conn)
             self._repair_max_bonuses(conn)
+
+    @staticmethod
+    def _selected_match_date(selected_items):
+        """Return the dominant match date used to file a betting record.
+
+        A ticket can contain matches crossing midnight, and old OCR data can
+        occasionally contain one bad year.  Using the most common valid match
+        date keeps the record attached to its football programme date without
+        letting one malformed leg move the whole ticket.
+        """
+        counts = {}
+        order = []
+        for item in selected_items or []:
+            if not isinstance(item, dict):
+                continue
+            match = item.get('match') if isinstance(item.get('match'), dict) else {}
+            value = str(item.get('date') or match.get('date') or '')[:10]
+            try:
+                parsed = datetime.strptime(value, '%Y-%m-%d').date()
+            except (TypeError, ValueError):
+                continue
+            normalized = parsed.isoformat()
+            if normalized not in counts:
+                counts[normalized] = 0
+                order.append(normalized)
+            counts[normalized] += 1
+        if not counts:
+            return None
+        return max(order, key=lambda value: counts[value])
+
+    @classmethod
+    def _created_at_for_match_date(cls, created_at, selected_items):
+        match_date = cls._selected_match_date(selected_items)
+        if not match_date:
+            return created_at
+        try:
+            value = datetime.fromisoformat(str(created_at).replace('Z', '+00:00'))
+            if value.tzinfo is None:
+                value = value.replace(tzinfo=timezone.utc)
+        except (TypeError, ValueError):
+            value = datetime.now(timezone.utc).replace(microsecond=0)
+        local_value = value.astimezone(LOCAL_TIMEZONE)
+        target = datetime.strptime(match_date, '%Y-%m-%d')
+        corrected_local = local_value.replace(
+            year=target.year,
+            month=target.month,
+            day=target.day,
+            microsecond=0,
+        )
+        return (
+            corrected_local.astimezone(timezone.utc)
+            .isoformat()
+            .replace('+00:00', 'Z')
+        )
+
+    @classmethod
+    def _repair_bet_created_dates(cls, conn):
+        """Backfill legacy records that used the data-entry date."""
+        rows = conn.execute(
+            'SELECT id, selected_items_json, created_at FROM calculator_bets'
+        ).fetchall()
+        for row in rows:
+            try:
+                selected_items = json.loads(row['selected_items_json'])
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continue
+            corrected = cls._created_at_for_match_date(
+                row['created_at'], selected_items
+            )
+            if corrected and corrected != row['created_at']:
+                conn.execute(
+                    'UPDATE calculator_bets SET created_at = ? WHERE id = ?',
+                    (corrected, row['id']),
+                )
 
     @staticmethod
     def _repair_max_bonuses(conn):
@@ -235,6 +310,9 @@ class UserStorage:
             bet.get('pass_counts'),
             bet.get('multiplier'),
         )
+        created_at = self._created_at_for_match_date(
+            bet.get('created_at'), bet.get('selected_items')
+        )
         with self._connect() as conn:
             conn.execute(
                 """
@@ -250,7 +328,7 @@ class UserStorage:
                     json.dumps(bet['selected_items'], ensure_ascii=False),
                     bet['match_count'], bet['option_count'], bet['notes'],
                     bet['stake'], bet['total_odds'], max_bonus,
-                    bet['description'], bet['created_at'],
+                    bet['description'], created_at,
                 ),
             )
             row = conn.execute(
