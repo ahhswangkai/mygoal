@@ -15,13 +15,21 @@ from .provider import ArkNarrativeClient, FAEError, FAEOutputError
 from .version import ENGINE_VERSION
 
 
-DAILY_PROMPT_VERSION = "five-market-daily-v25-batched-partial-recovery"
+DAILY_PROMPT_VERSION = "five-market-daily-v26-calibrated-two-option"
 
 OFFICIAL_PLAY_SELECTIONS = {"平局", "让平"}
 OFFICIAL_MIN_BET_SCORE = 70.0
 OFFICIAL_MIN_VALUE_SCORE = 60.0
 OFFICIAL_MIN_MARKET_CONFIDENCE = 70.0
 OFFICIAL_MIN_RATING = 4.0
+
+TWO_OPTION_MIN_COVERAGE = 64.0
+TWO_OPTION_MIN_MARKET_CONFIDENCE = 65.0
+TWO_OPTION_MIN_SECOND_GAP = 2.0
+TWO_OPTION_DAILY_LIMIT = 5
+TWO_OPTION_PLAY_SELECTIONS = {
+    "主胜", "平局", "客胜", "让胜", "让平", "让负",
+}
 
 # “正式推荐”仍只允许平/让平。雷达观察层只负责排序和复盘，不能
 # 被后置汇总重新升级；正式池必须同时满足核心层、非负赔率价值与
@@ -68,6 +76,7 @@ DAILY_AI_COMPACT_ANALYSIS_FIELDS = (
     "bet_score",
     "decision",
     "historical_calibration",
+    "two_option_recommendation",
     "draw_radar",
     "market_analysis",
     "evidence",
@@ -1925,6 +1934,9 @@ class FAEDailyAIAnalyzer:
             str(item.get("match_time") or ""),
             str(item.get("match_number") or ""),
         ))
+        # Re-rank the complete retained + fresh slate so a one-match T-30 run
+        # cannot make every previously analysed match look actionable.
+        combined = cls.apply_two_option_recommendations(combined)
         result["matches"] = combined
         result["analyzed_match_count"] = len(fresh)
         result["retained_match_count"] = len(retained)
@@ -2158,6 +2170,7 @@ class FAEDailyAIAnalyzer:
         stored_matches = self.apply_draw_radar_recommendation_overrides(
             stored_matches
         )
+        stored_matches = self.apply_two_option_recommendations(stored_matches)
         stored_matches = self.normalize_match_memory_governance(
             stored_matches, memory
         )
@@ -2539,8 +2552,11 @@ class FAEDailyAIAnalyzer:
             "竞彩让平必须结合具体让球数解释：主队-1时让平代表主队赢1球，主队+1时代表客队赢1球。",
             "primary_play与secondary_play用于双选覆盖，只允许主胜、平局、客胜、让胜、让平、让负或观望；大球、小球只能写入market_analysis.total作为辅助证据，严禁作为主选、防选或双选项。",
             "严格区分客队小胜与竞彩让负：away_small_win只放客队明确为胜负方向且预计净胜1球的比赛；竞彩让负必须放入handicap_lose，禁止放入away_small_win。",
-            "正式推荐只服务用户主玩法：平局和让平。主胜、客胜、让胜、让负、大球、小球只能写方向观察或风险解释，禁止进入核心推荐和组合。",
-            "正式推荐必须同时满足投注分>=70、价值指数>=60、盘口可信度>=70、星级>=4；不满足任一条件必须写不下注。",
+            "逐场决策分两层：单选核心仍只服务平局和让平；主选与次选则面向同市场双选覆盖，允许主胜、平局、客胜、让胜、让平、让负，不得因为单选核心限制而把更低概率的平局或让平排到主选。",
+            "单选核心必须同时满足投注分>=70、价值指数>=60、盘口可信度>=70、星级>=4；未达到单选核心不代表整场没有选择，仍须输出按校准概率排序的主选和同市场次选，由系统判断是否达到双选可考虑门槛。",
+            "主选排序的第一目标是命中概率：先比较同市场全部三个结果的历史校准概率，再比较市场去水概率；赔率价值只决定是否值得单选下注，不能把低概率高赔率项提到高概率方向之前。",
+            "双选必须覆盖同一市场中校准覆盖概率最高的两个结果；次选必须提供相对于第三项的新增覆盖，不得机械保留让平。",
+            "若让平对应的historical_goal_margin_model同时满足expected_return<0.95且value_edge<-5%，让平不得作为主选；应改用同市场校准概率最高的方向项，让平最多保留为观察防选。",
             "亚盘不配合（退盘、升盘高水、上盘升水、降水不升盘、欧亚背离、热门浅盘）时，胜负方向必须硬降级为观察，不得只写风险提示后继续推荐。",
             "大小球跳动达到0.75或以上时优先标记数据异常，不得据此强推方向。",
             "不得伪造近期状态、伤停、首发、天气、战意和赛程；输入缺失必须明确说明。",
@@ -2554,7 +2570,7 @@ class FAEDailyAIAnalyzer:
             "普通平局采用历史回测版规则：统一模型只允许正向联赛的均势平进入正式池，必须满足平赔2.75-3.20、亚盘退浅或平手保护、上/下盘水位区间正常；平赔2.85-3.14为核心区间，其余只能小试。另有联赛专属模型：葡超小球平、挪超退盘平、荷甲中低总球平、英超降水平、英冠半球不动平、澳超高平赔中低总球、意甲升盘高水平；巴甲只作为平局基线观察模型，不得因单日命中直接升级；日职中低总球目前只观察。强热门冷平若未命中联赛专属模型，只能观察，禁止进入正式推荐。",
             "让平升级采用历史回测版规则：通用模型只允许正向联赛、竞彩让1球、热门胜赔1.26-1.40、让平赔3.30-3.70，并要求亚盘上盘水位0.65-1.04、下盘水位不低于0.75；热门胜赔1.41-1.55只能小试。另有联赛专属让平口袋：意甲中赔让平、德甲中热门让平、法甲高让平赔、英超中高总球小球让平、西甲小球水位让平、沙特高赔大球让平、欧罗巴低水让平；挪超降水让平当前样本不足只观察。让平必须再通过净胜1球路径检查：若降水不升盘但竞彩受让保护项明显低赔，说明更像热门不穿或失手，不升级让平。≤1.25超热、让2球、低命中联赛、上盘≥1.08不得升级；升盘高水、欧亚背离和退盘只作为风险证据，不能单独推让平。",
             "小球只表示进球总数受限，不等于平局：若强方胜赔至少下降0.10、对手胜赔至少上升0.10，且亚盘真实升深或强方处于明确低水，必须把强方小胜放主选、平局放防选。",
-            "让平是精确赢球差玩法，不能因用户偏好自动排第一：竞彩让1球时，若热门胜赔不高于1.50、亚盘至少真实升深0.25至一球且大小球不低于2.75，应优先比较穿盘；强方正常低水时主选让胜/让负、让平降为防选。胜赔不高于1.30且亚盘已到一球/球半时，即使上盘水位略高也不得机械主推让平。",
+            "让平是精确赢球差玩法，不能因用户偏好自动排第一：竞彩让1球时，若同市场方向项的校准概率领先让平至少3个百分点且也是最低赔率项，必须把方向项放主选、让平降为防选；若热门胜赔不高于1.50、亚盘至少真实升深0.25至一球且大小球不低于2.75，也应优先比较穿盘。",
             "主选和防选必须按当日可核验市场证据强弱排序，不得因为用户主玩平/让平就把精确结果放在更强的胜负或穿盘方向之前。",
             "竞彩让球防选不得默认填写让平：确定主选后，必须在剩余两个让球结果中重新比较模型概率与去水市场概率，选择覆盖概率更高的一项；让平只有真实排第二时才保留。",
             "upset_warning_model是爆冷预警扫描器：盘口降级、热门胜赔升、平赔下降、热门穿盘赔率偏高、强队近期穿盘代理偏弱、弱队近期有球会累加风险分；80分以上只能降低热门方向并提示防冷，禁止单独反买。",
@@ -2648,7 +2664,9 @@ class FAEDailyAIAnalyzer:
             "让平必须和穿盘方向比较：竞彩让1球、热门胜赔不高于1.50、亚盘真实升深至少0.25至一球且大小球不低于2.75时，正常低水应把让胜/让负放主选、让平放防选；不高于1.30的超强热门升至一球/球半后，不得机械把让平排第一。",
             "主次选按本场市场证据排序，不得因用户偏好平/让平而倒置。",
             "竞彩让球主选确定后，防选必须重新比较剩余两项的模型概率与去水市场概率，不得机械保留让平；让平只有真实排第二时才可作为防选。",
-            "正式推荐只允许平局或让平；主胜、客胜、让胜、让负、大球、小球只保留方向观察。正式推荐必须投注分>=70、价值指数>=60、盘口可信度>=70、星级>=4。",
+            "单选核心只允许平局或让平，且必须投注分>=70、价值指数>=60、盘口可信度>=70、星级>=4；逐场主选和次选仍按同市场校准概率排序，允许主胜、平局、客胜、让胜、让平、让负参与双选覆盖。",
+            "未达到单选核心时仍必须给出概率最高的主选和同市场次选；不得输出大球/小球作为主次选，系统会另外判断双选是否可考虑。",
+            "让平的历史进球差expected_return<0.95且value_edge<-5%时禁止排主选；同市场方向项概率领先至少3个百分点且为最低赔率项时，方向项必须排在让平之前。",
             "亚盘不配合时胜负方向必须硬降级为观察，不能只写风险提示后继续推荐。",
             "upset_warning_model达到重点防冷时，热门胜负方向必须降级为观察或不下注；防选优先写平局、受让保护项或让平，但不得把爆冷预警写成确定赛果。",
             "historical_goal_margin_model将普通平局定义为0球分差，将让平定义为当前竞彩让球数对应的精确净胜球差；两种玩法必须分开引用。仅eligible_for_adjustment=true且effective_sample达标时允许参与校准。",
@@ -2738,7 +2756,7 @@ class FAEDailyAIAnalyzer:
             f"你是 FAE v{ENGINE_VERSION} 的全日总编。日期：{owner_date}。",
             "以下逐场结论已经完成。请横向比较全部比赛，只做当日排名和组合，不重写逐场分析。",
             "优先给出同时包含平局与让平的高质量2串1、3串1；不得为了混合而凑低质量选择。",
-            "正式推荐池和组合只允许平局/让平；主胜、客胜、让胜、让负、大球、小球只能进入观察或避开说明。",
+            "单选核心池和2/3关组合只允许平局/让平；逐场高覆盖双选可以使用主胜、平局、客胜、让胜、让平、让负，但不得把双选包装成单选核心。",
             "正式推荐必须投注分>=70、价值指数>=60、盘口可信度>=70、星级>=4；低于门槛不允许进入核心池。",
             "亚盘不配合时胜负方向必须硬降级为观察，不得在摘要里重新包装成可下注推荐。",
             "严格区分推荐池：客队小胜只放客胜方向且预计客队净胜1球的比赛；竞彩让负无论主客强弱都只能放入handicap_lose池。",
@@ -3080,6 +3098,124 @@ class FAEDailyAIAnalyzer:
                 "candidates": rows,
                 "reason": reason,
             }
+        if primary_play in {"主胜", "平局", "客胜"}:
+            labels = ("主胜", "平局", "客胜")
+            probability_keys = {
+                "主胜": "home_win", "平局": "draw", "客胜": "away_win",
+            }
+            probabilities = (
+                (source.get("fae_core") or {}).get("probabilities") or {}
+            )
+            odds_values = (
+                (source.get("euro") or {}).get("current")
+                or (source.get("euro") or {}).get("initial")
+                or []
+            )
+            odds = {
+                label: (
+                    _number(odds_values[index])
+                    if len(odds_values) > index else None
+                )
+                for index, label in enumerate(labels)
+            }
+            inverse = {
+                label: 1 / value
+                for label, value in odds.items()
+                if value is not None and value > 1
+            }
+            inverse_total = sum(inverse.values())
+            rows = []
+            for label in labels:
+                profile = cls._play_value_profile(source, label)
+                model_probability = _number(profile.get("probability"))
+                if model_probability is None:
+                    model_probability = _number(
+                        probabilities.get(probability_keys[label])
+                    )
+                market_probability = _number(
+                    profile.get("market_implied_probability")
+                )
+                if market_probability is None and inverse_total > 0:
+                    market_probability = (
+                        inverse.get(label, 0) / inverse_total * 100
+                    )
+                components = []
+                if model_probability is not None:
+                    components.append((
+                        model_probability, HANDICAP_SECONDARY_MODEL_WEIGHT
+                    ))
+                if market_probability is not None:
+                    components.append((
+                        market_probability, HANDICAP_SECONDARY_MARKET_WEIGHT
+                    ))
+                component_weight = sum(value[1] for value in components)
+                coverage_score = (
+                    sum(value * weight for value, weight in components)
+                    / component_weight
+                    if component_weight else None
+                )
+                current_odds = _number(profile.get("odds"))
+                if current_odds is None:
+                    current_odds = odds.get(label)
+                rows.append({
+                    "selection": label,
+                    "model_probability": (
+                        round(model_probability, 2)
+                        if model_probability is not None else None
+                    ),
+                    "market_probability": (
+                        round(market_probability, 2)
+                        if market_probability is not None else None
+                    ),
+                    "coverage_score": (
+                        round(coverage_score, 2)
+                        if coverage_score is not None else None
+                    ),
+                    "odds": (
+                        round(current_odds, 3)
+                        if current_odds is not None else None
+                    ),
+                })
+            alternatives = [
+                row for row in rows
+                if row["selection"] != primary_play
+                and row.get("coverage_score") is not None
+            ]
+            selected = (
+                max(
+                    alternatives,
+                    key=lambda row: (
+                        float(row.get("coverage_score") or 0),
+                        float(row.get("model_probability") or 0),
+                        float(row.get("market_probability") or 0),
+                    ),
+                )["selection"]
+                if alternatives else "观望"
+            )
+            selected_row = next(
+                (row for row in rows if row["selection"] == selected), {}
+            )
+            changed = bool(
+                candidate in same_market
+                and candidate not in {primary_play, "观望"}
+                and candidate != selected
+            )
+            reason = (
+                f"胜平负双选动态次选：主选{primary_play}后，"
+                f"{selected}覆盖分{selected_row.get('coverage_score')}最高"
+            )
+            if changed:
+                reason += f"，替换原防选{candidate}"
+            return {
+                "selection": selected,
+                "strategy": "had-model-market-coverage-v1",
+                "generated_secondary": candidate or None,
+                "changed": changed,
+                "model_weight": HANDICAP_SECONDARY_MODEL_WEIGHT,
+                "market_weight": HANDICAP_SECONDARY_MARKET_WEIGHT,
+                "candidates": rows,
+                "reason": reason,
+            }
         if (
             candidate in same_market
             and candidate not in {primary_play, "观望"}
@@ -3150,6 +3286,239 @@ class FAEDailyAIAnalyzer:
             ],
             "reason": "同市场按模型概率选择防选",
         }
+
+    @classmethod
+    def _two_option_profile(
+        cls,
+        source: Dict[str, Any],
+        analysis: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Measure whether the final same-market pair is usable for coverage.
+
+        A rejected single is not automatically a rejected match.  This layer
+        evaluates the already-finalized primary and secondary as one coverage
+        decision without pretending that the pair is a core single.  Big/small
+        is intentionally excluded because the user only wants result markets.
+        """
+        primary = str(analysis.get("primary_play") or "")
+        secondary = str(analysis.get("secondary_play") or "")
+        if (
+            primary not in TWO_OPTION_PLAY_SELECTIONS
+            or secondary not in TWO_OPTION_PLAY_SELECTIONS
+            or primary == secondary
+        ):
+            return {
+                "actionable": False,
+                "selections": [
+                    value for value in (primary, secondary)
+                    if value in TWO_OPTION_PLAY_SELECTIONS
+                ],
+                "reason": "主选和次选未形成有效的同市场双选",
+            }
+        ordinary = {"主胜", "平局", "客胜"}
+        handicap = {"让胜", "让平", "让负"}
+        market = (
+            "胜平负" if {primary, secondary}.issubset(ordinary)
+            else "竞彩让球" if {primary, secondary}.issubset(handicap)
+            else ""
+        )
+        if not market:
+            return {
+                "actionable": False,
+                "selections": [primary, secondary],
+                "reason": "主选和次选不属于同一结果市场",
+            }
+
+        decision = analysis.get("secondary_selection_guard") or {}
+        candidates = [
+            dict(item) for item in decision.get("candidates") or []
+            if str(item.get("selection") or "") in (
+                ordinary if market == "胜平负" else handicap
+            )
+        ]
+        if len(candidates) < 3:
+            refreshed = cls._secondary_play_decision(
+                source, primary, secondary
+            )
+            candidates = [
+                dict(item) for item in refreshed.get("candidates") or []
+            ]
+        by_selection = {
+            str(item.get("selection") or ""): item for item in candidates
+        }
+        selected_rows = [
+            by_selection.get(primary) or {},
+            by_selection.get(secondary) or {},
+        ]
+        if any(_number(item.get("coverage_score")) is None for item in selected_rows):
+            return {
+                "actionable": False,
+                "market": market,
+                "selections": [primary, secondary],
+                "reason": "双选缺少可核验的模型与市场覆盖概率",
+            }
+        omitted_rows = [
+            item for label, item in by_selection.items()
+            if label not in {primary, secondary}
+        ]
+        if not omitted_rows:
+            return {
+                "actionable": False,
+                "market": market,
+                "selections": [primary, secondary],
+                "reason": "双选缺少第三项对照概率",
+            }
+        coverage = sum(
+            float(item.get("coverage_score") or 0)
+            for item in selected_rows
+        )
+        model_coverage = sum(
+            float(item.get("model_probability") or 0)
+            for item in selected_rows
+        )
+        market_values = [
+            _number(item.get("market_probability"))
+            for item in selected_rows
+        ]
+        market_coverage = (
+            sum(float(value) for value in market_values if value is not None)
+            if all(value is not None for value in market_values) else None
+        )
+        second_score = min(
+            float(item.get("coverage_score") or 0)
+            for item in selected_rows
+        )
+        third_score = max(
+            float(item.get("coverage_score") or 0)
+            for item in omitted_rows
+        )
+        second_gap = second_score - third_score
+        confidence = _number(
+            (analysis.get("market_confidence") or {}).get("score")
+        ) or 0
+        risk = (source.get("fae_core") or {}).get("risk") or {}
+        warnings = [str(value) for value in source.get("data_warnings") or []]
+        severe_data_risk = bool(
+            risk.get("dangerous")
+            or any("跳至" in value or "跳档" in value for value in warnings)
+            or (analysis.get("non_cover_guard") or {}).get("force_no_bet")
+        )
+        odds = {
+            item.get("selection"): item.get("odds") for item in selected_rows
+        }
+        complete_odds = all(
+            _number(odds.get(selection)) is not None
+            for selection in (primary, secondary)
+        )
+        eligible = bool(
+            coverage >= TWO_OPTION_MIN_COVERAGE
+            and confidence >= TWO_OPTION_MIN_MARKET_CONFIDENCE
+            and second_gap >= TWO_OPTION_MIN_SECOND_GAP
+            and complete_odds
+            and not severe_data_risk
+        )
+        rank_score = (
+            coverage
+            + min(12.0, max(0.0, second_gap)) * 0.55
+            + confidence * 0.12
+        )
+        reasons = []
+        if coverage < TWO_OPTION_MIN_COVERAGE:
+            reasons.append(
+                f"双选覆盖分{coverage:.1f}低于{TWO_OPTION_MIN_COVERAGE:g}"
+            )
+        if confidence < TWO_OPTION_MIN_MARKET_CONFIDENCE:
+            reasons.append(
+                f"盘口可信度{confidence:g}低于{TWO_OPTION_MIN_MARKET_CONFIDENCE:g}"
+            )
+        if second_gap < TWO_OPTION_MIN_SECOND_GAP:
+            reasons.append(
+                f"次选仅领先第三项{second_gap:.1f}个百分点"
+            )
+        if not complete_odds:
+            reasons.append("双选赔率不完整")
+        if severe_data_risk:
+            reasons.append("存在危险盘口、异常跳档或热门不穿硬护栏")
+        return {
+            "actionable": eligible,
+            "market": market,
+            "selections": [primary, secondary],
+            "selection_text": f"{primary} / {secondary}",
+            "odds": odds,
+            "coverage_score": round(coverage, 2),
+            "model_coverage_probability": round(model_coverage, 2),
+            "market_coverage_probability": (
+                round(market_coverage, 2)
+                if market_coverage is not None else None
+            ),
+            "second_over_third_gap": round(second_gap, 2),
+            "market_confidence": round(confidence, 1),
+            "rank_score": round(rank_score, 2),
+            "reason": (
+                f"同市场前两项覆盖分{coverage:.1f}，次选领先第三项"
+                f"{second_gap:.1f}个百分点"
+                if eligible else "；".join(reasons)
+            ),
+        }
+
+    @classmethod
+    def apply_two_option_recommendations(
+        cls,
+        matches: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """Keep only the strongest daily pairs as actionable suggestions."""
+        rows = []
+        eligible = []
+        for index, item in enumerate(matches):
+            row = dict(item or {})
+            analysis = dict(row.get("analysis") or {})
+            profile = cls._two_option_profile(
+                row.get("input_snapshot") or {}, analysis
+            )
+            analysis["two_option_recommendation"] = profile
+            row["analysis"] = analysis
+            rows.append(row)
+            if profile.get("actionable"):
+                eligible.append((
+                    float(profile.get("rank_score") or 0), index
+                ))
+        selected = {
+            index for _, index in sorted(eligible, reverse=True)[
+                :TWO_OPTION_DAILY_LIMIT
+            ]
+        }
+        for index, row in enumerate(rows):
+            analysis = row["analysis"]
+            profile = dict(analysis.get("two_option_recommendation") or {})
+            shortlisted = index in selected
+            profile["actionable"] = shortlisted
+            profile["daily_rank"] = (
+                next(
+                    (
+                        rank for rank, (_, candidate_index) in enumerate(
+                            sorted(eligible, reverse=True), start=1
+                        ) if candidate_index == index
+                    ),
+                    None,
+                )
+                if shortlisted else None
+            )
+            if not shortlisted and profile.get("rank_score") is not None:
+                profile["reason"] = (
+                    str(profile.get("reason") or "")
+                    + f"；全日仅保留前{TWO_OPTION_DAILY_LIMIT}场双选"
+                ).strip("；")
+            analysis["two_option_recommendation"] = profile
+            if shortlisted and analysis.get("no_bet"):
+                analysis["decision"] = "双选可考虑"
+            elif (
+                not shortlisted
+                and analysis.get("no_bet")
+                and analysis.get("decision") == "双选可考虑"
+            ):
+                analysis["decision"] = "不下注"
+            row["analysis"] = analysis
+        return rows
 
     @classmethod
     def _compatible_handicap_selections(
@@ -6524,9 +6893,11 @@ class FAEDailyAIAnalyzer:
                     and best_score - current_score >= float(
                         upgrade_policy.get("score_gap_min", 18)
                     )
-                    and best_odds_value is not None
-                    and best_odds_value >= float(
-                        policy.get("min_value", {}).get(best_selection, 0)
+                    and (
+                        best_odds_value is None
+                        or best_odds_value >= float(
+                            policy.get("min_value", {}).get(best_selection, 0)
+                        )
                     )
                     and "数据缺失" not in str(best_profile.get("no_bet_reasons") or "")
                 )
@@ -7136,8 +7507,12 @@ class FAEDailyAIAnalyzer:
             "handicap_draw": "让平",
             "draw": "平局",
         }
-        pools = {}
-        for key, items in (result.get("pools") or {}).items():
+        source_pools = result.get("pools") or {}
+        pools = {
+            key: [] for key in ("away_small_win", "handicap_lose")
+            if key in source_pools
+        }
+        for key, items in source_pools.items():
             if key in {"core", "away_small_win", "handicap_lose"}:
                 continue
             rows = []
@@ -7304,8 +7679,26 @@ class FAEDailyAIAnalyzer:
         ]
         calibrated_text = (
             "校准后核心：" + "；".join(core_parts) + "。"
-            if core_parts else "校准后核心：今天没有达到4星正式门槛的平/让平核心场次。"
+            if core_parts else "校准后核心：今天没有达到4星正式门槛的平/让平单选核心。"
         )
+        two_option_rows = [
+            item for item in matches
+            if (((item.get("analysis") or {})
+                .get("two_option_recommendation") or {})
+                .get("actionable"))
+        ]
+        if two_option_rows:
+            calibrated_text += (
+                "高覆盖双选可考虑：" + "、".join(
+                    "{}{}".format(
+                        item.get("match_number") or item.get("match_id"),
+                        (((item.get("analysis") or {})
+                          .get("two_option_recommendation") or {})
+                         .get("selection_text") or ""),
+                    )
+                    for item in two_option_rows
+                ) + "；双选不是单选核心，需按组合成本控制投入。"
+            )
         if downgraded:
             calibrated_text += (
                 "风险降级：" + "、".join(
@@ -7319,10 +7712,13 @@ class FAEDailyAIAnalyzer:
             str(item.get("match_number") or item.get("match_id"))
             for item in matches
             if (item.get("analysis") or {}).get("no_bet")
+            and not (((item.get("analysis") or {})
+                     .get("two_option_recommendation") or {})
+                     .get("actionable"))
         ]
         if no_bet_labels:
             calibrated_text += (
-                "不下注：" + "、".join(no_bet_labels)
+                "其余单选不下注：" + "、".join(no_bet_labels)
                 + "，仅保留方向观察。"
             )
         result["core_conclusion"] = calibrated_text
@@ -7431,7 +7827,10 @@ class FAEDailyAIAnalyzer:
         exact_margin_conflict = bool(
             model_selection == "让平"
             and top_selection in {"让胜", "让负"}
-            and probability_gap >= 5
+            # 让平是精确分差结果。命中率优先时，只要方向项已经
+            # 明确领先且同时是最低赔率项，就不应继续把让平排在
+            # 主选；3个百分点用于覆盖类似周六017的4pp冲突。
+            and probability_gap >= 3
             and shortest_selection == top_selection
             and not directional_guard_will_handle
         )

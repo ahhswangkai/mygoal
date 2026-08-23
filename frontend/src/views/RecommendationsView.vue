@@ -402,7 +402,8 @@
                   </span>
                   <strong>
                     {{ item.analysis?.star_text || starText(item.analysis?.rating) }}
-                    <i v-if="item.analysis?.no_bet">观察级</i>
+                    <i v-if="item.analysis?.two_option_recommendation?.actionable">双选</i>
+                    <i v-else-if="item.analysis?.no_bet">观察级</i>
                   </strong>
                   <span class="daily-pick-notes">
                     <i>倾向 {{ item.analysis?.predicted_result || '观望' }}</i>
@@ -441,10 +442,26 @@
                   <p><span>投注分</span><b>{{ item.analysis?.bet_score ?? '--' }}分</b></p>
                   <p>
                     <span>策略</span>
-                    <b :class="{ 'no-bet-text': item.analysis?.no_bet }">
-                      {{ item.analysis?.no_bet ? '观察降级' : (item.analysis?.decision || '可考虑') }}
+                    <b :class="{ 'no-bet-text': item.analysis?.no_bet && !item.analysis?.two_option_recommendation?.actionable }">
+                      {{ item.analysis?.two_option_recommendation?.actionable
+                        ? '双选可考虑'
+                        : item.analysis?.no_bet
+                          ? '观察降级'
+                          : (item.analysis?.decision || '可考虑')
+                      }}
                     </b>
                   </p>
+                </div>
+                <div
+                  v-if="item.analysis?.two_option_recommendation?.actionable"
+                  class="daily-guardrail-note"
+                >
+                  <strong>高覆盖双选</strong>
+                  <span>
+                    {{ item.analysis.two_option_recommendation.selection_text }} ·
+                    覆盖分 {{ item.analysis.two_option_recommendation.coverage_score }} ·
+                    {{ item.analysis.two_option_recommendation.reason }}
+                  </span>
                 </div>
                 <HistoricalGoalMarginCard
                   :model="item.input_snapshot?.historical_goal_margin_model"
@@ -1128,7 +1145,9 @@ const dailyPoolGroups = computed(() => {
     .filter(group => group.items.length)
 })
 const hasOfficialDailyRecommendations = computed(() => (
-  dailyPoolGroups.value.length > 0 || visibleDailyCombinations.value.length > 0
+  dailyPoolGroups.value.length > 0 ||
+  visibleDailyCombinations.value.length > 0 ||
+  visibleDailyMatches.value.some(item => item.analysis?.two_option_recommendation?.actionable)
 ))
 const shouldShowDailyMatchList = computed(() => (
   visibleDailyMatches.value.length > 0

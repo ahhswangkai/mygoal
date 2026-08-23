@@ -564,7 +564,7 @@ class DailyAnalysisTests(unittest.TestCase):
 
         self.assertEqual(result["pools"]["handicap_draw"], [])
 
-    def test_only_positive_value_core_radar_rows_can_form_combinations(self):
+    def test_positive_value_watch_radar_rows_do_not_form_combinations(self):
         draw = self.radar_match(
             "202",
             secondary="平局",
@@ -604,12 +604,7 @@ class DailyAnalysisTests(unittest.TestCase):
             summary
         )
 
-        self.assertEqual(len(combinations), 1)
-        self.assertEqual(combinations[0]["play"], "2串1")
-        self.assertEqual(
-            {pick["selection"] for pick in combinations[0]["picks"]},
-            {"平局", "让平"},
-        )
+        self.assertEqual(combinations, [])
 
     def test_includes_available_500_fundamentals_without_false_missing_warning(self):
         source_analysis = {
@@ -943,6 +938,128 @@ class DailyAnalysisTests(unittest.TestCase):
             analysis["consistency_guard"]["guard_type"],
             "exact_margin_market_alignment",
         )
+
+    def test_exact_margin_four_point_gap_prefers_direction_for_hit_rate(self):
+        source = build_daily_match_input(match("217"))
+        source["fae_core"]["probabilities"] = {
+            "hhad": {"win": 38, "draw": 34, "lose": 28}
+        }
+        source["sporttery_handicap"]["current"] = [2.10, 3.65, 2.72]
+
+        analysis = FAEDailyAIAnalyzer._normalize_match(source, {
+            "primary_play": "让平",
+            "secondary_play": "让负",
+            "rating": 3.5,
+        })["analysis"]
+
+        self.assertEqual(analysis["primary_play"], "让胜")
+        self.assertEqual(analysis["secondary_play"], "让平")
+        self.assertTrue(analysis["consistency_guard"]["triggered"])
+
+    def test_ordinary_secondary_is_re_ranked_by_model_and_market(self):
+        source = {
+            "euro": {"current": [2.00, 3.20, 4.20]},
+            "fae_core": {
+                "probabilities": {
+                    "home_win": 48,
+                    "draw": 31,
+                    "away_win": 21,
+                },
+            },
+        }
+
+        decision = FAEDailyAIAnalyzer._secondary_play_decision(
+            source, "主胜", "客胜"
+        )
+
+        self.assertEqual(decision["selection"], "平局")
+        self.assertTrue(decision["changed"])
+        self.assertEqual(
+            decision["strategy"], "had-model-market-coverage-v1"
+        )
+
+    def test_high_coverage_pair_is_actionable_without_promoting_single(self):
+        source = {
+            "sporttery_handicap": {
+                "value": -1,
+                "current": [2.10, 3.65, 2.72],
+            },
+            "fae_core": {
+                "probabilities": {
+                    "hhad": {"win": 46, "draw": 32, "lose": 22},
+                },
+                "risk": {"dangerous": False},
+            },
+        }
+        secondary = FAEDailyAIAnalyzer._secondary_play_decision(
+            source, "让胜", "让平"
+        )
+        rows = [{
+            "match_id": "217",
+            "analysis": {
+                "primary_play": "让胜",
+                "secondary_play": secondary["selection"],
+                "secondary_selection_guard": secondary,
+                "market_confidence": {"score": 80},
+                "no_bet": True,
+                "decision": "不下注",
+            },
+            "input_snapshot": source,
+        }]
+
+        analysis = (
+            FAEDailyAIAnalyzer.apply_two_option_recommendations(rows)[0]
+            ["analysis"]
+        )
+
+        self.assertTrue(
+            analysis["two_option_recommendation"]["actionable"]
+        )
+        self.assertTrue(analysis["no_bet"])
+        self.assertEqual(analysis["decision"], "双选可考虑")
+
+    def test_only_top_five_pairs_are_actionable_each_day(self):
+        rows = []
+        for index in range(6):
+            source = {
+                "sporttery_handicap": {
+                    "value": -1,
+                    "current": [2.10, 3.65, 2.72],
+                },
+                "fae_core": {
+                    "probabilities": {
+                        "hhad": {
+                            "win": 46 + index,
+                            "draw": 32,
+                            "lose": 22 - index,
+                        },
+                    },
+                    "risk": {"dangerous": False},
+                },
+            }
+            secondary = FAEDailyAIAnalyzer._secondary_play_decision(
+                source, "让胜", "让平"
+            )
+            rows.append({
+                "match_id": str(index),
+                "analysis": {
+                    "primary_play": "让胜",
+                    "secondary_play": secondary["selection"],
+                    "secondary_selection_guard": secondary,
+                    "market_confidence": {"score": 80},
+                    "no_bet": True,
+                    "decision": "不下注",
+                },
+                "input_snapshot": source,
+            })
+
+        result = FAEDailyAIAnalyzer.apply_two_option_recommendations(rows)
+
+        self.assertEqual(sum(
+            bool((row["analysis"].get("two_option_recommendation") or {})
+                 .get("actionable"))
+            for row in result
+        ), 5)
 
     def test_exact_margin_guard_re_ranks_both_remaining_handicap_outcomes(self):
         source = build_daily_match_input(match("202"))
@@ -1733,12 +1850,9 @@ class DailyAnalysisTests(unittest.TestCase):
 
         self.assertEqual(aligned["pools"]["handicap_lose"], [])
         self.assertEqual(aligned["pools"]["avoid"], [])
-        self.assertEqual(len(aligned["pools"]["core"]), 1)
-        self.assertEqual(aligned["pools"]["core"][0]["match_id"], "207")
-        self.assertEqual(aligned["pools"]["core"][0]["selection"], "主胜")
-        self.assertEqual(
-            aligned["pools"]["core"][0]["handicap_play"], "让胜"
-        )
+        # 胜负方向可以作为双选主项，但不能被摘要重新包装成只服务
+        # 平局/让平的单选核心。
+        self.assertEqual(aligned["pools"]["core"], [])
 
     def test_core_pool_excludes_no_bet_matches(self):
         summary = {"pools": {}}
