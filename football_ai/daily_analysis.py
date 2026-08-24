@@ -6172,6 +6172,27 @@ class FAEDailyAIAnalyzer:
                     "candidate_pool_penalty_pp": profile.get(
                         "candidate_pool_penalty_pp"
                     ),
+                    "feature_pattern_count": profile.get(
+                        "feature_pattern_count"
+                    ),
+                    "feature_pattern_probability": profile.get(
+                        "feature_pattern_probability"
+                    ),
+                    "feature_pattern_active": profile.get(
+                        "feature_pattern_active"
+                    ),
+                    "feature_pattern_candidate_probability": profile.get(
+                        "feature_pattern_candidate_probability"
+                    ),
+                    "feature_pattern_adjustment_pp": profile.get(
+                        "feature_pattern_adjustment_pp"
+                    ),
+                    "feature_pattern_candidate_adjustment_pp": profile.get(
+                        "feature_pattern_candidate_adjustment_pp"
+                    ),
+                    "matched_feature_patterns": profile.get(
+                        "matched_feature_patterns"
+                    ) or [],
                     "target_goal_margin": profile.get(
                         "target_goal_margin"
                     ),

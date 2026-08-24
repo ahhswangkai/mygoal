@@ -45,6 +45,7 @@ from .supervised import (
     build_training_days,
     build_training_example,
     extract_prematch_features,
+    mine_feature_patterns,
 )
 from .version import ENGINE_CODE, ENGINE_NAME, ENGINE_VERSION, VERSION_MANIFEST
 
@@ -86,6 +87,7 @@ __all__ = [
     "build_training_days",
     "build_training_example",
     "extract_prematch_features",
+    "mine_feature_patterns",
     "ENGINE_CODE",
     "ENGINE_NAME",
     "ENGINE_VERSION",

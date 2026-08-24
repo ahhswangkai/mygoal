@@ -2,8 +2,8 @@
 
 ENGINE_NAME = "Football AI Engine"
 ENGINE_CODE = "FAE"
-ENGINE_VERSION = "2.14.0"
-SCHEMA_VERSION = "2.6"
+ENGINE_VERSION = "2.14.3"
+SCHEMA_VERSION = "2.9"
 
 DIMENSION_WEIGHTS = {
     "handicap": 0.20,
@@ -97,6 +97,9 @@ VERSION_MANIFEST = {
         "历史监督学习：普通平局二分类与竞彩让平精确净胜球分布模型",
         "按比赛日扩展窗口回测、市场概率基线、概率校准误差与影子发布门禁",
         "周末大候选池概率收缩：比赛越多不再机械抬高榜首置信度",
+        "平/让平特征反推：固定分箱挖掘1至3项赛前特征组合，并以时间前后段独立验证和滚动样本外门禁控制过拟合",
+        "亚盘赔率组合观察：加入热门与下盘双方的初盘、即时水位、各自变化及两侧水位差",
+        "大小球赔率组合观察：加入大小球双方初盘、即时水位、各自变化及初即时水位差",
     ],
     "learning_policy": {
         "minimum_samples": 10,

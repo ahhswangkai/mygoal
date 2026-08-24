@@ -13,6 +13,7 @@ from collections import defaultdict
 from copy import deepcopy
 from datetime import datetime, timezone
 from hashlib import sha256
+from itertools import combinations
 import json
 import math
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
@@ -22,8 +23,8 @@ import numpy as np
 from .league_profile import _handicap_value
 
 
-SUPERVISED_SCHEMA_VERSION = "1.0"
-SUPERVISED_MODEL_VERSION = "draw-margin-supervised-v1"
+SUPERVISED_SCHEMA_VERSION = "1.3"
+SUPERVISED_MODEL_VERSION = "draw-margin-supervised-v4"
 MARGIN_CLASSES = (-3, -2, -1, 0, 1, 2, 3)
 
 FEATURE_NAMES = (
@@ -76,6 +77,78 @@ FEATURE_NAMES = (
     "missing_sporttery_handicap",
     "missing_total",
 )
+
+# Fixed pre-match bins keep pattern descriptions auditable.  Results choose
+# which bins and combinations survive; results never choose a threshold after
+# seeing the evaluation window.
+PATTERN_NUMERIC_BINS = {
+    "euro_draw_odds": (3.0, 3.2, 3.4, 3.6, 4.0),
+    "euro_favorite_odds": (1.3, 1.5, 1.7, 1.9, 2.2, 2.5),
+    "euro_probability_spread": (0.08, 0.16, 0.24, 0.34, 0.46),
+    "asian_favorite_depth": (0.0, 0.25, 0.5, 0.75, 1.0, 1.25, 1.5),
+    "asian_favorite_depth_change": (-0.25, -0.01, 0.01, 0.25),
+    "asian_favorite_water": (0.75, 0.85, 0.95, 1.0, 1.05, 1.15),
+    "asian_favorite_water_change": (-0.15, -0.05, 0.05, 0.15),
+    "asian_favorite_initial_water": (0.75, 0.85, 0.95, 1.0, 1.05, 1.15),
+    "asian_underdog_water": (0.75, 0.85, 0.95, 1.0, 1.05, 1.15),
+    "asian_underdog_water_change": (-0.15, -0.05, 0.05, 0.15),
+    "asian_underdog_initial_water": (0.75, 0.85, 0.95, 1.0, 1.05, 1.15),
+    "asian_favorite_water_gap": (-0.2, -0.1, -0.03, 0.03, 0.1, 0.2),
+    "asian_initial_favorite_water_gap": (
+        -0.2, -0.1, -0.03, 0.03, 0.1, 0.2,
+    ),
+    "hhad_draw_odds": (2.8, 3.1, 3.3, 3.5, 3.8, 4.2),
+    "hhad_draw_change": (-0.25, -0.08, 0.08, 0.25),
+    "total_current_line": (2.0, 2.25, 2.5, 2.75, 3.0, 3.25),
+    "total_line_change": (-0.5, -0.01, 0.01, 0.5),
+    "total_initial_over_water": (0.75, 0.85, 0.95, 1.0, 1.05, 1.15),
+    "total_over_water": (0.75, 0.85, 0.95, 1.0, 1.05, 1.15),
+    "total_over_water_change": (-0.15, -0.05, 0.05, 0.15),
+    "total_initial_under_water": (0.75, 0.85, 0.95, 1.0, 1.05, 1.15),
+    "total_under_water": (0.75, 0.85, 0.95, 1.0, 1.05, 1.15),
+    "total_under_water_change": (-0.15, -0.05, 0.05, 0.15),
+    "total_initial_under_bias": (-0.2, -0.05, 0.05, 0.2),
+    "total_under_bias": (-0.2, -0.05, 0.05, 0.2),
+    "rank_gap": (-0.5, -0.2, 0.2, 0.5),
+}
+PATTERN_CATEGORICAL_FEATURES = ("hhad_handicap",)
+PATTERN_TRUE_FEATURES = (
+    "favorite_odds_danger_140_170",
+    "asian_deepen_high_water",
+    "euro_asian_divergence",
+)
+PATTERN_FEATURE_LABELS = {
+    "euro_draw_odds": "欧赔平赔",
+    "euro_favorite_odds": "热门胜赔",
+    "euro_probability_spread": "欧赔胜负概率差",
+    "favorite_odds_danger_140_170": "热门胜赔1.40-1.70",
+    "asian_favorite_depth": "热门方亚盘深度",
+    "asian_favorite_depth_change": "热门方升降盘",
+    "asian_favorite_water": "热门方即时水位",
+    "asian_favorite_water_change": "热门方水位变化",
+    "asian_favorite_initial_water": "热门方初盘水位",
+    "asian_underdog_water": "下盘方即时水位",
+    "asian_underdog_water_change": "下盘方水位变化",
+    "asian_underdog_initial_water": "下盘方初盘水位",
+    "asian_favorite_water_gap": "即时热门-下盘水位差",
+    "asian_initial_favorite_water_gap": "初盘热门-下盘水位差",
+    "asian_deepen_high_water": "升盘高水",
+    "euro_asian_divergence": "欧亚背离",
+    "hhad_handicap": "竞彩让球数",
+    "hhad_draw_odds": "竞彩让平赔率",
+    "hhad_draw_change": "竞彩让平赔率变化",
+    "total_current_line": "大小球盘口",
+    "total_line_change": "大小球升降",
+    "total_initial_over_water": "大球初盘水位",
+    "total_over_water": "大球即时水位",
+    "total_over_water_change": "大球水位变化",
+    "total_initial_under_water": "小球初盘水位",
+    "total_under_water": "小球即时水位",
+    "total_under_water_change": "小球水位变化",
+    "total_initial_under_bias": "初盘大球-小球水位差",
+    "total_under_bias": "即时大球-小球水位差",
+    "rank_gap": "排名差",
+}
 
 
 def _number(value: Any) -> Optional[float]:
@@ -202,11 +275,15 @@ def extract_prematch_features(
     current_favorite_depth = None
     favorite_initial_water = None
     favorite_current_water = None
+    underdog_initial_water = None
+    underdog_current_water = None
     if favorite_side == "home":
         initial_favorite_depth = initial_asian_line
         current_favorite_depth = current_asian_line
         favorite_initial_water = _at(asian_initial, 0)
         favorite_current_water = _at(asian_current, 0)
+        underdog_initial_water = _at(asian_initial, 2)
+        underdog_current_water = _at(asian_current, 2)
     elif favorite_side == "away":
         initial_favorite_depth = (
             -initial_asian_line if initial_asian_line is not None else None
@@ -216,6 +293,8 @@ def extract_prematch_features(
         )
         favorite_initial_water = _at(asian_initial, 2)
         favorite_current_water = _at(asian_current, 2)
+        underdog_initial_water = _at(asian_initial, 0)
+        underdog_current_water = _at(asian_current, 0)
 
     missing = []
     for market, values in (
@@ -277,6 +356,25 @@ def extract_prematch_features(
         "asian_favorite_water_change": change(
             favorite_current_water, favorite_initial_water
         ),
+        # The linear learner already receives raw home/away water and change.
+        # These side-normalised prices are kept for auditable combination
+        # mining without duplicating highly collinear vector columns.
+        "asian_favorite_initial_water": _safe(
+            favorite_initial_water, 1.0
+        ),
+        "asian_underdog_water": _safe(underdog_current_water, 1.0),
+        "asian_underdog_water_change": change(
+            underdog_current_water, underdog_initial_water
+        ),
+        "asian_underdog_initial_water": _safe(
+            underdog_initial_water, 1.0
+        ),
+        "asian_favorite_water_gap": change(
+            favorite_current_water, underdog_current_water
+        ),
+        "asian_initial_favorite_water_gap": change(
+            favorite_initial_water, underdog_initial_water
+        ),
         "asian_deepen_high_water": float(
             current_favorite_depth is not None
             and initial_favorite_depth is not None
@@ -301,8 +399,19 @@ def extract_prematch_features(
         "total_initial_line": _safe(_at(total_initial, 1), 2.5),
         "total_current_line": _safe(_at(total_current, 1), 2.5),
         "total_line_change": change(_at(total_current, 1), _at(total_initial, 1)),
+        "total_initial_over_water": _safe(_at(total_initial, 0), 1.0),
         "total_over_water": _safe(_at(total_current, 0), 1.0),
+        "total_over_water_change": change(
+            _at(total_current, 0), _at(total_initial, 0)
+        ),
+        "total_initial_under_water": _safe(_at(total_initial, 2), 1.0),
         "total_under_water": _safe(_at(total_current, 2), 1.0),
+        "total_under_water_change": change(
+            _at(total_current, 2), _at(total_initial, 2)
+        ),
+        "total_initial_under_bias": change(
+            _at(total_initial, 0), _at(total_initial, 2)
+        ),
         "total_under_bias": change(
             _at(total_current, 0), _at(total_current, 2)
         ),
@@ -403,6 +512,415 @@ def build_training_days(
         if examples:
             result.append({"owner_date": owner_date, "examples": examples})
     return result
+
+
+def _pretty_number(value: Optional[float]) -> str:
+    if value is None:
+        return ""
+    return f"{float(value):g}"
+
+
+def _pattern_feature_tokens(row: Dict[str, Any]) -> List[Tuple[str, Dict[str, Any]]]:
+    """Return one mutually-exclusive, pre-match bin per eligible feature."""
+    features = row.get("features") or {}
+    missing = set((row.get("quality") or {}).get("missing_markets") or [])
+    market_by_prefix = {
+        "euro_": "euro",
+        "favorite_": "euro",
+        "asian_": "asian",
+        "hhad_": "sporttery_handicap",
+        "total_": "total",
+    }
+    output = []
+
+    def market_missing(feature: str) -> bool:
+        return any(
+            feature.startswith(prefix) and market in missing
+            for prefix, market in market_by_prefix.items()
+        )
+
+    for feature, thresholds in PATTERN_NUMERIC_BINS.items():
+        if market_missing(feature):
+            continue
+        value = _number(features.get(feature))
+        if value is None or not math.isfinite(value):
+            continue
+        bin_index = len(thresholds)
+        for index, upper in enumerate(thresholds):
+            if value <= upper:
+                bin_index = index
+                break
+        lower = thresholds[bin_index - 1] if bin_index > 0 else None
+        upper = thresholds[bin_index] if bin_index < len(thresholds) else None
+        if lower is None:
+            range_label = f"≤{_pretty_number(upper)}"
+        elif upper is None:
+            range_label = f">{_pretty_number(lower)}"
+        else:
+            range_label = (
+                f"({_pretty_number(lower)},{_pretty_number(upper)}]"
+            )
+        token = f"{feature}#bin{bin_index}"
+        output.append((token, {
+            "token": token,
+            "feature": feature,
+            "feature_label": PATTERN_FEATURE_LABELS.get(feature, feature),
+            "operator": "range",
+            "lower_exclusive": lower,
+            "upper_inclusive": upper,
+            "label": range_label,
+        }))
+
+    for feature in PATTERN_CATEGORICAL_FEATURES:
+        if market_missing(feature):
+            continue
+        value = _number(features.get(feature))
+        if value is None:
+            continue
+        value = round(value * 4.0) / 4.0
+        token = f"{feature}#eq{_pretty_number(value)}"
+        output.append((token, {
+            "token": token,
+            "feature": feature,
+            "feature_label": PATTERN_FEATURE_LABELS.get(feature, feature),
+            "operator": "equal",
+            "value": value,
+            "label": f"={_pretty_number(value)}",
+        }))
+
+    for feature in PATTERN_TRUE_FEATURES:
+        if market_missing(feature) or _safe(_number(features.get(feature))) < 0.5:
+            continue
+        token = f"{feature}#true"
+        output.append((token, {
+            "token": token,
+            "feature": feature,
+            "feature_label": PATTERN_FEATURE_LABELS.get(feature, feature),
+            "operator": "true",
+            "label": "是",
+        }))
+    return output
+
+
+def _pattern_target(row: Dict[str, Any], selection: str) -> Optional[bool]:
+    label = row.get("label") or {}
+    if selection == "ordinary_draw":
+        return bool(label.get("ordinary_draw"))
+    if selection == "handicap_draw":
+        if _number((row.get("market") or {}).get("handicap")) is None:
+            return None
+        return bool(label.get("handicap_draw"))
+    return None
+
+
+def _pattern_odds(row: Dict[str, Any], selection: str) -> Optional[float]:
+    market = row.get("market") or {}
+    return _number(market.get(
+        "ordinary_draw_odds"
+        if selection == "ordinary_draw" else "handicap_draw_odds"
+    ))
+
+
+def _aggregate_pattern_rows(
+    rows: Sequence[Dict[str, Any]],
+    selection: str,
+    *,
+    allowed_keys: Optional[set] = None,
+) -> Tuple[Dict[Tuple[str, ...], Dict[str, float]], Dict[str, Dict[str, Any]]]:
+    counts = defaultdict(lambda: {
+        "support": 0.0, "hits": 0.0, "return": 0.0,
+    })
+    conditions = {}
+    for row in rows:
+        target = _pattern_target(row, selection)
+        if target is None:
+            continue
+        token_rows = _pattern_feature_tokens(row)
+        tokens = [item[0] for item in token_rows]
+        conditions.update({item[0]: item[1] for item in token_rows})
+        odds = _pattern_odds(row, selection)
+        for size in (1, 2, 3):
+            for key in combinations(tokens, size):
+                key = tuple(sorted(key))
+                if allowed_keys is not None and key not in allowed_keys:
+                    continue
+                stat = counts[key]
+                stat["support"] += 1
+                stat["hits"] += int(target)
+                if target and odds is not None and odds > 1:
+                    stat["return"] += odds
+    return dict(counts), conditions
+
+
+def _wilson_lower(hits: float, support: float, z: float = 1.28) -> float:
+    if support <= 0:
+        return 0.0
+    probability = hits / support
+    denominator = 1.0 + z * z / support
+    centre = probability + z * z / (2.0 * support)
+    spread = z * math.sqrt(
+        probability * (1.0 - probability) / support
+        + z * z / (4.0 * support * support)
+    )
+    return max(0.0, (centre - spread) / denominator)
+
+
+def mine_feature_patterns(
+    examples: Sequence[Dict[str, Any]],
+    selection: str,
+    *,
+    limit: int = 24,
+) -> Dict[str, Any]:
+    """Mine 1-3 feature combinations with an internal chronological holdout."""
+    rows = [
+        row for row in examples
+        if _pattern_target(row, selection) is not None
+    ]
+    dates = sorted({str(row.get("owner_date") or "")[:10] for row in rows})
+    empty = {
+        "selection": selection,
+        "status": "insufficient_samples",
+        "sample_count": len(rows),
+        "patterns": [],
+    }
+    if len(rows) < 120 or len(dates) < 14:
+        return empty
+    split_index = max(1, min(len(dates) - 5, int(len(dates) * 0.70)))
+    discovery_dates = set(dates[:split_index])
+    validation_dates = set(dates[split_index:])
+    discovery = [
+        row for row in rows
+        if str(row.get("owner_date") or "")[:10] in discovery_dates
+    ]
+    validation = [
+        row for row in rows
+        if str(row.get("owner_date") or "")[:10] in validation_dates
+    ]
+    if len(discovery) < 80 or len(validation) < 30:
+        return empty
+
+    discovery_base = sum(
+        int(bool(_pattern_target(row, selection))) for row in discovery
+    ) / len(discovery)
+    validation_base = sum(
+        int(bool(_pattern_target(row, selection))) for row in validation
+    ) / len(validation)
+    combined_base = sum(
+        int(bool(_pattern_target(row, selection))) for row in rows
+    ) / len(rows)
+    discovery_counts, condition_lookup = _aggregate_pattern_rows(
+        discovery, selection
+    )
+    candidates = []
+    for key, stat in discovery_counts.items():
+        support = int(stat["support"])
+        minimum_support = max(12, int(math.ceil(len(discovery) * 0.04)))
+        if support < minimum_support:
+            continue
+        hit_rate = stat["hits"] / support
+        lift = hit_rate - discovery_base
+        if lift < 0.04:
+            continue
+        candidates.append((
+            lift * math.sqrt(support) * (1.0 + 0.12 * (len(key) - 1)),
+            key,
+        ))
+    candidates.sort(reverse=True)
+    candidate_keys = {key for _, key in candidates[:800]}
+    if not candidate_keys:
+        return {
+            **empty,
+            "status": "no_stable_patterns",
+            "discovery_days": len(discovery_dates),
+            "validation_days": len(validation_dates),
+            "base_probability": round(combined_base * 100, 2),
+        }
+    validation_counts, validation_conditions = _aggregate_pattern_rows(
+        validation, selection, allowed_keys=candidate_keys
+    )
+    condition_lookup.update(validation_conditions)
+    combined_counts, _ = _aggregate_pattern_rows(
+        rows, selection, allowed_keys=candidate_keys
+    )
+
+    patterns = []
+    validation_minimum = max(5, int(math.ceil(len(validation) * 0.03)))
+    prior_strength = 25.0
+    for key in candidate_keys:
+        discovery_stat = discovery_counts.get(key) or {}
+        validation_stat = validation_counts.get(key) or {}
+        combined_stat = combined_counts.get(key) or {}
+        validation_support = int(validation_stat.get("support") or 0)
+        if validation_support < validation_minimum:
+            continue
+        validation_hits = int(validation_stat.get("hits") or 0)
+        validation_rate = validation_hits / validation_support
+        validation_lift = validation_rate - validation_base
+        if validation_lift < 0:
+            continue
+        support = int(combined_stat.get("support") or 0)
+        hits = int(combined_stat.get("hits") or 0)
+        if not support:
+            continue
+        hit_rate = hits / support
+        lift = hit_rate - combined_base
+        if lift < 0.025:
+            continue
+        shrunk_probability = (
+            hits + prior_strength * combined_base
+        ) / (support + prior_strength)
+        roi = (
+            (float(combined_stat.get("return") or 0) - support)
+            / support * 100
+        )
+        score = (
+            lift * 100 * 0.80
+            + validation_lift * 100 * 1.20
+            + math.log1p(support) * 1.5
+            + (len(key) - 1) * 1.5
+        )
+        conditions = [condition_lookup[token] for token in key]
+        description = " + ".join(
+            f"{item['feature_label']}{item['label']}"
+            for item in conditions
+        )
+        pattern_id = sha256(
+            f"{selection}|{'|'.join(key)}".encode("utf-8")
+        ).hexdigest()[:14]
+        patterns.append({
+            "pattern_id": pattern_id,
+            "selection": selection,
+            "tokens": list(key),
+            "conditions": conditions,
+            "description": description,
+            "size": len(key),
+            "support": support,
+            "hits": hits,
+            "hit_rate": round(hit_rate * 100, 2),
+            "base_probability": round(combined_base * 100, 2),
+            "lift_pp": round(lift * 100, 2),
+            "shrunk_probability": round(shrunk_probability * 100, 2),
+            "confidence_lower": round(_wilson_lower(hits, support) * 100, 2),
+            "roi": round(roi, 1),
+            "discovery_support": int(discovery_stat.get("support") or 0),
+            "discovery_hit_rate": round(
+                float(discovery_stat.get("hits") or 0)
+                / float(discovery_stat.get("support") or 1) * 100,
+                2,
+            ),
+            "validation_support": validation_support,
+            "validation_hits": validation_hits,
+            "validation_hit_rate": round(validation_rate * 100, 2),
+            "validation_lift_pp": round(validation_lift * 100, 2),
+            "score": round(score, 3),
+            "time_direction_consistent": True,
+        })
+    patterns.sort(
+        key=lambda item: (
+            float(item.get("score") or 0),
+            int(item.get("validation_support") or 0),
+        ),
+        reverse=True,
+    )
+    # Preserve representation diversity instead of returning 24 near-identical
+    # triples from one odds bin.
+    kept = []
+    size_limits = {1: 6, 2: 10, 3: 10}
+    size_counts = defaultdict(int)
+    for pattern in patterns:
+        size = int(pattern.get("size") or 1)
+        if size_counts[size] >= size_limits.get(size, limit):
+            continue
+        kept.append(pattern)
+        size_counts[size] += 1
+        if len(kept) >= max(1, int(limit)):
+            break
+    return {
+        "selection": selection,
+        "status": "shadow_patterns_ready" if kept else "no_stable_patterns",
+        "sample_count": len(rows),
+        "training_days": len(dates),
+        "discovery_days": len(discovery_dates),
+        "validation_days": len(validation_dates),
+        "base_probability": round(combined_base * 100, 2),
+        "patterns": kept,
+        "policy": (
+            "固定赛前分箱；前70%比赛日发现，后30%比赛日验证；"
+            "仅保留验证期方向一致的1至3项组合。"
+        ),
+    }
+
+
+def _matched_pattern_signal(
+    feature_row: Dict[str, Any], package: Optional[Dict[str, Any]]
+) -> Dict[str, Any]:
+    tokens = {
+        token for token, _ in _pattern_feature_tokens(feature_row)
+    }
+    matches = [
+        pattern for pattern in (package or {}).get("patterns") or []
+        if set(pattern.get("tokens") or []).issubset(tokens)
+    ]
+    matches.sort(
+        key=lambda item: (
+            int(item.get("size") or 1),
+            float(item.get("score") or 0),
+            int(item.get("validation_support") or 0),
+        ),
+        reverse=True,
+    )
+    matches = matches[:3]
+    weighted_probability = 0.0
+    total_weight = 0.0
+    total_validation_support = 0
+    for pattern in matches:
+        validation_support = int(pattern.get("validation_support") or 0)
+        validation_lift = max(
+            0.01, float(pattern.get("validation_lift_pp") or 0) / 100.0
+        )
+        specificity = 1.0 + 0.15 * (int(pattern.get("size") or 1) - 1)
+        weight = math.sqrt(max(1, validation_support)) * validation_lift * specificity
+        weighted_probability += (
+            float(pattern.get("shrunk_probability") or 0) / 100.0
+        ) * weight
+        total_weight += weight
+        total_validation_support += validation_support
+    probability = (
+        weighted_probability / total_weight if total_weight > 0 else None
+    )
+    # This layer is deliberately weaker than the market and logistic blend.
+    # It can reorder shadow candidates, but cannot dominate on a small pattern.
+    blend_weight = min(
+        0.18,
+        total_validation_support
+        / float(total_validation_support + 120) * 0.30,
+    ) if matches else 0.0
+    return {
+        "matched_count": len(matches),
+        "probability": probability,
+        "blend_weight": blend_weight,
+        "validation_support": total_validation_support,
+        "patterns": [{
+            key: pattern.get(key)
+            for key in (
+                "pattern_id", "description", "size", "support", "hits",
+                "hit_rate", "lift_pp", "shrunk_probability", "roi",
+                "validation_support", "validation_hit_rate",
+                "validation_lift_pp", "confidence_lower",
+            )
+        } for pattern in matches],
+    }
+
+
+def _apply_pattern_signal(
+    probability: Optional[float], signal: Dict[str, Any]
+) -> Tuple[Optional[float], float]:
+    pattern_probability = _number(signal.get("probability"))
+    weight = _safe(_number(signal.get("blend_weight")))
+    if probability is None or pattern_probability is None or weight <= 0:
+        return probability, 0.0
+    adjusted = probability * (1.0 - weight) + pattern_probability * weight
+    return adjusted, (adjusted - probability) * 100.0
 
 
 def _standardizer(vectors: List[List[float]]) -> Tuple[List[float], List[float]]:
@@ -562,6 +1080,14 @@ class FAESupervisedTrainer:
         margin_weights = _fit_softmax(
             vectors, margin_indexes, epochs=140 if fast else 360
         )
+        feature_patterns = {
+            "ordinary_draw": mine_feature_patterns(
+                rows, "ordinary_draw"
+            ),
+            "handicap_draw": mine_feature_patterns(
+                rows, "handicap_draw"
+            ),
+        }
         artifact = {
             "schema_version": SUPERVISED_SCHEMA_VERSION,
             "model_version": SUPERVISED_MODEL_VERSION,
@@ -578,6 +1104,7 @@ class FAESupervisedTrainer:
             "training_start_date": dates[0] if dates else None,
             "training_end_date": dates[-1] if dates else None,
             "league_priors": _league_priors(rows),
+            "feature_patterns": feature_patterns,
             "feature_explanations": {
                 "ordinary_draw": _weight_explanation(draw_weights),
                 "goal_margin": {
@@ -594,6 +1121,9 @@ class FAESupervisedTrainer:
                 "immutable_prematch_only": True,
                 "result_fields_used_as_features": False,
                 "market_blend": True,
+                "time_isolated_feature_pattern_mining": True,
+                "pattern_max_features": 3,
+                "pattern_max_blend_weight": 0.18,
                 "weekend_pool_correction": True,
                 "may_override_official_recommendations": False,
             },
@@ -601,7 +1131,8 @@ class FAESupervisedTrainer:
         identity = sha256(json.dumps(
             {key: artifact[key] for key in (
                 "model_version", "feature_names", "draw_weights",
-                "margin_weights", "sample_count", "training_end_date",
+                "margin_weights", "feature_patterns", "sample_count",
+                "training_end_date",
             )}, sort_keys=True, default=str
         ).encode("utf-8")).hexdigest()[:16]
         artifact["model_id"] = f"{SUPERVISED_MODEL_VERSION}-{identity}"
@@ -674,6 +1205,30 @@ class FAESupervisedPredictor:
                 draw_probability * (1.0 - league_weight)
                 + float(league_row["draw_probability"]) * league_weight
             )
+        draw_probability_without_patterns = draw_probability
+        draw_pattern_signal = _matched_pattern_signal(
+            feature_row,
+            (self.artifact.get("feature_patterns") or {}).get(
+                "ordinary_draw"
+            ),
+        )
+        draw_pattern_candidate, draw_pattern_adjustment = _apply_pattern_signal(
+            draw_probability, draw_pattern_signal
+        )
+        pattern_activation = self.artifact.get(
+            "feature_pattern_activation_guard"
+        )
+        draw_pattern_active = (
+            True if pattern_activation is None else bool(
+                (pattern_activation.get("ordinary_draw") or {}).get(
+                    "active"
+                )
+            )
+        )
+        draw_probability = (
+            draw_pattern_candidate
+            if draw_pattern_active else draw_probability_without_patterns
+        )
 
         handicap = _number(market.get("handicap"))
         target_margin = int(-handicap) if handicap is not None and float(-handicap).is_integer() else None
@@ -690,6 +1245,31 @@ class FAESupervisedPredictor:
                 )
         else:
             handicap_draw_probability = market_handicap_draw
+        handicap_probability_without_patterns = handicap_draw_probability
+        handicap_pattern_signal = _matched_pattern_signal(
+            feature_row,
+            (self.artifact.get("feature_patterns") or {}).get(
+                "handicap_draw"
+            ),
+        )
+        (
+            handicap_pattern_candidate,
+            handicap_pattern_adjustment,
+        ) = _apply_pattern_signal(
+            handicap_draw_probability, handicap_pattern_signal
+        )
+        handicap_pattern_active = (
+            True if pattern_activation is None else bool(
+                (pattern_activation.get("handicap_draw") or {}).get(
+                    "active"
+                )
+            )
+        )
+        handicap_draw_probability = (
+            handicap_pattern_candidate
+            if handicap_pattern_active
+            else handicap_probability_without_patterns
+        )
 
         if target_margin is None or target_margin == 0:
             favorite_win_probability = None
@@ -715,22 +1295,70 @@ class FAESupervisedPredictor:
         weekend_penalty_pp = 0.75 if feature_row["features"].get("weekend") and daily_match_count >= 12 else 0.0
         total_penalty_pp = pool_penalty_pp + weekend_penalty_pp
 
-        def output_probability(probability: Optional[float], market_probability: Optional[float], odds: Optional[float]) -> Dict[str, Any]:
+        def output_probability(
+            probability: Optional[float],
+            market_probability: Optional[float],
+            odds: Optional[float],
+            *,
+            probability_without_patterns: Optional[float],
+            pattern_signal: Dict[str, Any],
+            pattern_adjustment_pp: float,
+            pattern_active: bool,
+            pattern_candidate_probability: Optional[float],
+        ) -> Dict[str, Any]:
             if probability is None:
                 return {
                     "probability": None,
                     "ranking_probability": None,
+                    "probability_without_patterns": None,
+                    "ranking_probability_without_patterns": None,
                     "market_probability": round(market_probability * 100, 2) if market_probability is not None else None,
                     "value_edge": None,
+                    "feature_pattern_count": 0,
+                    "feature_pattern_active": False,
+                    "matched_feature_patterns": [],
                 }
             probability = max(0.01, min(0.99, probability))
             ranking = max(0.01, probability - total_penalty_pp / 100.0)
+            baseline = (
+                max(0.01, min(0.99, probability_without_patterns))
+                if probability_without_patterns is not None else probability
+            )
+            baseline_ranking = max(
+                0.01, baseline - total_penalty_pp / 100.0
+            )
             return {
                 "probability": round(probability * 100, 2),
                 "ranking_probability": round(ranking * 100, 2),
+                "probability_without_patterns": round(baseline * 100, 2),
+                "ranking_probability_without_patterns": round(
+                    baseline_ranking * 100, 2
+                ),
                 "market_probability": round(market_probability * 100, 2) if market_probability is not None else None,
                 "value_edge": round((probability * odds - 1.0) * 100, 2) if odds and odds > 1 else None,
                 "candidate_pool_penalty_pp": round(total_penalty_pp, 2),
+                "feature_pattern_count": int(
+                    pattern_signal.get("matched_count") or 0
+                ),
+                "feature_pattern_active": bool(pattern_active),
+                "feature_pattern_probability": round(
+                    float(pattern_signal["probability"]) * 100, 2
+                ) if pattern_signal.get("probability") is not None else None,
+                "feature_pattern_candidate_probability": round(
+                    float(pattern_candidate_probability) * 100, 2
+                ) if pattern_candidate_probability is not None else None,
+                "feature_pattern_blend_weight": round(
+                    float(pattern_signal.get("blend_weight") or 0), 4
+                ),
+                "feature_pattern_adjustment_pp": round(
+                    pattern_adjustment_pp if pattern_active else 0.0, 2
+                ),
+                "feature_pattern_candidate_adjustment_pp": round(
+                    pattern_adjustment_pp, 2
+                ),
+                "matched_feature_patterns": pattern_signal.get(
+                    "patterns"
+                ) or [],
             }
 
         return {
@@ -744,12 +1372,26 @@ class FAESupervisedPredictor:
                 draw_probability,
                 market_draw,
                 _number(market.get("ordinary_draw_odds")),
+                probability_without_patterns=(
+                    draw_probability_without_patterns
+                ),
+                pattern_signal=draw_pattern_signal,
+                pattern_adjustment_pp=draw_pattern_adjustment,
+                pattern_active=draw_pattern_active,
+                pattern_candidate_probability=draw_pattern_candidate,
             ),
             "handicap_draw": {
                 **output_probability(
                     handicap_draw_probability,
                     market_handicap_draw,
                     _number(market.get("handicap_draw_odds")),
+                    probability_without_patterns=(
+                        handicap_probability_without_patterns
+                    ),
+                    pattern_signal=handicap_pattern_signal,
+                    pattern_adjustment_pp=handicap_pattern_adjustment,
+                    pattern_active=handicap_pattern_active,
+                    pattern_candidate_probability=handicap_pattern_candidate,
                 ),
                 "target_goal_margin": target_margin,
                 "favorite_win_probability": round(favorite_win_probability * 100, 2) if favorite_win_probability is not None else None,
@@ -840,6 +1482,93 @@ def _top_k_metric(events: List[Dict[str, Any]], k: int = 3) -> Dict[str, Any]:
     result["days"] = len(grouped)
     result["per_day"] = max(1, int(k))
     return result
+
+
+def _baseline_pattern_events(events: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    result = []
+    for row in events:
+        item = dict(row)
+        item["probability"] = float(
+            row.get("probability_without_patterns")
+            if row.get("probability_without_patterns") is not None
+            else row.get("probability") or 0
+        )
+        item["ranking_probability"] = float(
+            row.get("ranking_probability_without_patterns")
+            if row.get("ranking_probability_without_patterns") is not None
+            else row.get("ranking_probability") or 0
+        )
+        result.append(item)
+    return result
+
+
+def _feature_pattern_comparison(events: List[Dict[str, Any]]) -> Dict[str, Any]:
+    baseline_events = _baseline_pattern_events(events)
+    baseline_all = _metric(baseline_events)
+    candidate_all = _metric(events)
+    baseline_top3 = _top_k_metric(baseline_events, 3)
+    candidate_top3 = _top_k_metric(events, 3)
+    matched = sum(
+        int(row.get("feature_pattern_count") or 0) > 0 for row in events
+    )
+    return {
+        "baseline_without_patterns": {
+            "all": baseline_all,
+            "top3": baseline_top3,
+        },
+        "candidate_with_patterns": {
+            "all": candidate_all,
+            "top3": candidate_top3,
+        },
+        "delta": {
+            "brier_improvement": round(
+                baseline_all.get("brier", 0)
+                - candidate_all.get("brier", 0), 4
+            ),
+            "top3_hit_rate_pp": round(
+                candidate_top3.get("hit_rate", 0)
+                - baseline_top3.get("hit_rate", 0), 1
+            ),
+            "top3_roi_pp": round(
+                candidate_top3.get("roi", 0)
+                - baseline_top3.get("roi", 0), 1
+            ),
+        },
+        "matched_events": matched,
+        "coverage_rate": round(
+            matched / len(events) * 100, 1
+        ) if events else 0,
+    }
+
+
+def _feature_pattern_activation_guard(
+    package: Dict[str, Any], comparison: Dict[str, Any]
+) -> Dict[str, Any]:
+    patterns = package.get("patterns") or []
+    if not patterns:
+        return {
+            "active": False,
+            "status": "no_stable_patterns",
+            "reasons": ["没有通过时间验证的组合特征"],
+        }
+    delta = comparison.get("delta") or {}
+    reasons = []
+    if int(comparison.get("matched_events") or 0) < 30:
+        reasons.append("样本外匹配少于30场")
+    if float(delta.get("brier_improvement") or 0) <= 0:
+        reasons.append("样本外概率误差未优于无组合基线")
+    if float(delta.get("top3_hit_rate_pp") or 0) < 0:
+        reasons.append("样本外Top3命中率低于无组合基线")
+    if float(delta.get("top3_roi_pp") or 0) < 0:
+        reasons.append("样本外Top3收益率低于无组合基线")
+    return {
+        "active": not reasons,
+        "status": "shadow_active" if not reasons else "shadow_blocked",
+        "matched_events": int(comparison.get("matched_events") or 0),
+        "coverage_rate": comparison.get("coverage_rate"),
+        "delta": delta,
+        "reasons": reasons or ["通过无组合基线样本外对照"],
+    }
 
 
 def _combo_metric(
@@ -1031,11 +1760,20 @@ class FAESupervisedBacktestEngine:
                     "match_id": example.get("match_id"),
                     "league": example.get("league"),
                     "probability": (draw.get("probability") or 0) / 100.0,
+                    "probability_without_patterns": (
+                        draw.get("probability_without_patterns") or 0
+                    ) / 100.0,
                     "market_probability": (
                         float(draw_market_probability) / 100.0
                         if draw_market_probability is not None else None
                     ),
                     "ranking_probability": (draw.get("ranking_probability") or 0) / 100.0,
+                    "ranking_probability_without_patterns": (
+                        draw.get("ranking_probability_without_patterns") or 0
+                    ) / 100.0,
+                    "feature_pattern_count": int(
+                        draw.get("feature_pattern_count") or 0
+                    ),
                     "odds": example["market"].get("ordinary_draw_odds"),
                     "label": bool(example["label"]["ordinary_draw"]),
                     "weekend": bool(example["features"].get("weekend")),
@@ -1050,12 +1788,23 @@ class FAESupervisedBacktestEngine:
                         "match_id": example.get("match_id"),
                         "league": example.get("league"),
                         "probability": (handicap.get("probability") or 0) / 100.0,
+                        "probability_without_patterns": (
+                            handicap.get("probability_without_patterns") or 0
+                        ) / 100.0,
                         "market_probability": (
                             float(handicap_market_probability) / 100.0
                             if handicap_market_probability is not None
                             else None
                         ),
                         "ranking_probability": (handicap.get("ranking_probability") or 0) / 100.0,
+                        "ranking_probability_without_patterns": (
+                            handicap.get(
+                                "ranking_probability_without_patterns"
+                            ) or 0
+                        ) / 100.0,
+                        "feature_pattern_count": int(
+                            handicap.get("feature_pattern_count") or 0
+                        ),
                         "odds": example["market"].get("handicap_draw_odds"),
                         "label": bool(example["label"]["handicap_draw"]),
                         "weekend": bool(example["features"].get("weekend")),
@@ -1069,6 +1818,61 @@ class FAESupervisedBacktestEngine:
         handicap_metric = _metric(handicap_events)
         draw_top3 = _top_k_metric(draw_events, 3)
         handicap_top3 = _top_k_metric(handicap_events, 3)
+        feature_pattern_comparison = {
+            "ordinary_draw": _feature_pattern_comparison(draw_events),
+            "handicap_draw": _feature_pattern_comparison(handicap_events),
+        }
+        feature_pattern_activation_guard = {
+            key: _feature_pattern_activation_guard(
+                (final_artifact.get("feature_patterns") or {}).get(key) or {},
+                feature_pattern_comparison[key],
+            )
+            for key in ("ordinary_draw", "handicap_draw")
+        }
+        final_artifact["feature_pattern_activation_guard"] = (
+            feature_pattern_activation_guard
+        )
+        release_guard = self._release_guard(
+            draw_metric,
+            handicap_metric,
+            draw_top3,
+            handicap_top3,
+            len(tested_dates),
+        )
+        pattern_reasons = []
+        for key, label in (
+            ("ordinary_draw", "平局"),
+            ("handicap_draw", "让平"),
+        ):
+            package = (final_artifact.get("feature_patterns") or {}).get(
+                key
+            ) or {}
+            if not (package.get("patterns") or []):
+                continue
+            comparison = feature_pattern_comparison[key]
+            delta = comparison.get("delta") or {}
+            if comparison.get("matched_events", 0) < 30:
+                pattern_reasons.append(
+                    f"{label}组合特征样本外仅匹配"
+                    f"{comparison.get('matched_events', 0)}场，少于30场"
+                )
+            if float(delta.get("brier_improvement") or 0) < 0:
+                pattern_reasons.append(
+                    f"{label}组合特征使样本外概率误差变差"
+                )
+            if float(delta.get("top3_hit_rate_pp") or 0) < 0:
+                pattern_reasons.append(
+                    f"{label}组合特征使Top3命中率下降"
+                )
+        if pattern_reasons:
+            existing_reasons = list(release_guard.get("reasons") or [])
+            if release_guard.get("can_promote"):
+                existing_reasons = []
+            release_guard["reasons"] = list(dict.fromkeys(
+                existing_reasons + pattern_reasons
+            ))
+            release_guard["status"] = "shadow_only"
+            release_guard["can_promote"] = False
         report = {
             "schema_version": SUPERVISED_SCHEMA_VERSION,
             "model_version": SUPERVISED_MODEL_VERSION,
@@ -1084,6 +1888,12 @@ class FAESupervisedBacktestEngine:
                 "ordinary_draw": draw_top3,
                 "handicap_draw": handicap_top3,
             },
+            "feature_pattern_shadow_comparison": (
+                feature_pattern_comparison
+            ),
+            "feature_pattern_activation_guard": (
+                feature_pattern_activation_guard
+            ),
             "two_draw_one_handicap_combo": _combo_metric(
                 draw_events, handicap_events
             ),
@@ -1103,18 +1913,14 @@ class FAESupervisedBacktestEngine:
                 "ordinary_draw": _metric([row for row in draw_events if not row["weekend"]]),
                 "handicap_draw": _metric([row for row in handicap_events if not row["weekend"]]),
             },
-            "release_guard": self._release_guard(
-                draw_metric,
-                handicap_metric,
-                draw_top3,
-                handicap_top3,
-                len(tested_dates),
-            ),
+            "release_guard": release_guard,
             "governance": {
                 "split": "expanding-window-by-owner-date",
                 "random_split": False,
                 "immutable_prematch_only": True,
                 "final_score_as_feature": False,
+                "feature_pattern_discovery_split": "first-70-percent-days",
+                "feature_pattern_validation_split": "last-30-percent-days",
             },
         }
         return {"model": final_artifact, "report": report}

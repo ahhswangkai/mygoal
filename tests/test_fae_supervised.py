@@ -7,8 +7,10 @@ from football_ai.supervised import (
     FAESupervisedBacktestEngine,
     FAESupervisedPredictor,
     FAESupervisedTrainer,
+    SUPERVISED_MODEL_VERSION,
     build_training_example,
     extract_prematch_features,
+    mine_feature_patterns,
 )
 
 
@@ -61,6 +63,49 @@ def examples(count=40, *, start="2026-07-01"):
     return rows
 
 
+def stable_pattern_examples(days=24):
+    start_day = date.fromisoformat("2026-01-01")
+    rows = []
+    match_id = 1000
+    for day_index in range(days):
+        owner_date = (start_day + timedelta(days=day_index)).isoformat()
+        for index in range(10):
+            source = prematch(match_id, owner_date)
+            low_draw_odds = index < 5
+            draw_odds = 3.05 if low_draw_odds else 4.10
+            source["input_snapshot"]["euro"]["initial"][1] = draw_odds + 0.05
+            source["input_snapshot"]["euro"]["current"][1] = draw_odds
+            is_draw = low_draw_odds and index < 3
+            rows.append(build_training_example(
+                source,
+                {
+                    "status": 2,
+                    "home_score": 1 if is_draw else 2,
+                    "away_score": 1,
+                },
+                owner_date=owner_date,
+            ))
+            match_id += 1
+    return rows
+
+
+def reversed_pattern_examples(days=24):
+    rows = stable_pattern_examples(days)
+    split_day = date.fromisoformat("2026-01-01") + timedelta(
+        days=int(days * 0.70)
+    )
+    for row in rows:
+        if date.fromisoformat(row["owner_date"]) < split_day:
+            continue
+        low_draw_odds = row["features"]["euro_draw_odds"] <= 3.2
+        row["label"]["ordinary_draw"] = not low_draw_odds
+        row["label"]["goal_margin"] = 0 if not low_draw_odds else 1
+        row["label"]["goal_margin_class"] = (
+            0 if not low_draw_odds else 1
+        )
+    return rows
+
+
 class FAESupervisedTests(unittest.TestCase):
     def test_labels_keep_result_out_of_feature_vector(self):
         self.assertIsNone(build_training_example(
@@ -80,6 +125,27 @@ class FAESupervisedTests(unittest.TestCase):
         self.assertFalse(row["label"]["ordinary_draw"])
         self.assertTrue(row["label"]["handicap_draw"])
         self.assertEqual(row["label"]["goal_margin"], 1)
+
+        asian = row["features"]
+        self.assertAlmostEqual(asian["asian_favorite_initial_water"], 0.88)
+        self.assertAlmostEqual(asian["asian_favorite_water"], 0.94)
+        self.assertAlmostEqual(asian["asian_underdog_initial_water"], 0.98)
+        self.assertAlmostEqual(asian["asian_underdog_water"], 0.92)
+        self.assertAlmostEqual(asian["asian_favorite_water_change"], 0.06)
+        self.assertAlmostEqual(asian["asian_underdog_water_change"], -0.06)
+        self.assertAlmostEqual(asian["asian_favorite_water_gap"], 0.02)
+        self.assertAlmostEqual(
+            asian["asian_initial_favorite_water_gap"], -0.10
+        )
+        total = row["features"]
+        self.assertAlmostEqual(total["total_initial_over_water"], 0.90)
+        self.assertAlmostEqual(total["total_over_water"], 0.96)
+        self.assertAlmostEqual(total["total_over_water_change"], 0.06)
+        self.assertAlmostEqual(total["total_initial_under_water"], 0.94)
+        self.assertAlmostEqual(total["total_under_water"], 0.88)
+        self.assertAlmostEqual(total["total_under_water_change"], -0.06)
+        self.assertAlmostEqual(total["total_initial_under_bias"], -0.04)
+        self.assertAlmostEqual(total["total_under_bias"], 0.08)
 
         away_row = build_training_example(
             prematch(2, "2026-08-22", handicap=1),
@@ -169,6 +235,7 @@ class FAESupervisedTests(unittest.TestCase):
                 cutoff["training_end_date"], cutoff["test_date"]
             )
         self.assertEqual(report["release_guard"]["status"], "shadow_only")
+        self.assertIn("feature_pattern_shadow_comparison", report)
         self.assertFalse(
             result["model"]["governance"]["may_override_official_recommendations"]
         )
@@ -214,6 +281,79 @@ class FAESupervisedTests(unittest.TestCase):
         self.assertEqual(summary["ordinary_draw"][0]["match_id"], "1")
         self.assertTrue(summary["combinations"])
         self.assertFalse(summary["combinations"][0]["actionable"])
+
+    def test_mines_time_stable_feature_combinations(self):
+        rows = stable_pattern_examples()
+
+        package = mine_feature_patterns(rows, "ordinary_draw")
+
+        self.assertEqual(package["status"], "shadow_patterns_ready")
+        self.assertGreaterEqual(package["validation_days"], 5)
+        self.assertTrue(any(
+            any(
+                condition.get("feature") == "euro_draw_odds"
+                for condition in pattern.get("conditions") or []
+            )
+            for pattern in package["patterns"]
+        ))
+        for pattern in package["patterns"]:
+            self.assertTrue(pattern["time_direction_consistent"])
+            self.assertGreaterEqual(pattern["validation_lift_pp"], 0)
+
+    def test_pattern_signal_is_exposed_as_bounded_shadow_adjustment(self):
+        rows = stable_pattern_examples()
+        artifact = FAESupervisedTrainer().fit(rows, fast=True)
+        predictor = FAESupervisedPredictor(artifact)
+        target = prematch(9999, "2026-02-01")
+        target["input_snapshot"]["euro"]["initial"][1] = 3.10
+        target["input_snapshot"]["euro"]["current"][1] = 3.05
+
+        result = predictor.predict(
+            target, owner_date="2026-02-01", daily_match_count=10
+        )["ordinary_draw"]
+
+        self.assertEqual(artifact["model_version"], SUPERVISED_MODEL_VERSION)
+        self.assertGreater(result["feature_pattern_count"], 0)
+        self.assertLessEqual(result["feature_pattern_blend_weight"], 0.18)
+        self.assertTrue(result["matched_feature_patterns"])
+        self.assertNotEqual(
+            result["probability"], result["probability_without_patterns"]
+        )
+
+    def test_pattern_with_reversed_future_direction_is_rejected(self):
+        package = mine_feature_patterns(
+            reversed_pattern_examples(), "ordinary_draw"
+        )
+
+        self.assertFalse(any(
+            pattern.get("tokens") == ["euro_draw_odds#bin1"]
+            for pattern in package.get("patterns") or []
+        ))
+
+    def test_failed_outer_guard_keeps_pattern_as_evidence_only(self):
+        artifact = FAESupervisedTrainer().fit(
+            stable_pattern_examples(), fast=True
+        )
+        artifact["feature_pattern_activation_guard"] = {
+            "ordinary_draw": {"active": False},
+            "handicap_draw": {"active": False},
+        }
+        target = prematch(9998, "2026-02-01")
+        target["input_snapshot"]["euro"]["initial"][1] = 3.10
+        target["input_snapshot"]["euro"]["current"][1] = 3.05
+
+        result = FAESupervisedPredictor(artifact).predict(
+            target, owner_date="2026-02-01", daily_match_count=10
+        )["ordinary_draw"]
+
+        self.assertFalse(result["feature_pattern_active"])
+        self.assertEqual(
+            result["probability"], result["probability_without_patterns"]
+        )
+        self.assertNotEqual(
+            result["feature_pattern_candidate_probability"],
+            result["probability_without_patterns"],
+        )
 
 
 if __name__ == "__main__":

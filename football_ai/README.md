@@ -53,7 +53,11 @@ against the deterministic probabilities and prediction-time odds.
 - `provider.py`: optional Volcengine Ark narrative client.
 - `skills.py`: Skill definitions, candidate construction and replay validation.
 - `supervised.py`: leakage-safe feature extraction, regularized draw/goal-margin
-  models, league priors, candidate-pool shrinkage and expanding-window tests.
+  models, league priors, candidate-pool shrinkage, chronological 1-3 feature
+  pattern mining (including both sides' initial/current Asian and totals
+  prices, movement and price gaps) and expanding-window tests. Feature
+  patterns remain a bounded shadow correction until they beat the no-pattern
+  baseline out of sample.
 - `version.py`: engine version, dimension weights, rule defaults and learning
   policy.
 
