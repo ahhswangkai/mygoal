@@ -66,6 +66,9 @@ FAE_DAILY_AI_TIMEOUT=180
 FAE_DAILY_AI_MAX_TOKENS=4096
 FAE_DAILY_AI_MAX_RETRIES=0
 FAE_DAILY_AI_THINKING=disabled
+FAE_SUPERVISED_SHADOW_ENABLED=true
+FAE_SUPERVISED_TRAINING_ENABLED=true
+FAE_SUPERVISED_TRAINING_DAYS=120
 ```
 
 API Key 只保存在服务器 `.env`，不要提交到 Git。修改后重启后端：
@@ -79,6 +82,10 @@ FAE 会自动运行确定性盘口分类、八维评分、概率、推荐和风�
 全日 AI 研判按比赛开赛时间增量运行：系统每5分钟扫描一次，比赛进入开赛前30分钟窗口后先刷新赔率，再只把本轮临近开赛的比赛交给火山方舟。此前已经完成的赛前结论会合并保留，逐步形成当天完整排名和组合。总览保存到 `fae_daily_ai_runs`，每次运行的逐场结论和赔率快照独立保存到 `fae_daily_ai_matches`。
 
 只有“全部比赛均未开赛”时生成的运行才可用于正式复盘。赛后系统每15分钟按该不可变快照结算 AI 主玩法、2串1、3串1、赔率、收益率及模型一致性冲突，结果保存到 `fae_daily_ai_reviews`。AI 主复盘优先驱动平/让平 Skill 候选；旧 `fae_draw_reviews` 仅保留作历史对照。火山结论与确定性概率严重冲突时会保留原始选择，但正式推荐和复盘使用一致性护栏后的有效选择。
+
+系统默认每2小时用最近28个不可变赛前快照执行一次新旧规则影子回测，结果保存到 `fae_backtest_reports`。该任务不调用火山引擎，可通过 `FAE_SHADOW_BACKTEST_ENABLED=false` 关闭，或用 `FAE_SHADOW_BACKTEST_DAYS=28` 调整窗口。`FAE_SHADOW_VALIDATION_START_DATE=2026-08-24` 用于隔离调参样本和真正的样本外验证；候选必须在该日期之后积累至少30场、5个比赛日，并同时通过 ROI、命中率和最大回撤门槛。达到门槛也不会自动发布。
+
+服务首次启动后约45秒、以及之后每天 `06:23`，系统用最近120个可结算比赛日的不可变赛前快照训练平局二分类和精确净胜球模型，并按比赛日扩展窗口做样本外回测。模型保存到 `fae_supervised_models`，回测保存到 `fae_supervised_backtests`。线上只展示影子概率，不改变火山主选、正式排行榜或投注组合；即使样本、Brier、校准误差和 Top3 ROI 全部门禁通过，也必须另行人工发布。
 
 - `FAE_AUTO_ANALYZE=true`：每次定时抓取后自动更新未开赛比赛。
 - `FAE_AUTO_NARRATIVE=false`：自动任务默认不调用大模型，避免重复消耗；手动重新运行时仍可调用方舟生成说明。
@@ -97,6 +104,9 @@ FAE 会自动运行确定性盘口分类、八维评分、概率、推荐和风�
 - `FAE_DAILY_AI_MAX_TOKENS=4096`：限制单批输出长度，防止超长响应。
 - `FAE_DAILY_AI_MAX_RETRIES=0`：全日任务失败时不自动重复扣费，由下一次调度或管理账号手动重跑。
 - `FAE_DAILY_AI_THINKING=disabled`：关闭隐藏深度思考，把输出预算用于可核验的五维结论和JSON。
+- `FAE_SUPERVISED_SHADOW_ENABLED=true`：在新研判中附加历史监督模型的影子概率，不覆盖正式结论。
+- `FAE_SUPERVISED_TRAINING_ENABLED=true`：开启每天一次的无大模型训练与滚动回测任务。
+- `FAE_SUPERVISED_TRAINING_DAYS=120`：训练读取的最近不可变赛前快照天数，程序限制为30至365天。
 - 同一天赔率快照没有变化时自动返回缓存，不重复调用模型；推荐页管理账号可强制重新研判。
 
 `/api/coding/v3` 使用 OpenAI 兼容的 Chat Completions 协议。若改用普通火山方舟模型 API，可将 `ARK_BASE_URL` 改为普通方舟地址，并把 `ARK_API_MODE` 改为 `responses`。

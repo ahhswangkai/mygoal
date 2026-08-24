@@ -845,7 +845,7 @@ class DailyAnalysisTests(unittest.TestCase):
         self.assertEqual(analysis["secondary_play"], "让负")
         self.assertTrue(analysis["consistency_guard"]["triggered"])
 
-    def test_handicap_secondary_replaces_letdraw_with_market_backed_cover(self):
+    def test_handicap_secondary_protects_value_when_cover_scores_are_close(self):
         source = {
             "sporttery_handicap": {
                 "value": -1,
@@ -862,14 +862,23 @@ class DailyAnalysisTests(unittest.TestCase):
             source, "让负", "让平"
         )
 
-        self.assertEqual(decision["selection"], "让胜")
-        self.assertTrue(decision["changed"])
+        self.assertEqual(decision["selection"], "让平")
+        self.assertFalse(decision["changed"])
         self.assertEqual(
-            decision["strategy"], "hhad-model-market-coverage-v1"
+            decision["strategy"],
+            "hhad-model-market-value-protection-v2",
         )
-        self.assertIn("替换原防选让平", decision["reason"])
+        self.assertTrue(decision["value_protection"]["triggered"])
+        self.assertEqual(
+            decision["value_protection"]["coverage_selection"],
+            "让胜",
+        )
+        self.assertGreaterEqual(
+            decision["value_protection"]["expected_return_gain"],
+            0.04,
+        )
 
-    def test_handicap_secondary_uses_direction_over_lower_letdraw_probability(self):
+    def test_handicap_secondary_can_keep_valuable_lower_probability_letdraw(self):
         source = {
             "sporttery_handicap": {
                 "value": -1,
@@ -886,7 +895,8 @@ class DailyAnalysisTests(unittest.TestCase):
             source, "让负", "让平"
         )
 
-        self.assertEqual(decision["selection"], "让胜")
+        self.assertEqual(decision["selection"], "让平")
+        self.assertTrue(decision["value_protection"]["triggered"])
         scores = {
             row["selection"]: row["coverage_score"]
             for row in decision["candidates"]
@@ -1218,14 +1228,142 @@ class DailyAnalysisTests(unittest.TestCase):
 
         self.assertEqual(analysis["model_primary_play"], "让平")
         self.assertEqual(analysis["primary_play"], "让负")
-        self.assertEqual(analysis["secondary_play"], "让胜")
+        self.assertEqual(analysis["secondary_play"], "让平")
         self.assertTrue(analysis["consistency_guard"]["triggered"])
         self.assertEqual(
-            analysis["secondary_selection_guard"]["selection"], "让胜"
+            analysis["secondary_selection_guard"]["strategy"],
+            "hhad-model-market-value-protection-v2",
         )
         self.assertEqual(
             analysis["consistency_guard"]["guard_type"],
             "exact_margin_market_alignment",
+        )
+
+    def test_two_option_combo_pairs_double_with_probability_anchor(self):
+        matches = [{
+            "match_id": "double",
+            "match_number": "周四005",
+            "analysis_source": "volcengine-ark",
+            "analysis": {
+                "primary_play": "让负",
+                "market_confidence": {"score": 75},
+                "secondary_selection_guard": {
+                    "candidates": [
+                        {
+                            "selection": "让负",
+                            "model_probability": 50,
+                            "odds": 1.8,
+                        },
+                        {
+                            "selection": "让平",
+                            "model_probability": 30,
+                            "odds": 3.5,
+                        },
+                        {
+                            "selection": "让胜",
+                            "model_probability": 20,
+                            "odds": 4.2,
+                        },
+                    ],
+                },
+                "two_option_recommendation": {
+                    "actionable": True,
+                    "selection_text": "让负 / 让平",
+                    "selections": ["让负", "让平"],
+                    "odds": {"让负": 1.8, "让平": 3.5},
+                    "coverage_score": 80,
+                    "pair_value_score": 56,
+                },
+            },
+        }, {
+            "match_id": "anchor",
+            "match_number": "周四002",
+            "analysis_source": "volcengine-ark",
+            "analysis": {
+                "primary_play": "主胜",
+                "market_confidence": {"score": 82},
+                "secondary_selection_guard": {
+                    "candidates": [
+                        {
+                            "selection": "主胜",
+                            "model_probability": 70,
+                            "odds": 1.5,
+                        },
+                        {
+                            "selection": "平局",
+                            "model_probability": 20,
+                            "odds": 4.0,
+                        },
+                        {
+                            "selection": "客胜",
+                            "model_probability": 10,
+                            "odds": 6.0,
+                        },
+                    ],
+                },
+                "two_option_recommendation": {
+                    "actionable": True,
+                    "selection_text": "主胜 / 平局",
+                    "selections": ["主胜", "平局"],
+                    "odds": {"主胜": 1.5, "平局": 4.0},
+                    "coverage_score": 90,
+                    "pair_value_score": 60,
+                },
+            },
+        }]
+
+        combinations = FAEDailyAIAnalyzer.build_two_option_combinations(
+            matches
+        )
+
+        self.assertEqual(len(combinations), 1)
+        self.assertEqual(
+            combinations[0]["double_pick"]["match_id"], "double"
+        )
+        self.assertEqual(
+            combinations[0]["anchor_pick"]["selection"], "主胜"
+        )
+        self.assertEqual(combinations[0]["minimum_path_odds"], 2.7)
+
+    def test_two_option_combo_rejects_weak_single_anchor(self):
+        matches = [{
+            "match_id": "double",
+            "analysis_source": "volcengine-ark",
+            "analysis": {
+                "primary_play": "让负",
+                "market_confidence": {"score": 75},
+                "secondary_selection_guard": {"candidates": [
+                    {"selection": "让负", "model_probability": 50, "odds": 1.8},
+                    {"selection": "让平", "model_probability": 30, "odds": 3.5},
+                ]},
+                "two_option_recommendation": {
+                    "actionable": True,
+                    "selections": ["让负", "让平"],
+                    "odds": {"让负": 1.8, "让平": 3.5},
+                    "coverage_score": 80,
+                },
+            },
+        }, {
+            "match_id": "weak",
+            "analysis_source": "volcengine-ark",
+            "analysis": {
+                "primary_play": "主胜",
+                "market_confidence": {"score": 80},
+                "secondary_selection_guard": {"candidates": [
+                    {"selection": "主胜", "model_probability": 59, "odds": 1.6},
+                ]},
+                "two_option_recommendation": {
+                    "actionable": True,
+                    "selections": ["主胜", "平局"],
+                    "odds": {"主胜": 1.6, "平局": 3.8},
+                    "coverage_score": 82,
+                },
+            },
+        }]
+
+        self.assertEqual(
+            FAEDailyAIAnalyzer.build_two_option_combinations(matches),
+            [],
         )
 
     def test_low_total_does_not_keep_draw_ahead_of_strong_home_direction(self):
@@ -2129,6 +2267,10 @@ class DailyAnalysisTests(unittest.TestCase):
                     "euro": {"current": [1.5, 3.8, 5.5]},
                     "fundamentals": {"large": "payload"},
                     "historical_goal_margin_model": {"version": "v1"},
+                    "supervised_shadow": {
+                        "model_id": "shadow-1",
+                        "ordinary_draw": {"probability": 31.2},
+                    },
                     "fae_core": {"recommendation": {"category_scores": [{
                         "label": "让平",
                         "odds": 3.5,
@@ -2149,6 +2291,10 @@ class DailyAnalysisTests(unittest.TestCase):
         self.assertEqual(row["analysis"]["primary_play"], "让平")
         self.assertNotIn("historical_odds_rules", row["analysis"])
         self.assertNotIn("fundamentals", row["input_snapshot"])
+        self.assertEqual(
+            row["input_snapshot"]["supervised_shadow"]["model_id"],
+            "shadow-1",
+        )
         self.assertEqual(
             row["input_snapshot"]["fae_core"]["recommendation"]
             ["category_scores"][0],

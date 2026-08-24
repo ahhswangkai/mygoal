@@ -30,6 +30,13 @@ against the deterministic probabilities and prediction-time odds.
 11. Candidates are replayed against historical reviews, then explicitly promoted
    or rolled back; production parameters never change merely because one match
    finished.
+12. The supervised shadow learner derives ordinary-draw and exact goal-margin
+   labels from settled results, but trains only on immutable pre-match features.
+   Expanding-window tests compare its probability error with the no-vig market,
+   and separately settle daily Top3 and 2-draw + 1-handicap-draw combinations.
+13. Weekend and large-candidate slates receive an explicit probability shrinkage.
+   The model stays non-actionable until sample, calibration and Top3 ROI gates all
+   pass; passing never triggers automatic promotion.
 
 ## Modules
 
@@ -45,6 +52,8 @@ against the deterministic probabilities and prediction-time odds.
   feedback policy.
 - `provider.py`: optional Volcengine Ark narrative client.
 - `skills.py`: Skill definitions, candidate construction and replay validation.
+- `supervised.py`: leakage-safe feature extraction, regularized draw/goal-margin
+  models, league priors, candidate-pool shrinkage and expanding-window tests.
 - `version.py`: engine version, dimension weights, rule defaults and learning
   policy.
 
@@ -62,6 +71,11 @@ against the deterministic probabilities and prediction-time odds.
 - `fae_daily_ai_matches`: one prediction-time odds snapshot per run and match.
 - `fae_daily_ai_batches`: paid Ark checkpoints used for safe retries.
 - `fae_daily_ai_reviews`: AI-primary settlement plus cached Ark deep review.
+- `fae_backtest_reports`: immutable-prematch rolling and shadow-version reports.
+- `fae_supervised_models`: immutable supervised shadow artifacts and feature
+  coefficient explanations.
+- `fae_supervised_backtests`: expanding-window probability, Top3, weekend and
+  2-draw + 1-handicap-draw reports.
 - `fae_skill_versions`: immutable active and historical Skill versions.
 - `fae_skill_candidates`: review-generated candidates waiting for promotion.
 - `fae_skill_deployments`: promotion and rollback audit history.
@@ -85,6 +99,10 @@ remain visible during migration.
 - `GET /api/fae/daily-ai/review?date=YYYY-MM-DD`
 - `GET /api/fae/daily-ai/review/stats`
 - `POST /api/fae/daily-ai/review`
+- `GET /api/fae/backtest?days=28`
+- `POST /api/fae/backtest`（管理员刷新不可变赛前快照影子回测）
+- `GET /api/fae/supervised-model`
+- `POST /api/fae/supervised-model/train`（管理员训练；结果仍为影子模型）
 - `GET /api/fae/version`
 - `POST /api/fae/analyze-daily`
 - `POST /api/fae/review`
@@ -102,5 +120,7 @@ The former `/api/match/<id>/ai-analysis` route remains an alias for compatibilit
 - FAE v2.0: introduced the fundamental-data interface.
 - FAE v2.1: versioned Skill candidates, replay validation, controlled promotion
   and rollback.
-- FAE v3.0: intended milestone for calibrated historical accuracy and richer
-  automatic weighting after enough reviewed samples exist.
+- FAE v2.14: leakage-safe historical supervision for ordinary draws and exact
+  goal margins, expanding-window validation and weekend candidate-pool control.
+- FAE v3.0: intended milestone for explicitly promoted calibrated models after
+  enough untouched shadow samples pass the release gates.

@@ -95,6 +95,9 @@ class MongoDBStorage:
         self.fae_daily_ai_matches_collection = self.db['fae_daily_ai_matches']
         self.fae_daily_ai_batches_collection = self.db['fae_daily_ai_batches']
         self.fae_daily_ai_reviews_collection = self.db['fae_daily_ai_reviews']
+        self.fae_backtest_reports_collection = self.db['fae_backtest_reports']
+        self.fae_supervised_models_collection = self.db['fae_supervised_models']
+        self.fae_supervised_backtests_collection = self.db['fae_supervised_backtests']
         self.wecom_deliveries_collection = self.db['wecom_deliveries']
         self.user_picks_collection = self.db['user_picks']
         self.bets_collection = self.db['bets']
@@ -227,6 +230,24 @@ class MongoDBStorage:
             )
             self.fae_daily_ai_reviews_collection.create_index([
                 ('owner_date', ASCENDING), ('reviewed_at', DESCENDING)
+            ])
+            self.fae_backtest_reports_collection.create_index(
+                [('report_id', ASCENDING)], unique=True
+            )
+            self.fae_backtest_reports_collection.create_index([
+                ('generated_at', DESCENDING)
+            ])
+            self.fae_supervised_models_collection.create_index(
+                [('model_id', ASCENDING)], unique=True
+            )
+            self.fae_supervised_models_collection.create_index([
+                ('trained_at', DESCENDING), ('status', ASCENDING)
+            ])
+            self.fae_supervised_backtests_collection.create_index(
+                [('model_id', ASCENDING)], unique=True
+            )
+            self.fae_supervised_backtests_collection.create_index([
+                ('generated_at', DESCENDING)
             ])
             self.wecom_deliveries_collection.create_index(
                 [('delivery_key', ASCENDING)], unique=True
@@ -624,6 +645,24 @@ class MongoDBStorage:
         except Exception as e:
             self.logger.error(f"获取比赛列表失败: {str(e)}")
             return []
+
+    def get_matches_by_ids(self, match_ids):
+        """Read multiple matches in one query for review/backtest jobs."""
+        try:
+            ids = sorted({
+                str(value) for value in match_ids if value not in (None, '')
+            })
+            if not ids:
+                return {}
+            return {
+                str(item.get('match_id')): item
+                for item in self.matches_collection.find(
+                    {'match_id': {'$in': ids}}, {'_id': 0}
+                )
+            }
+        except Exception as e:
+            self.logger.error(f"批量获取比赛数据失败: {str(e)}")
+            return {}
     
     def get_matches_by_league(self, league):
         """
@@ -1012,6 +1051,7 @@ class MongoDBStorage:
                     'input_snapshot.sporttery_handicap.current': 1,
                     'input_snapshot.total.current': 1,
                     'input_snapshot.historical_goal_margin_model': 1,
+                    'input_snapshot.supervised_shadow': 1,
                     'input_snapshot.fae_core.recommendation.category_scores.label': 1,
                     'input_snapshot.fae_core.recommendation.category_scores.odds': 1,
                     'input_snapshot.fae_core.recommendation.category_scores.bet_score': 1,
@@ -1225,6 +1265,87 @@ class MongoDBStorage:
                 'action': 'hold',
             })
         return aggregate_daily_ai_reviews(reviews, weights)
+
+    def save_fae_backtest_report(self, report):
+        """Persist the latest rolling old/new shadow comparison."""
+        try:
+            payload = dict(report or {})
+            report_id = str(payload.get('report_id') or '')
+            if not report_id:
+                raise ValueError('影子回测缺少 report_id')
+            self.fae_backtest_reports_collection.update_one(
+                {'report_id': report_id}, {'$set': payload}, upsert=True
+            )
+            return True
+        except Exception as e:
+            self.logger.error(f"保存 FAE 影子回测失败: {str(e)}")
+            return False
+
+    def get_fae_backtest_report(self, requested_days=28):
+        try:
+            return self.fae_backtest_reports_collection.find_one(
+                {
+                    'requested_days': int(requested_days),
+                    'candidate_version': ENGINE_VERSION,
+                },
+                {'_id': 0},
+                sort=[('generated_at', DESCENDING)],
+            )
+        except Exception as e:
+            self.logger.error(f"读取 FAE 影子回测失败: {str(e)}")
+            return None
+
+    def save_fae_supervised_model(self, model):
+        """Persist one immutable supervised-model artifact."""
+        try:
+            payload = dict(model or {})
+            model_id = str(payload.get('model_id') or '')
+            if not model_id:
+                raise ValueError('监督模型缺少 model_id')
+            self.fae_supervised_models_collection.update_one(
+                {'model_id': model_id}, {'$set': payload}, upsert=True
+            )
+            return True
+        except Exception as e:
+            self.logger.error(f"保存 FAE 监督模型失败: {str(e)}")
+            return False
+
+    def get_latest_fae_supervised_model(self, include_shadow=True):
+        """Read the newest released model, or newest shadow model if allowed."""
+        try:
+            query = {} if include_shadow else {'status': 'released'}
+            return self.fae_supervised_models_collection.find_one(
+                query,
+                {'_id': 0},
+                sort=[('trained_at', DESCENDING)],
+            )
+        except Exception as e:
+            self.logger.error(f"读取 FAE 监督模型失败: {str(e)}")
+            return None
+
+    def save_fae_supervised_backtest(self, report):
+        """Persist the rolling out-of-sample report bound to a model id."""
+        try:
+            payload = dict(report or {})
+            model_id = str(payload.get('model_id') or '')
+            if not model_id:
+                raise ValueError('监督回测缺少 model_id')
+            self.fae_supervised_backtests_collection.update_one(
+                {'model_id': model_id}, {'$set': payload}, upsert=True
+            )
+            return True
+        except Exception as e:
+            self.logger.error(f"保存 FAE 监督回测失败: {str(e)}")
+            return False
+
+    def get_latest_fae_supervised_backtest(self):
+        try:
+            return self.fae_supervised_backtests_collection.find_one(
+                {}, {'_id': 0}, sort=[('generated_at', DESCENDING)]
+            )
+        except Exception as e:
+            self.logger.error(f"读取 FAE 监督回测失败: {str(e)}")
+            return None
 
     def _latest_fae_daily_ai_reviews(self, query=None, limit=None):
         """Return one latest review per match day.

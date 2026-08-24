@@ -15,7 +15,7 @@ from .provider import ArkNarrativeClient, FAEError, FAEOutputError
 from .version import ENGINE_VERSION
 
 
-DAILY_PROMPT_VERSION = "five-market-daily-v27-value-ranked-two-option"
+DAILY_PROMPT_VERSION = "five-market-daily-v28-secondary-value-combo"
 
 OFFICIAL_PLAY_SELECTIONS = {"平局", "让平"}
 OFFICIAL_MIN_BET_SCORE = 70.0
@@ -29,6 +29,15 @@ TWO_OPTION_MIN_SECOND_GAP = 2.0
 TWO_OPTION_DAILY_LIMIT = 5
 TWO_OPTION_LOW_PRICE_FAVORITE_LIMIT = 2
 TWO_OPTION_LOW_PRICE_FAVORITE_ODDS = 1.45
+TWO_OPTION_SECONDARY_VALUE_MAX_GAP = 5.0
+TWO_OPTION_SECONDARY_VALUE_MIN_GAIN = 0.04
+TWO_OPTION_SECONDARY_VALUE_MIN_RETURN = 0.90
+TWO_OPTION_COMBO_LIMIT = 3
+TWO_OPTION_COMBO_MIN_ANCHOR_PROBABILITY = 60.0
+TWO_OPTION_COMBO_MIN_ANCHOR_EXPECTED_RETURN = 0.90
+TWO_OPTION_COMBO_MIN_JOINT_COVERAGE = 40.0
+TWO_OPTION_COMBO_MIN_PATH_ODDS = 2.40
+TWO_OPTION_COMBO_TARGET_PATH_ODDS = 3.00
 TWO_OPTION_PLAY_SELECTIONS = {
     "主胜", "平局", "客胜", "让胜", "让平", "让负",
 }
@@ -156,6 +165,9 @@ def compact_daily_ai_run(source: Optional[Dict[str, Any]]) -> Optional[Dict[str,
                 "total": {"current": (snapshot.get("total") or {}).get("current")},
                 "historical_goal_margin_model": snapshot.get(
                     "historical_goal_margin_model"
+                ) or {},
+                "supervised_shadow": snapshot.get(
+                    "supervised_shadow"
                 ) or {},
                 "fae_core": {
                     "recommendation": {"category_scores": scores}
@@ -1988,6 +2000,7 @@ class FAEDailyAIAnalyzer:
         summary = self._apply_summary_guard(summary, matches)
         summary = self._apply_no_bet_summary(summary, matches)
         summary = self.attach_draw_radar_summary(summary, matches)
+        summary = self.attach_supervised_shadow_summary(summary, matches)
         summary = self.attach_league_model_rankings(summary, matches)
         summary = self.attach_upset_warning_summary(summary, matches)
         summary = self.attach_odds_band_summary(summary, matches)
@@ -2264,6 +2277,9 @@ class FAEDailyAIAnalyzer:
             daily_summary, stored_matches
         )
         daily_summary = self.attach_draw_radar_summary(
+            daily_summary, stored_matches
+        )
+        daily_summary = self.attach_supervised_shadow_summary(
             daily_summary, stored_matches
         )
         daily_summary = self.attach_league_model_rankings(
@@ -3060,18 +3076,59 @@ class FAEDailyAIAnalyzer:
                 row for row in alternatives
                 if row.get("coverage_score") is not None
             ]
+            ranked = sorted(
+                ranked,
+                key=lambda row: (
+                    float(row.get("coverage_score") or 0),
+                    float(row.get("expected_return") or 0),
+                    float(row.get("model_probability") or 0),
+                    float(row.get("market_probability") or 0),
+                ),
+                reverse=True,
+            )
+            selected_row = ranked[0] if ranked else {}
+            value_protection = {
+                "triggered": False,
+                "coverage_selection": selected_row.get("selection"),
+                "effective_selection": selected_row.get("selection"),
+            }
+            if len(ranked) >= 2:
+                value_row = ranked[1]
+                coverage_gap = (
+                    float(selected_row.get("coverage_score") or 0)
+                    - float(value_row.get("coverage_score") or 0)
+                )
+                selected_return = _number(
+                    selected_row.get("expected_return")
+                )
+                value_return = _number(value_row.get("expected_return"))
+                return_gain = (
+                    value_return - selected_return
+                    if selected_return is not None
+                    and value_return is not None else None
+                )
+                if (
+                    coverage_gap <= TWO_OPTION_SECONDARY_VALUE_MAX_GAP
+                    and return_gain is not None
+                    and return_gain >= TWO_OPTION_SECONDARY_VALUE_MIN_GAIN
+                    and value_return >= TWO_OPTION_SECONDARY_VALUE_MIN_RETURN
+                ):
+                    value_protection = {
+                        "triggered": True,
+                        "coverage_selection": selected_row.get("selection"),
+                        "effective_selection": value_row.get("selection"),
+                        "coverage_gap": round(coverage_gap, 2),
+                        "expected_return_gain": round(return_gain, 3),
+                        "coverage_expected_return": selected_return,
+                        "effective_expected_return": value_return,
+                        "reason": (
+                            "第二、第三方向覆盖分接近，改用赔率期望更高的防选"
+                        ),
+                    }
+                    selected_row = value_row
             selected = (
-                max(
-                    ranked,
-                    key=lambda row: (
-                        float(row.get("coverage_score") or 0),
-                        float(row.get("expected_return") or 0),
-                        float(row.get("model_probability") or 0),
-                        float(row.get("market_probability") or 0),
-                    ),
-                )["selection"]
-                if ranked
-                else candidate
+                str(selected_row.get("selection") or "观望")
+                if selected_row else candidate
                 if candidate in same_market
                 and candidate not in {primary_play, "观望"}
                 else "观望"
@@ -3086,17 +3143,31 @@ class FAEDailyAIAnalyzer:
             )
             reason = (
                 f"让球双选动态次选：主选{primary_play}后，"
-                f"{selected}覆盖分{selected_row.get('coverage_score')}最高"
+                f"选择{selected}，覆盖分"
+                f"{selected_row.get('coverage_score')}"
             )
+            if value_protection.get("triggered"):
+                reason += (
+                    f"；与{value_protection.get('coverage_selection')}仅差"
+                    f"{value_protection.get('coverage_gap')}分，但赔率期望提高"
+                    f"{float(value_protection.get('expected_return_gain') or 0) * 100:.1f}%"
+                )
+            else:
+                reason += "，为剩余方向最高覆盖分"
             if changed:
                 reason += f"，替换原防选{candidate}"
             return {
                 "selection": selected,
-                "strategy": "hhad-model-market-coverage-v1",
+                "strategy": (
+                    "hhad-model-market-value-protection-v2"
+                    if value_protection.get("triggered")
+                    else "hhad-model-market-coverage-v1"
+                ),
                 "generated_secondary": candidate or None,
                 "changed": changed,
                 "model_weight": HANDICAP_SECONDARY_MODEL_WEIGHT,
                 "market_weight": HANDICAP_SECONDARY_MARKET_WEIGHT,
+                "value_protection": value_protection,
                 "candidates": rows,
                 "reason": reason,
             }
@@ -3451,6 +3522,21 @@ class FAEDailyAIAnalyzer:
             and shortest_odds is not None
             and shortest_odds < TWO_OPTION_LOW_PRICE_FAVORITE_ODDS
         )
+        minimum_anchor_odds = (
+            TWO_OPTION_COMBO_MIN_PATH_ODDS / shortest_odds
+            if shortest_odds is not None and shortest_odds > 0 else None
+        )
+        target_anchor_odds = (
+            TWO_OPTION_COMBO_TARGET_PATH_ODDS / shortest_odds
+            if shortest_odds is not None and shortest_odds > 0 else None
+        )
+        parlay_fit = (
+            "优" if minimum_anchor_odds is not None
+            and minimum_anchor_odds <= 1.80
+            else "中" if minimum_anchor_odds is not None
+            and minimum_anchor_odds <= 2.10
+            else "低"
+        )
         eligible = bool(
             coverage >= TWO_OPTION_MIN_COVERAGE
             and confidence >= TWO_OPTION_MIN_MARKET_CONFIDENCE
@@ -3528,6 +3614,15 @@ class FAEDailyAIAnalyzer:
             ),
             "low_price_favorite": low_price_favorite,
             "low_price_penalty": round(low_price_penalty, 2),
+            "minimum_anchor_odds": (
+                round(minimum_anchor_odds, 2)
+                if minimum_anchor_odds is not None else None
+            ),
+            "target_anchor_odds": (
+                round(target_anchor_odds, 2)
+                if target_anchor_odds is not None else None
+            ),
+            "parlay_fit": parlay_fit,
             "rank_score": round(rank_score, 2),
             "reason": (
                 f"同市场前两项覆盖分{coverage:.1f}，次选领先第三项"
@@ -6026,6 +6121,126 @@ class FAEDailyAIAnalyzer:
         return result
 
     @classmethod
+    def attach_supervised_shadow_summary(
+        cls,
+        summary: Dict[str, Any],
+        matches: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        """Expose supervised rankings without changing official selections."""
+        result = dict(summary or {})
+        groups = {"ordinary_draw": [], "handicap_draw": []}
+        model_meta = {}
+        for match in matches or []:
+            shadow = (match.get("input_snapshot") or {}).get(
+                "supervised_shadow"
+            ) or {}
+            if not shadow.get("model_id"):
+                continue
+            model_meta = {
+                "model_id": shadow.get("model_id"),
+                "model_version": shadow.get("model_version"),
+                "sample_count": shadow.get("sample_count"),
+                "training_end_date": shadow.get("training_end_date"),
+                "status": shadow.get("status") or "shadow",
+            }
+            for key, selection in (
+                ("ordinary_draw", "平局"),
+                ("handicap_draw", "让平"),
+            ):
+                profile = shadow.get(key) or {}
+                probability = _number(profile.get("probability"))
+                ranking_probability = _number(
+                    profile.get("ranking_probability")
+                )
+                if probability is None or ranking_probability is None:
+                    continue
+                groups[key].append({
+                    "match_id": str(match.get("match_id") or ""),
+                    "match_number": match.get("match_number"),
+                    "home_team": match.get("home_team"),
+                    "away_team": match.get("away_team"),
+                    "league": match.get("league"),
+                    "selection": selection,
+                    "probability": round(probability, 2),
+                    "ranking_probability": round(
+                        ranking_probability, 2
+                    ),
+                    "market_probability": profile.get(
+                        "market_probability"
+                    ),
+                    "value_edge": profile.get("value_edge"),
+                    "candidate_pool_penalty_pp": profile.get(
+                        "candidate_pool_penalty_pp"
+                    ),
+                    "target_goal_margin": profile.get(
+                        "target_goal_margin"
+                    ),
+                    "favorite_win_probability": profile.get(
+                        "favorite_win_probability"
+                    ),
+                    "conditional_exact_margin_probability": profile.get(
+                        "conditional_exact_margin_probability"
+                    ),
+                    "quality": shadow.get("quality") or {},
+                    "actionable": False,
+                })
+        for key in groups:
+            groups[key] = sorted(
+                groups[key],
+                key=lambda item: (
+                    float(item.get("ranking_probability") or 0),
+                    float(item.get("value_edge") or -999),
+                ),
+                reverse=True,
+            )[:3]
+
+        combinations = []
+        draw = groups["ordinary_draw"]
+        handicap_draw = groups["handicap_draw"]
+        if len(draw) >= 2 and handicap_draw:
+            picks = [dict(draw[0]), dict(draw[1])]
+            used = {str(item.get("match_id") or "") for item in picks}
+            let_pick = next(
+                (
+                    item for item in handicap_draw
+                    if str(item.get("match_id") or "") not in used
+                ),
+                None,
+            )
+            if let_pick:
+                picks.append(dict(let_pick))
+                combinations.append({
+                    "play": "3场2、3关",
+                    "structure": "2平+1让平",
+                    "picks": [{
+                        "match_id": item.get("match_id"),
+                        "match_number": item.get("match_number"),
+                        "selection": item.get("selection"),
+                        "probability": item.get("probability"),
+                        "ranking_probability": item.get(
+                            "ranking_probability"
+                        ),
+                    } for item in picks],
+                    "actionable": False,
+                    "status": "shadow",
+                    "reason": (
+                        "仅按校准概率生成影子组合；让平模型及组合发布"
+                        "门禁通过前不得进入正式推荐。"
+                    ),
+                })
+        result["supervised_shadow"] = {
+            **model_meta,
+            "ordinary_draw": groups["ordinary_draw"],
+            "handicap_draw": groups["handicap_draw"],
+            "combinations": combinations,
+            "policy": (
+                "按不可变赛前快照训练并进行候选池概率收缩；当前仅影子"
+                "验证，不覆盖正式平/让平排行榜和投注组合。"
+            ),
+        }
+        return result
+
+    @classmethod
     def _radar_official_level(
         cls,
         candidate: Dict[str, Any],
@@ -6483,6 +6698,9 @@ class FAEDailyAIAnalyzer:
                 if str(item.get("match_id") or "") not in promoted_ids
             ]
         result["pools"] = pools
+        result["two_option_combinations"] = (
+            cls.build_two_option_combinations(matches)
+        )
 
         promoted = sorted(
             [
@@ -7596,6 +7814,204 @@ class FAEDailyAIAnalyzer:
         return -HANDICAP_VALUES[key] if receiving else HANDICAP_VALUES[key]
 
     @classmethod
+    def build_two_option_combinations(
+        cls,
+        matches: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """Pair one core double with a different high-confidence single.
+
+        One unit is assigned to each double-selection path, so the combination
+        costs two units.  ``minimum_path_odds`` is therefore the most useful
+        guard: values above 2.0 make both winning paths profitable before any
+        assumption about which side of the double lands.
+        """
+        core = [
+            item for item in matches
+            if (((item.get("analysis") or {})
+                 .get("two_option_recommendation") or {})
+                .get("actionable"))
+            and str(item.get("analysis_source") or "")
+            in {"", "volcengine-ark"}
+        ]
+        rows = []
+        for double_match in core:
+            double_analysis = double_match.get("analysis") or {}
+            double_profile = (
+                double_analysis.get("two_option_recommendation") or {}
+            )
+            double_selections = list(
+                double_profile.get("selections") or []
+            )[:2]
+            double_odds = double_profile.get("odds") or {}
+            candidate_rows = {
+                str(item.get("selection") or ""): item
+                for item in (
+                    (double_analysis.get("secondary_selection_guard") or {})
+                    .get("candidates") or []
+                )
+            }
+            if len(double_selections) != 2 or any(
+                _number(double_odds.get(selection)) is None
+                or _number(
+                    (candidate_rows.get(selection) or {})
+                    .get("model_probability")
+                ) is None
+                for selection in double_selections
+            ):
+                continue
+            for anchor_match in core:
+                if str(anchor_match.get("match_id")) == str(
+                    double_match.get("match_id")
+                ):
+                    continue
+                anchor_analysis = anchor_match.get("analysis") or {}
+                anchor_selection = str(
+                    anchor_analysis.get("primary_play") or ""
+                )
+                anchor_candidates = (
+                    (anchor_analysis.get("secondary_selection_guard") or {})
+                    .get("candidates") or []
+                )
+                anchor_row = next((
+                    item for item in anchor_candidates
+                    if str(item.get("selection") or "") == anchor_selection
+                ), None)
+                if not anchor_row:
+                    continue
+                anchor_odds = _number(anchor_row.get("odds"))
+                anchor_probability = _number(
+                    anchor_row.get("model_probability")
+                )
+                anchor_confidence = _number(
+                    (anchor_analysis.get("market_confidence") or {})
+                    .get("score")
+                ) or 0
+                anchor_expected_return = (
+                    anchor_probability / 100 * anchor_odds
+                    if anchor_probability is not None
+                    and anchor_odds is not None else None
+                )
+                if (
+                    anchor_odds is None
+                    or anchor_probability is None
+                    or anchor_probability
+                    < TWO_OPTION_COMBO_MIN_ANCHOR_PROBABILITY
+                    or anchor_expected_return is None
+                    or anchor_expected_return
+                    < TWO_OPTION_COMBO_MIN_ANCHOR_EXPECTED_RETURN
+                    or anchor_confidence
+                    < TWO_OPTION_MIN_MARKET_CONFIDENCE
+                ):
+                    continue
+                path_odds = {
+                    selection: round(
+                        anchor_odds
+                        * float(double_odds.get(selection) or 0), 2
+                    )
+                    for selection in double_selections
+                }
+                minimum_path_odds = min(path_odds.values())
+                maximum_path_odds = max(path_odds.values())
+                joint_coverage = (
+                    float(double_profile.get("coverage_score") or 0)
+                    * anchor_probability / 100
+                )
+                if (
+                    minimum_path_odds < TWO_OPTION_COMBO_MIN_PATH_ODDS
+                    or joint_coverage < TWO_OPTION_COMBO_MIN_JOINT_COVERAGE
+                ):
+                    continue
+                expected_return = sum(
+                    float(
+                        (candidate_rows.get(selection) or {})
+                        .get("model_probability") or 0
+                    ) / 100
+                    * anchor_probability / 100
+                    * float(double_odds.get(selection) or 0)
+                    * anchor_odds
+                    for selection in double_selections
+                )
+                expected_roi = (expected_return / 2 - 1) * 100
+                path_fit_score = max(
+                    0.0,
+                    100.0
+                    - abs(
+                        minimum_path_odds
+                        - TWO_OPTION_COMBO_TARGET_PATH_ODDS
+                    ) * 30,
+                )
+                expected_value_score = max(
+                    0.0, min(100.0, 100.0 + expected_roi)
+                )
+                rank_score = (
+                    joint_coverage * 0.50
+                    + path_fit_score * 0.20
+                    + float(double_profile.get("pair_value_score") or 0)
+                    * 0.15
+                    + anchor_confidence * 0.10
+                    + expected_value_score * 0.05
+                )
+                rows.append({
+                    "play": "双选×单选 2串1",
+                    "double_pick": {
+                        "match_id": str(double_match.get("match_id") or ""),
+                        "match_number": double_match.get("match_number"),
+                        "selection_text": double_profile.get(
+                            "selection_text"
+                        ),
+                        "selections": double_selections,
+                        "odds": double_odds,
+                    },
+                    "anchor_pick": {
+                        "match_id": str(anchor_match.get("match_id") or ""),
+                        "match_number": anchor_match.get("match_number"),
+                        "selection": anchor_selection,
+                        "odds": round(anchor_odds, 3),
+                        "model_probability": round(
+                            anchor_probability, 2
+                        ),
+                        "expected_return": round(
+                            anchor_expected_return, 3
+                        ),
+                    },
+                    "path_odds": path_odds,
+                    "minimum_path_odds": round(minimum_path_odds, 2),
+                    "maximum_path_odds": round(maximum_path_odds, 2),
+                    "joint_coverage_score": round(joint_coverage, 2),
+                    "model_expected_roi": round(expected_roi, 1),
+                    "rank_score": round(rank_score, 2),
+                    "reason": (
+                        f"{double_match.get('match_number')}双选搭配"
+                        f"{anchor_match.get('match_number')}"
+                        f"{anchor_selection}@{anchor_odds:g}；"
+                        f"两条路径最低{minimum_path_odds:.2f}倍，"
+                        f"联合覆盖分{joint_coverage:.1f}，"
+                        f"锚点期望{anchor_expected_return:.2f}"
+                    ),
+                })
+        rows.sort(
+            key=lambda item: (
+                float(item.get("rank_score") or 0),
+                float(item.get("minimum_path_odds") or 0),
+            ),
+            reverse=True,
+        )
+        selected = []
+        seen = set()
+        for item in rows:
+            key = (
+                str((item.get("double_pick") or {}).get("match_id")),
+                str((item.get("anchor_pick") or {}).get("match_id")),
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            selected.append(item)
+            if len(selected) >= TWO_OPTION_COMBO_LIMIT:
+                break
+        return selected
+
+    @classmethod
     def align_summary_ratings(
         cls,
         summary: Dict[str, Any],
@@ -7801,6 +8217,13 @@ class FAEDailyAIAnalyzer:
                 "coverage_value_edge": profile.get(
                     "coverage_value_edge"
                 ),
+                "minimum_anchor_odds": profile.get(
+                    "minimum_anchor_odds"
+                ),
+                "target_anchor_odds": profile.get(
+                    "target_anchor_odds"
+                ),
+                "parlay_fit": profile.get("parlay_fit"),
                 "ai_verified": bool(profile.get("ai_verified")),
                 "analysis_source": profile.get("analysis_source"),
                 "daily_rank": profile.get("daily_rank"),
@@ -7875,6 +8298,19 @@ class FAEDailyAIAnalyzer:
                     for item in two_option_rows
                 ) + "；双选按独立门槛入池，不继承单选不下注结论，"
                 "仍需按组合成本控制投入。"
+            )
+        if result.get("two_option_combinations"):
+            best_combo = result["two_option_combinations"][0]
+            double_pick = best_combo.get("double_pick") or {}
+            anchor_pick = best_combo.get("anchor_pick") or {}
+            calibrated_text += (
+                "组合收益筛选："
+                f"{double_pick.get('match_number')}"
+                f"{double_pick.get('selection_text')}搭配"
+                f"{anchor_pick.get('match_number')}"
+                f"{anchor_pick.get('selection')}，"
+                f"最低路径{best_combo.get('minimum_path_odds')}倍；"
+                "这是路径收益排序，不代表保证盈利。"
             )
         if downgraded:
             calibrated_text += (

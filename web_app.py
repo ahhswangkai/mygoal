@@ -25,6 +25,9 @@ from football_ai import (
     FAEAIReviewAnalyzer,
     FAEDailyAIAnalyzer,
     FAEDailyAIReviewEngine,
+    FAESupervisedBacktestEngine,
+    FAESupervisedPredictor,
+    FAEShadowBacktestEngine,
     FAEDrawReviewEngine,
     FAEError,
     FAEReviewEngine,
@@ -34,6 +37,7 @@ from football_ai import (
     ENGINE_VERSION,
     SKILL_DEFINITIONS,
     build_daily_match_input,
+    build_training_days,
     compact_daily_ai_run,
 )
 
@@ -142,6 +146,8 @@ ai_analysis_service = FootballAIEngine()
 fae_review_engine = FAEReviewEngine()
 fae_draw_review_engine = FAEDrawReviewEngine()
 fae_daily_ai_review_engine = FAEDailyAIReviewEngine()
+fae_shadow_backtest_engine = FAEShadowBacktestEngine()
+fae_supervised_backtest_engine = FAESupervisedBacktestEngine()
 fae_ai_review_analyzer = FAEAIReviewAnalyzer(ArkNarrativeClient(
     timeout=max(90, int(os.getenv('FAE_AI_REVIEW_TIMEOUT', '180'))),
     stream=True,
@@ -1097,6 +1103,7 @@ def _build_daily_ai_inputs(
     league_profiles=None,
     goal_margin_models=None,
     draw_selection_policy=None,
+    supervised_model=None,
 ):
     """Build current deterministic FAE snapshots without making per-match LLM calls."""
     rule_weights = (
@@ -1107,6 +1114,12 @@ def _build_daily_ai_inputs(
     )
     source_analyses = _load_daily_fundamentals(matches)
     rows = []
+    supervised_predictor = None
+    if supervised_model:
+        try:
+            supervised_predictor = FAESupervisedPredictor(supervised_model)
+        except (TypeError, ValueError):
+            app.logger.exception('FAE监督模型加载失败，继续使用现有研判')
     for match in sorted(
         matches,
         key=lambda item: (
@@ -1127,7 +1140,7 @@ def _build_daily_ai_inputs(
             use_ai=False,
             active_skills=active_skills,
         )
-        rows.append(build_daily_match_input(
+        row = build_daily_match_input(
             match,
             core_result,
             league_profile=(league_profiles or {}).get(
@@ -1138,7 +1151,19 @@ def _build_daily_ai_inputs(
             ),
             source_analysis=source_analysis,
             draw_selection_policy=draw_selection_policy,
-        ))
+        )
+        if supervised_predictor:
+            try:
+                row['supervised_shadow'] = supervised_predictor.predict(
+                    row,
+                    owner_date=str(match.get('owner_date') or '')[:10],
+                    daily_match_count=len(matches),
+                )
+            except (TypeError, ValueError, ArithmeticError):
+                app.logger.exception(
+                    'FAE监督模型预测失败 %s', match.get('match_id')
+                )
+        rows.append(row)
     return rows
 
 
@@ -1246,11 +1271,17 @@ def _run_fae_daily_ai(
         date_str,
         matches,
     )
+    supervised_model = (
+        mongo_storage.get_latest_fae_supervised_model(include_shadow=True)
+        if _env_enabled('FAE_SUPERVISED_SHADOW_ENABLED', True)
+        else None
+    )
     match_inputs = _build_daily_ai_inputs(
         matches,
         league_profiles=league_profiles,
         goal_margin_models=goal_margin_models,
         draw_selection_policy=draw_selection_policy,
+        supervised_model=supervised_model,
     )
     review_memory = mongo_storage.get_fae_review_memory(date_str)
     input_hash = fae_daily_ai_analyzer.input_hash(
@@ -1496,6 +1527,76 @@ def _review_fae_daily_ai(
         )
     saved = mongo_storage.save_fae_daily_ai_review(review)
     return saved.get('review') if saved.get('saved') else None
+
+
+def _run_fae_shadow_backtest(requested_days=28, save=True):
+    """Replay old/new guards on immutable prematch snapshots."""
+    if not mongo_storage:
+        return None
+    days = max(7, min(60, int(requested_days or 28)))
+    snapshot_days = []
+    for owner_date in mongo_storage.get_fae_daily_ai_snapshot_dates(days):
+        snapshot = mongo_storage.get_fae_daily_ai_snapshot(owner_date)
+        if not snapshot:
+            continue
+        match_ids = [
+            str(item.get('match_id') or '')
+            for item in snapshot.get('matches') or []
+            if item.get('match_id')
+        ]
+        snapshot_days.append({
+            'snapshot': snapshot,
+            'results': mongo_storage.get_matches_by_ids(match_ids),
+        })
+    report = fae_shadow_backtest_engine.build(
+        snapshot_days,
+        requested_days=days,
+        validation_start_date=os.getenv(
+            'FAE_SHADOW_VALIDATION_START_DATE', '2026-08-24'
+        ),
+    )
+    if save:
+        mongo_storage.save_fae_backtest_report(report)
+    return report
+
+
+def _run_fae_supervised_training(requested_days=120, save=True):
+    """Train and walk-forward-test on immutable pre-match snapshots."""
+    if not mongo_storage:
+        return None
+    days = max(30, min(365, int(requested_days or 120)))
+    snapshot_days = []
+    for owner_date in mongo_storage.get_fae_daily_ai_snapshot_dates(days):
+        snapshot = mongo_storage.get_fae_daily_ai_snapshot(owner_date)
+        if not snapshot:
+            continue
+        match_ids = [
+            str(item.get('match_id') or '')
+            for item in snapshot.get('matches') or []
+            if item.get('match_id')
+        ]
+        snapshot_days.append({
+            'snapshot': snapshot,
+            'results': mongo_storage.get_matches_by_ids(match_ids),
+        })
+    training_days = build_training_days(snapshot_days)
+    result = fae_supervised_backtest_engine.build(training_days)
+    model = result.get('model') or {}
+    report = result.get('report') or {}
+    # Promotion is always an explicit later release action.  A successful
+    # gate only marks the artifact eligible; it never changes live picks.
+    model['status'] = 'shadow'
+    model['release_eligible'] = bool(
+        (report.get('release_guard') or {}).get('can_promote')
+    )
+    report['requested_days'] = days
+    report['available_snapshot_days'] = len(snapshot_days)
+    report['usable_training_days'] = len(training_days)
+    report['model_status'] = 'shadow'
+    if save:
+        mongo_storage.save_fae_supervised_model(model)
+        mongo_storage.save_fae_supervised_backtest(report)
+    return {'model': model, 'report': report}
 
 
 @app.route('/api/match/<match_id>/fae-analysis', methods=['GET'])
@@ -1800,6 +1901,12 @@ def get_fae_daily_ai():
             )
         )
         data['daily_summary'] = (
+            fae_daily_ai_analyzer.attach_supervised_shadow_summary(
+                data.get('daily_summary') or {},
+                data.get('matches') or [],
+            )
+        )
+        data['daily_summary'] = (
             fae_daily_ai_analyzer.attach_league_model_rankings(
                 data.get('daily_summary') or {},
                 data.get('matches') or [],
@@ -2021,6 +2128,112 @@ def get_fae_daily_ai_review_stats():
         'success': True,
         'data': mongo_storage.get_fae_daily_ai_review_stats(),
     })
+
+
+@app.route('/api/fae/backtest', methods=['GET'])
+@login_required
+def get_fae_shadow_backtest():
+    if not mongo_storage:
+        return jsonify({'success': False, 'message': 'MongoDB不可用'}), 500
+    try:
+        days = max(7, min(60, int(request.args.get('days') or 28)))
+    except (TypeError, ValueError):
+        return jsonify({'success': False, 'message': '回测天数无效'}), 422
+    report = mongo_storage.get_fae_backtest_report(days)
+    if not report:
+        report = _run_fae_shadow_backtest(days, save=False)
+    return jsonify({
+        'success': True,
+        'data': report,
+        'can_manage': bool(_fae_admin_user()),
+    })
+
+
+@app.route('/api/fae/backtest', methods=['POST'])
+@fae_admin_required
+def run_fae_shadow_backtest():
+    if not mongo_storage:
+        return jsonify({'success': False, 'message': 'MongoDB不可用'}), 500
+    payload = request.get_json(silent=True) or {}
+    try:
+        days = max(7, min(60, int(payload.get('days') or 28)))
+        report = _run_fae_shadow_backtest(days, save=True)
+        return jsonify({
+            'success': True,
+            'data': report,
+            'message': '影子回测已使用最新赛果重新生成',
+        })
+    except Exception as exc:
+        app.logger.exception('FAE shadow backtest failed')
+        return jsonify({
+            'success': False,
+            'message': f'影子回测失败: {exc}',
+        }), 500
+
+
+def _public_supervised_model(model):
+    if not model:
+        return None
+    hidden = {
+        'draw_weights', 'margin_weights', 'feature_means',
+        'feature_scales', 'league_priors',
+    }
+    return {
+        key: value for key, value in dict(model).items()
+        if key not in hidden
+    }
+
+
+@app.route('/api/fae/supervised-model', methods=['GET'])
+def get_fae_supervised_model():
+    if not mongo_storage:
+        return jsonify({'success': False, 'message': 'MongoDB不可用'}), 500
+    model = mongo_storage.get_latest_fae_supervised_model(
+        include_shadow=True
+    )
+    report = mongo_storage.get_latest_fae_supervised_backtest()
+    return jsonify({
+        'success': True,
+        'data': {
+            'model': _public_supervised_model(model),
+            'backtest': report,
+        },
+        'can_manage': bool(_fae_admin_user()),
+    })
+
+
+@app.route('/api/fae/supervised-model/train', methods=['POST'])
+@fae_admin_required
+def train_fae_supervised_model():
+    if not mongo_storage:
+        return jsonify({'success': False, 'message': 'MongoDB不可用'}), 500
+    payload = request.get_json(silent=True) or {}
+    try:
+        days = max(30, min(365, int(payload.get('days') or 120)))
+        result = _run_fae_supervised_training(days, save=True)
+        return jsonify({
+            'success': True,
+            'data': {
+                'model': _public_supervised_model(
+                    (result or {}).get('model')
+                ),
+                'backtest': (result or {}).get('report'),
+            },
+            'message': (
+                '监督模型已训练并进入影子验证，未覆盖正式推荐'
+            ),
+        })
+    except (TypeError, ValueError) as exc:
+        return jsonify({
+            'success': False,
+            'message': f'监督模型训练失败: {exc}',
+        }), 422
+    except Exception as exc:
+        app.logger.exception('FAE supervised training failed')
+        return jsonify({
+            'success': False,
+            'message': f'监督模型训练失败: {exc}',
+        }), 500
 
 
 @app.route('/api/fae/daily-ai/review', methods=['POST'])
@@ -2615,6 +2828,60 @@ def _run_scheduled_fae_daily_ai():
         print(f"❌ FAE 火山全日研判失败 {date_str}: {str(exc)}")
 
 
+def _run_scheduled_fae_shadow_backtest():
+    """Refresh the deterministic old/new comparison without Ark calls."""
+    if not _env_enabled('FAE_SHADOW_BACKTEST_ENABLED', True):
+        return
+    try:
+        report = _run_fae_shadow_backtest(
+            int(os.getenv('FAE_SHADOW_BACKTEST_DAYS', '28')),
+            save=True,
+        )
+        if report:
+            candidate = report.get('candidate') or {}
+            print(
+                "✅ FAE 影子回测: "
+                f"{candidate.get('hits', 0)}/"
+                f"{candidate.get('settled', 0)}，"
+                f"ROI {candidate.get('roi', 0)}%，"
+                f"{(report.get('release_guard') or {}).get('status')}"
+            )
+    except Exception as exc:
+        print(f"❌ FAE 影子回测失败: {str(exc)}")
+
+
+def _run_scheduled_fae_supervised_training():
+    """Retrain once new immutable, settled match days are available."""
+    if not _env_enabled('FAE_SUPERVISED_TRAINING_ENABLED', True):
+        return
+    if not mongo_storage:
+        return
+    try:
+        days = max(
+            30,
+            min(365, int(os.getenv('FAE_SUPERVISED_TRAINING_DAYS', '120'))),
+        )
+        dates = mongo_storage.get_fae_daily_ai_snapshot_dates(days)
+        latest_source = dates[-1] if dates else None
+        current = mongo_storage.get_latest_fae_supervised_model(
+            include_shadow=True
+        ) or {}
+        if latest_source and current.get('training_end_date') == latest_source:
+            return
+        result = _run_fae_supervised_training(days, save=True)
+        report = (result or {}).get('report') or {}
+        guard = report.get('release_guard') or {}
+        print(
+            "✅ FAE 监督模型影子训练: "
+            f"{report.get('training_sample_count', 0)}场，"
+            f"平局Brier {((report.get('ordinary_draw') or {}).get('brier', 0))}，"
+            f"让平Brier {((report.get('handicap_draw') or {}).get('brier', 0))}，"
+            f"{guard.get('status', 'shadow_only')}"
+        )
+    except Exception as exc:
+        print(f"❌ FAE 监督模型影子训练失败: {str(exc)}")
+
+
 def _run_scheduled_fae_prematch_ai():
     """Run paid Ark analysis once per fixture in its T-minus window."""
     if not _env_enabled('FAE_DAILY_AI_ENABLED', True):
@@ -2939,6 +3206,27 @@ def _start_scheduler():
                     coalesce=True,
                     max_instances=1,
                 )
+                scheduler.add_job(
+                    _run_scheduled_fae_shadow_backtest,
+                    CronTrigger(hour='*/2', minute=7),
+                    id='fae_shadow_backtest',
+                    replace_existing=True,
+                    coalesce=True,
+                    max_instances=1,
+                )
+                scheduler.add_job(
+                    _run_scheduled_fae_supervised_training,
+                    CronTrigger(hour=6, minute=23),
+                    id='fae_supervised_training',
+                    replace_existing=True,
+                    coalesce=True,
+                    max_instances=1,
+                    # First deployment should not wait until the next morning
+                    # to create its initial shadow artifact.  Subsequent
+                    # starts return quickly when the newest snapshot is
+                    # already represented by the persisted model.
+                    next_run_time=datetime.now() + timedelta(seconds=45),
+                )
                 baseline_label = '关闭'
                 if _env_enabled('FAE_DAILY_AI_BASELINE_ENABLED', False):
                     daily_hour = max(
@@ -2960,6 +3248,7 @@ def _start_scheduler():
                     "✅ 定时任务调度器已启动 "
                     f"(每15分钟刷新，每5分钟结算投注，"
                     f"每{prematch_check_minutes}分钟检查开赛前30分钟研判，"
+                    f"每2小时刷新影子回测，每日06:23训练监督模型，"
                     f"固定全日研判{baseline_label})"
                 )
         else:

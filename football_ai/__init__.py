@@ -2,6 +2,7 @@
 
 from .engine import FootballAIEngine
 from .ai_review import AI_REVIEW_PROMPT_VERSION, FAEAIReviewAnalyzer
+from .backtest import FAEShadowBacktestEngine
 from .daily_analysis import (
     DAILY_AI_MAX_BATCH_SIZE,
     DAILY_PROMPT_VERSION,
@@ -36,6 +37,15 @@ from .skills import (
     build_draw_skill_candidate,
     build_rule_skill_candidate,
 )
+from .supervised import (
+    FAESupervisedBacktestEngine,
+    FAESupervisedPredictor,
+    FAESupervisedTrainer,
+    SUPERVISED_MODEL_VERSION,
+    build_training_days,
+    build_training_example,
+    extract_prematch_features,
+)
 from .version import ENGINE_CODE, ENGINE_NAME, ENGINE_VERSION, VERSION_MANIFEST
 
 __all__ = [
@@ -52,6 +62,7 @@ __all__ = [
     "FAEDailyAIAnalyzer",
     "FAEDailyAIReviewEngine",
     "FAEAIReviewAnalyzer",
+    "FAEShadowBacktestEngine",
     "FootballAIEngine",
     "DAILY_PROMPT_VERSION",
     "DAILY_AI_MAX_BATCH_SIZE",
@@ -68,6 +79,13 @@ __all__ = [
     "build_rule_skill_candidate",
     "build_draw_parlays",
     "aggregate_draw_reviews",
+    "FAESupervisedBacktestEngine",
+    "FAESupervisedPredictor",
+    "FAESupervisedTrainer",
+    "SUPERVISED_MODEL_VERSION",
+    "build_training_days",
+    "build_training_example",
+    "extract_prematch_features",
     "ENGINE_CODE",
     "ENGINE_NAME",
     "ENGINE_VERSION",

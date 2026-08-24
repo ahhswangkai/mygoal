@@ -104,9 +104,17 @@
                 {{ historicalCalibrationCount }} 场实际校准
               </span>
             </div>
+            <div v-if="supervisedShadow.model_id" class="goal-margin-loaded supervised-shadow-loaded">
+              <strong>历史监督模型 · 影子验证</strong>
+              <span>
+                {{ supervisedShadow.sample_count || 0 }} 场训练样本 ·
+                截止 {{ supervisedShadow.training_end_date || '--' }}
+              </span>
+              <small>未通过发布门禁前不覆盖正式推荐</small>
+            </div>
           </div>
 
-          <section v-if="showModelPanels && drawRadarGroups.length" class="draw-radar-panel">
+          <section v-if="drawRadarGroups.length" class="draw-radar-panel">
             <header>
               <div>
                 <strong>平 / 让平概率排行榜</strong>
@@ -142,6 +150,9 @@
                   </span>
                   <span class="draw-radar-metrics">
                     <i>概率 {{ radarPercent(item.probability) }}</i>
+                    <i v-if="supervisedProbability(item.match_id, group.key) !== null" class="supervised-probability">
+                      影子 {{ radarPercent(supervisedProbability(item.match_id, group.key)) }}
+                    </i>
                     <i>赔率 {{ item.odds ?? '--' }}</i>
                     <i :class="metricClass(item.odds_value)">
                       价值 {{ signedMetric(item.odds_value) }}%
@@ -329,6 +340,41 @@
               </button>
             </section>
           </div>
+
+          <section
+            v-if="visibleTwoOptionCombinations.length"
+            class="daily-ai-combos two-option-combos"
+          >
+            <h2>双选 × 概率锚点</h2>
+            <article
+              v-for="(combo, index) in visibleTwoOptionCombinations"
+              :key="`two-option-combo-${index}`"
+            >
+              <header>
+                <b>{{ combo.play }}</b>
+                <span>最低中奖路径 {{ combo.minimum_path_odds }} 倍</span>
+              </header>
+              <button type="button" @click="goToDetail(combo.double_pick.match_id)">
+                <span>
+                  {{ dailyMatch(combo.double_pick.match_id).match_number }}
+                  {{ dailyMatch(combo.double_pick.match_id).home_team }} vs
+                  {{ dailyMatch(combo.double_pick.match_id).away_team }}
+                </span>
+                <strong>{{ combo.double_pick.selection_text }}</strong>
+              </button>
+              <button type="button" @click="goToDetail(combo.anchor_pick.match_id)">
+                <span>
+                  {{ dailyMatch(combo.anchor_pick.match_id).match_number }}
+                  {{ dailyMatch(combo.anchor_pick.match_id).home_team }} vs
+                  {{ dailyMatch(combo.anchor_pick.match_id).away_team }}
+                </span>
+                <strong>
+                  {{ combo.anchor_pick.selection }} @{{ combo.anchor_pick.odds }}
+                </strong>
+              </button>
+              <small class="two-option-combo-note">两条路径各 1 注，不代表保证盈利</small>
+            </article>
+          </section>
 
           <section
             v-if="visibleDailyCombinations.length"
@@ -613,6 +659,63 @@
               </small>
             </article>
           </div>
+
+          <section v-if="faeBacktest" class="shadow-backtest-card">
+            <header>
+              <div>
+                <strong>版本影子回测</strong>
+                <small>
+                  不可变赛前快照 · {{ faeBacktest.source_dates?.length || 0 }} 个比赛日
+                </small>
+              </div>
+              <button
+                v-if="dailyAiCanManage"
+                type="button"
+                :disabled="backtestBusy"
+                @click="refreshBacktest"
+              >{{ backtestBusy ? '回测中…' : '刷新' }}</button>
+            </header>
+            <div class="shadow-version-grid">
+              <article>
+                <span>基线 v{{ faeBacktest.baseline_version }}</span>
+                <strong>{{ faeBacktest.baseline?.hits || 0 }}/{{ faeBacktest.baseline?.settled || 0 }}</strong>
+                <small>
+                  ROI
+                  <b :class="metricClass(faeBacktest.baseline?.roi)">
+                    {{ signedMetric(faeBacktest.baseline?.roi) }}%
+                  </b>
+                  · 回撤 {{ faeBacktest.baseline?.max_drawdown_units || 0 }}
+                </small>
+              </article>
+              <article class="candidate">
+                <span>候选 v{{ faeBacktest.candidate_version }}</span>
+                <strong>{{ faeBacktest.candidate?.hits || 0 }}/{{ faeBacktest.candidate?.settled || 0 }}</strong>
+                <small>
+                  ROI
+                  <b :class="metricClass(faeBacktest.candidate?.roi)">
+                    {{ signedMetric(faeBacktest.candidate?.roi) }}%
+                  </b>
+                  · 回撤 {{ faeBacktest.candidate?.max_drawdown_units || 0 }}
+                </small>
+              </article>
+            </div>
+            <footer>
+              <span :class="faeBacktest.release_guard?.status">
+                {{ faeBacktest.release_guard?.can_promote ? '达到候选门槛' : '继续影子观察' }}
+              </span>
+              <p>{{ faeBacktest.release_guard?.reasons?.slice(0, 2).join('；') }}</p>
+              <small>
+                候选较基线：推荐 {{ signedMetric(faeBacktest.comparison?.recommendation_delta) }} 场，
+                命中率 {{ signedMetric(faeBacktest.comparison?.hit_rate_delta) }}%，
+                ROI {{ signedMetric(faeBacktest.comparison?.roi_delta) }}%
+              </small>
+              <small>
+                样本外验证从 {{ faeBacktest.validation_start_date }} 起：
+                {{ faeBacktest.validation?.candidate?.settled || 0 }}/{{ faeBacktest.release_guard?.minimum_settled || 30 }} 场
+              </small>
+            </footer>
+            <p v-if="backtestError" class="review-ai-message error">{{ backtestError }}</p>
+          </section>
 
           <div class="strategy-review-grid">
             <article v-for="selection in ['平局', '让平']" :key="selection">
@@ -1098,6 +1201,9 @@ const reviewAiBusy = ref(false)
 const reviewAiMessage = ref('')
 const reviewAiError = ref('')
 const faeStats = ref({})
+const faeBacktest = ref(null)
+const backtestBusy = ref(false)
+const backtestError = ref('')
 const faeSkills = ref({ active: [], candidates: [], deployments: [] })
 const skillsLoading = ref(false)
 const skillsLoaded = ref(false)
@@ -1131,6 +1237,9 @@ const dateOptions = Array.from({ length: 7 }, (_, index) => {
 })
 
 const showModelPanels = false
+const supervisedShadow = computed(() => (
+  faeDailyAi.value?.daily_summary?.supervised_shadow || {}
+))
 const dailyPoolLabels = {
   two_option_core: '双选核心',
   draw: '平局精选',
@@ -1185,6 +1294,13 @@ const drawRadarGroups = computed(() => {
     )).slice(0, 3)
   })).filter(group => group.items.length)
 })
+
+function supervisedProbability(matchId, key) {
+  const rows = supervisedShadow.value?.[key] || []
+  const item = rows.find(row => String(row.match_id) === String(matchId))
+  const value = Number(item?.ranking_probability)
+  return Number.isFinite(value) ? value : null
+}
 const leagueModelGroups = computed(() => {
   const source = faeDailyAi.value?.daily_summary?.league_model_rankings || {}
   return [
@@ -1240,6 +1356,14 @@ const visibleDailyCombinations = computed(() => (
     isVisibleDailyMatch(dailyMatch(pick.match_id))
   ))
 )))
+const visibleTwoOptionCombinations = computed(() => (
+  faeDailyAi.value?.daily_summary?.two_option_combinations || []
+).filter(combo => (
+  combo.double_pick?.match_id
+  && combo.anchor_pick?.match_id
+  && isVisibleDailyMatch(dailyMatch(combo.double_pick.match_id))
+  && isVisibleDailyMatch(dailyMatch(combo.anchor_pick.match_id))
+)).slice(0, 3))
 const reviewNoBetCount = computed(() => (
   faeReview.value?.match_results || []
 ).filter(item => item.no_bet).length)
@@ -1317,13 +1441,18 @@ async function loadReviewData(force = false) {
   reviewAiError.value = ''
   try {
     const date = encodeURIComponent(dateValue)
-    const [reviewResponse, statsResponse] = await Promise.all([
+    const [reviewResponse, statsResponse, backtestResponse] = await Promise.all([
       fetch(`/api/fae/daily-ai/review?date=${date}`, { signal: controller.signal }),
-      fetch('/api/fae/daily-ai/review/stats', { signal: controller.signal })
+      fetch('/api/fae/daily-ai/review/stats', { signal: controller.signal }),
+      fetch('/api/fae/backtest?days=28', {
+        signal: controller.signal,
+        credentials: 'same-origin'
+      })
     ])
-    const [reviewPayload, statsPayload] = await Promise.all([
+    const [reviewPayload, statsPayload, backtestPayload] = await Promise.all([
       reviewResponse.json(),
-      statsResponse.json()
+      statsResponse.json(),
+      backtestResponse.json().catch(() => ({}))
     ])
     if (selectedDate.value !== dateValue) return
     faeReview.value = reviewResponse.ok && reviewPayload.success
@@ -1332,6 +1461,9 @@ async function loadReviewData(force = false) {
     faeStats.value = statsResponse.ok && statsPayload.success
       ? (statsPayload.data || {})
       : {}
+    faeBacktest.value = backtestResponse.ok && backtestPayload.success
+      ? backtestPayload.data
+      : null
     reviewLoadedDate.value = dateValue
     dailyAiConfigured.value = Boolean(
       dailyAiConfigured.value || reviewPayload.ai_review_configured
@@ -1344,6 +1476,32 @@ async function loadReviewData(force = false) {
       reviewLoading.value = false
       reviewRequestController = null
     }
+  }
+}
+
+async function refreshBacktest() {
+  backtestBusy.value = true
+  backtestError.value = ''
+  try {
+    const response = await fetch('/api/fae/backtest', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ days: 28 })
+    })
+    const payload = await response.json().catch(() => ({}))
+    if (response.status === 401) {
+      openAuth('login')
+      throw new Error('请先登录管理账号')
+    }
+    if (!response.ok || !payload.success) {
+      throw new Error(payload.message || '影子回测失败')
+    }
+    faeBacktest.value = payload.data || null
+  } catch (e) {
+    backtestError.value = e.message || '影子回测失败'
+  } finally {
+    backtestBusy.value = false
   }
 }
 
@@ -2203,6 +2361,21 @@ onBeforeUnmount(() => {
   font-size: 9px;
 }
 
+.supervised-shadow-loaded {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  color: #65577d;
+  background: #f5f0fb;
+}
+
+.supervised-shadow-loaded strong {
+  color: #6d4f91;
+}
+
+.supervised-shadow-loaded small {
+  color: #978ba7;
+}
+
 .draw-radar-panel {
   margin: 0 10px 10px;
   overflow: hidden;
@@ -2391,6 +2564,10 @@ onBeforeUnmount(() => {
 
 .draw-radar-metrics i.negative {
   color: #e53955;
+}
+
+.draw-radar-metrics i.supervised-probability {
+  color: #76529a;
 }
 
 .draw-radar-reason {
@@ -2660,6 +2837,20 @@ onBeforeUnmount(() => {
 .daily-ai-combos article > button strong {
   color: #e53955;
   font-size: 13px;
+}
+
+.two-option-combos > h2 {
+  margin: 0 0 7px;
+  color: #30343b;
+  font-size: 14px;
+}
+
+.two-option-combo-note {
+  display: block;
+  padding: 5px 9px 7px;
+  color: #aaa;
+  font-size: 10px;
+  background: #fff;
 }
 
 .daily-match-card {
@@ -3523,6 +3714,125 @@ onBeforeUnmount(() => {
 
 .negative {
   color: #e53955 !important;
+}
+
+.shadow-backtest-card {
+  margin: 0 9px 9px;
+  overflow: hidden;
+  background: #fff;
+  border: 1px solid #e9e3e5;
+  border-radius: 10px;
+}
+
+.shadow-backtest-card > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 9px 10px;
+  background: #faf8f9;
+}
+
+.shadow-backtest-card > header strong,
+.shadow-backtest-card > header small {
+  display: block;
+}
+
+.shadow-backtest-card > header strong {
+  color: #414044;
+  font-size: 13px;
+}
+
+.shadow-backtest-card > header small {
+  margin-top: 2px;
+  color: #999;
+  font-size: 9px;
+}
+
+.shadow-backtest-card > header button {
+  padding: 4px 8px;
+  color: #e53955;
+  font-size: 10px;
+  background: #fff;
+  border: 1px solid #e8cbd1;
+  border-radius: 9px;
+}
+
+.shadow-version-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+  padding: 9px;
+}
+
+.shadow-version-grid article {
+  padding: 8px;
+  text-align: center;
+  background: #f7f7f8;
+  border-radius: 8px;
+}
+
+.shadow-version-grid article.candidate {
+  background: #fff5f7;
+}
+
+.shadow-version-grid span,
+.shadow-version-grid strong,
+.shadow-version-grid small {
+  display: block;
+}
+
+.shadow-version-grid span {
+  color: #888;
+  font-size: 9px;
+}
+
+.shadow-version-grid strong {
+  margin: 3px 0;
+  color: #333;
+  font-size: 18px;
+}
+
+.shadow-version-grid small {
+  color: #999;
+  font-size: 9px;
+}
+
+.shadow-version-grid b {
+  color: #555;
+  font-weight: 600;
+}
+
+.shadow-backtest-card > footer {
+  padding: 0 9px 9px;
+}
+
+.shadow-backtest-card > footer > span {
+  display: inline-block;
+  padding: 2px 6px;
+  color: #9b6a24;
+  font-size: 9px;
+  background: #fff4df;
+  border-radius: 7px;
+}
+
+.shadow-backtest-card > footer > span.eligible {
+  color: #177d61;
+  background: #eaf8f3;
+}
+
+.shadow-backtest-card > footer p {
+  margin: 5px 0 2px;
+  color: #777;
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.shadow-backtest-card > footer small {
+  display: block;
+  margin-top: 2px;
+  color: #aaa;
+  font-size: 9px;
+  line-height: 1.4;
 }
 
 .strategy-review-grid {
