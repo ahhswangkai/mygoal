@@ -2,7 +2,7 @@
 
 ENGINE_NAME = "Football AI Engine"
 ENGINE_CODE = "FAE"
-ENGINE_VERSION = "2.14.3"
+ENGINE_VERSION = "2.14.4"
 SCHEMA_VERSION = "2.9"
 
 DIMENSION_WEIGHTS = {
@@ -100,6 +100,7 @@ VERSION_MANIFEST = {
         "平/让平特征反推：固定分箱挖掘1至3项赛前特征组合，并以时间前后段独立验证和滚动样本外门禁控制过拟合",
         "亚盘赔率组合观察：加入热门与下盘双方的初盘、即时水位、各自变化及两侧水位差",
         "大小球赔率组合观察：加入大小球双方初盘、即时水位、各自变化及初即时水位差",
+        "结果玩法硬护栏：主选和次选仅允许胜平负或竞彩让球，大小球只保留为辅助证据",
     ],
     "learning_policy": {
         "minimum_samples": 10,

@@ -15,7 +15,7 @@ from .provider import ArkNarrativeClient, FAEError, FAEOutputError
 from .version import ENGINE_VERSION
 
 
-DAILY_PROMPT_VERSION = "five-market-daily-v28-secondary-value-combo"
+DAILY_PROMPT_VERSION = "five-market-daily-v29-result-market-hard-guard"
 
 OFFICIAL_PLAY_SELECTIONS = {"平局", "让平"}
 OFFICIAL_MIN_BET_SCORE = 70.0
@@ -2964,17 +2964,21 @@ class FAEDailyAIAnalyzer:
         outcomes with calibrated model probability and de-vig market
         probability; expected return is used only as a tie-breaker.
         """
-        allowed = {
-            "平局", "让平", "让胜", "让负", "主胜", "客胜",
-            "大球", "小球", "观望",
-        }
+        allowed = TWO_OPTION_PLAY_SELECTIONS | {"观望"}
+        if primary_play not in TWO_OPTION_PLAY_SELECTIONS:
+            return {
+                "selection": "观望",
+                "strategy": "result-market-only-hard-guard",
+                "generated_secondary": str(generated_secondary or "") or None,
+                "changed": bool(generated_secondary),
+                "candidates": [],
+                "reason": "主选不是胜平负或竞彩让球结果，禁止生成双选防选",
+            }
         same_market = (
             {"主胜", "平局", "客胜"}
             if primary_play in {"主胜", "平局", "客胜"}
             else {"让胜", "让平", "让负"}
             if primary_play in {"让胜", "让平", "让负"}
-            else {"大球", "小球"}
-            if primary_play in {"大球", "小球"}
             else allowed
         )
         candidate = str(generated_secondary or "").strip()
@@ -3336,12 +3340,6 @@ class FAEDailyAIAnalyzer:
                 ("让胜", _number(hhad.get("win")) or 0),
                 ("让平", _number(hhad.get("draw")) or 0),
                 ("让负", _number(hhad.get("lose")) or 0),
-            ]
-        elif primary_play in {"大球", "小球"}:
-            totals = probabilities.get("over_under") or {}
-            groups = [
-                ("大球", _number(totals.get("over")) or 0),
-                ("小球", _number(totals.get("under")) or 0),
             ]
         alternatives = [item for item in groups if item[0] != primary_play]
         selected = (
@@ -7109,7 +7107,7 @@ class FAEDailyAIAnalyzer:
     ) -> tuple[str, Dict[str, Any]]:
         """Prefer a materially stronger bettable option over raw prediction."""
         policy = draw_selection_policy_profile((source or {}).get("draw_selection_policy"))
-        allowed = {"主胜", "平局", "客胜", "让胜", "让平", "让负"}
+        allowed = TWO_OPTION_PLAY_SELECTIONS
         categories = [
             cls._historical_adjusted_profile(source, dict(item))
             for item in (
@@ -7126,6 +7124,44 @@ class FAEDailyAIAnalyzer:
             {},
         )
         bettable = [item for item in categories if not item.get("no_bet")]
+        if model_selection not in allowed:
+            if not categories:
+                return "观望", {
+                    "triggered": True,
+                    "guard_type": "result_market_only",
+                    "model_selection": model_selection,
+                    "effective_selection": "观望",
+                    "no_bet_only": True,
+                    "reason": (
+                        f"主选{model_selection or '为空'}不属于胜平负或竞彩让球，"
+                        "且缺少可核验结果玩法，改为观望"
+                    ),
+                }
+            pool = bettable or categories
+            best_result = max(
+                pool,
+                key=lambda item: (
+                    float(item.get("bet_score") or item.get("score") or 0),
+                    float(item.get("value_score") or 0),
+                    float(item.get("probability") or 0),
+                ),
+            )
+            best_selection = str(best_result.get("label") or "观望")
+            return best_selection, {
+                "triggered": True,
+                "guard_type": "result_market_only",
+                "model_selection": model_selection,
+                "effective_selection": best_selection,
+                "effective_bet_score": float(
+                    best_result.get("bet_score")
+                    or best_result.get("score") or 0
+                ),
+                "no_bet_only": not bool(bettable),
+                "reason": (
+                    f"主选{model_selection}不属于胜平负或竞彩让球，"
+                    f"按结果玩法评分改为{best_selection}"
+                ),
+            }
         if not bettable:
             if not categories:
                 return model_selection, {

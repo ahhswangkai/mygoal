@@ -826,6 +826,56 @@ class DailyAnalysisTests(unittest.TestCase):
             analysis["consistency_guard"]["probability_gap"], 47
         )
 
+    def test_total_market_model_pick_is_replaced_by_result_market(self):
+        source = build_daily_match_input(match("207"))
+        source["sporttery_handicap"]["current"] = [5.0, 4.0, 1.5]
+        source["fae_core"] = {
+            "probabilities": {
+                "hhad": {"win": 10, "draw": 20, "lose": 70},
+            },
+            "recommendation": {
+                "category_scores": [{
+                    "label": "让负",
+                    "probability": 70,
+                    "bet_score": 78,
+                    "value_score": 72,
+                    "no_bet": False,
+                }, {
+                    "label": "让平",
+                    "probability": 20,
+                    "bet_score": 58,
+                    "value_score": 55,
+                    "no_bet": True,
+                }],
+            },
+        }
+
+        result = FAEDailyAIAnalyzer._normalize_match(source, {
+            "primary_play": "小球",
+            "secondary_play": "大球",
+            "rating": 3.5,
+        })
+        analysis = result["analysis"]
+
+        self.assertEqual(analysis["model_primary_play"], "小球")
+        self.assertEqual(analysis["primary_play"], "让负")
+        self.assertNotIn(analysis["secondary_play"], {"大球", "小球"})
+        self.assertEqual(
+            analysis["value_guard"]["guard_type"],
+            "result_market_only",
+        )
+        self.assertTrue(analysis["value_guard"]["triggered"])
+
+    def test_total_market_primary_cannot_create_secondary_pair(self):
+        decision = FAEDailyAIAnalyzer._secondary_play_decision(
+            {}, "大球", "小球"
+        )
+
+        self.assertEqual(decision["selection"], "观望")
+        self.assertEqual(
+            decision["strategy"], "result-market-only-hard-guard"
+        )
+
     def test_medium_handicap_conflict_with_large_return_gap_is_guarded(self):
         source = build_daily_match_input(match("201"))
         source["fae_core"]["probabilities"] = {
