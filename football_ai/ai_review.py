@@ -14,7 +14,7 @@ from .provider import ArkNarrativeClient, FAEOutputError
 from .version import ENGINE_VERSION
 
 
-AI_REVIEW_PROMPT_VERSION = "fae-deep-review-v9-deterministic-handicap"
+AI_REVIEW_PROMPT_VERSION = "fae-deep-review-v10-market-semantic-guard"
 SETTLED_STATUSES = {"hit", "miss", "push"}
 LEARNING_SCOPES = {
     "euro",
@@ -63,6 +63,17 @@ def _deterministic_handicap_settlement(
     }
 
 
+def _deterministic_ordinary_outcome(score: Any) -> Optional[str]:
+    """Return the immutable 1X2 outcome for a finished score."""
+    parsed = re.fullmatch(
+        r"\s*(\d+)\s*[:-]\s*(\d+)\s*", str(score or "")
+    )
+    if not parsed:
+        return None
+    home, away = int(parsed.group(1)), int(parsed.group(2))
+    return "主胜" if home > away else "客胜" if home < away else "平局"
+
+
 _HANDICAP_RESULT_CLAIM = re.compile(
     r"(?P<prefix>"
     r"(?:竞彩让球|让球)?(?:实际|最终|确定性)?(?:结果|结算)"
@@ -70,6 +81,19 @@ _HANDICAP_RESULT_CLAIM = re.compile(
     r"|(?:实际|最终|确定性)\s*(?:是|为|：|:)?\s*"
     r"|归为\s*|归\s*|判为\s*"
     r")(?P<label>让胜|让平|让负)"
+)
+
+_HANDICAP_MULTI_HIT_CLAIM = re.compile(
+    r"(?:让胜|让平|让负)(?:\([^)]*\))?\s*"
+    r"(?:和|与|、|/)\s*"
+    r"(?:让胜|让平|让负)(?:\([^)]*\))?\s*"
+    r"(?:同时)?命中"
+)
+
+_ORDINARY_DIRECTION_CLAIM = re.compile(
+    r"(?P<label>主胜|平局|客胜)"
+    r"(?P<middle>方向|判断|选择|预测)?"
+    r"(?P<status>命中|未中|失手|正确|错误)"
 )
 
 
@@ -84,6 +108,13 @@ def _sanitize_handicap_result_claim(
         return text, False
     changed = False
 
+    def replace_multi(_: re.Match) -> str:
+        nonlocal changed
+        changed = True
+        return f"确定性让球赛果为{actual}"
+
+    text = _HANDICAP_MULTI_HIT_CLAIM.sub(replace_multi, text)
+
     def replace(match: re.Match) -> str:
         nonlocal changed
         label = match.group("label")
@@ -93,6 +124,30 @@ def _sanitize_handicap_result_claim(
         return f"{match.group('prefix')}{actual}"
 
     return _HANDICAP_RESULT_CLAIM.sub(replace, text), changed
+
+
+def _sanitize_ordinary_result_claim(
+    value: Any,
+    actual_outcome: Any,
+) -> tuple[str, bool]:
+    """Correct explicit 1X2 hit/miss claims from the immutable score."""
+    text = re.sub(r"\s+", " ", str(value or "")).strip()
+    actual = str(actual_outcome or "")
+    if actual not in {"主胜", "平局", "客胜"} or not text:
+        return text, False
+    changed = False
+
+    def replace(match: re.Match) -> str:
+        nonlocal changed
+        expected = "命中" if match.group("label") == actual else "未中"
+        if match.group("status") == expected:
+            return match.group(0)
+        changed = True
+        return (
+            f"{match.group('label')}{match.group('middle') or ''}{expected}"
+        )
+
+    return _ORDINARY_DIRECTION_CLAIM.sub(replace, text), changed
 
 
 class FAEAIReviewAnalyzer:
@@ -484,6 +539,9 @@ class FAEAIReviewAnalyzer:
             actual_handicap_outcome = handicap_settlement.get(
                 "actual_outcome"
             )
+            actual_ordinary_outcome = _deterministic_ordinary_outcome(
+                (source.get("result") or {}).get("score")
+            )
             two_options = source.get("two_option_predictions") or []
             two_option_hit = any(
                 item.get("status") == "hit" for item in two_options
@@ -524,13 +582,20 @@ class FAEAIReviewAnalyzer:
                 "观望复盘",
             }:
                 verdict = fallback_verdict
-            diagnosis, diagnosis_corrected = _sanitize_handicap_result_claim(
-                cls._text(
-                    generated.get("diagnosis"),
-                    "模型未返回完整诊断，请以确定性结算结果为准。",
-                    600,
-                ),
-                actual_handicap_outcome,
+            def sanitized_text(value: Any, fallback: str, limit: int):
+                clean, handicap_changed = _sanitize_handicap_result_claim(
+                    cls._text(value, fallback, limit),
+                    actual_handicap_outcome,
+                )
+                clean, ordinary_changed = _sanitize_ordinary_result_claim(
+                    clean, actual_ordinary_outcome
+                )
+                return clean, handicap_changed or ordinary_changed
+
+            diagnosis, diagnosis_corrected = sanitized_text(
+                generated.get("diagnosis"),
+                "模型未返回完整诊断，请以确定性结算结果为准。",
+                600,
             )
 
             def sanitized_list(value: Any) -> tuple[List[str], bool]:
@@ -538,8 +603,8 @@ class FAEAIReviewAnalyzer:
                 result_values = []
                 corrected = False
                 for entry in values:
-                    clean, changed = _sanitize_handicap_result_claim(
-                        entry, actual_handicap_outcome
+                    clean, changed = sanitized_text(
+                        entry, "", 220
                     )
                     result_values.append(clean)
                     corrected = corrected or changed
@@ -551,10 +616,14 @@ class FAEAIReviewAnalyzer:
             missed_signals, missed_corrected = sanitized_list(
                 generated.get("missed_signals")
             )
+            counterfactual, counterfactual_corrected = sanitized_text(
+                generated.get("counterfactual"), "", 500
+            )
             semantic_corrected = bool(
                 diagnosis_corrected
                 or correct_corrected
                 or missed_corrected
+                or counterfactual_corrected
             )
             if semantic_corrected:
                 diagnosis = (
@@ -576,13 +645,12 @@ class FAEAIReviewAnalyzer:
                 ),
                 "handicap_result_status": handicap_status,
                 "actual_handicap_outcome": actual_handicap_outcome,
+                "actual_ordinary_outcome": actual_ordinary_outcome,
                 "handicap_settlement": handicap_settlement,
                 "two_option_predictions": two_options,
-                "two_option_verdict": cls._text(
-                    generated.get("two_option_verdict"),
-                    fallback_two_option_verdict,
-                    40,
-                ),
+                # Coverage is a deterministic settlement; never allow the
+                # narrative model to override it.
+                "two_option_verdict": fallback_two_option_verdict,
                 "no_bet": no_bet,
                 "no_bet_reasons": (
                     (source.get("prediction") or {}).get("no_bet_reasons")
@@ -601,17 +669,16 @@ class FAEAIReviewAnalyzer:
                 "data_quality_issues": cls._list(
                     generated.get("data_quality_issues"), 6, 220
                 ),
-                "counterfactual": cls._text(
-                    generated.get("counterfactual"), "", 500
-                ),
+                "counterfactual": counterfactual,
                 "rule_tags": cls._list(
                     generated.get("rule_tags"), 5, 60
                 ),
                 "semantic_guard": {
                     "triggered": semantic_corrected,
                     "actual_handicap_outcome": actual_handicap_outcome,
+                    "actual_ordinary_outcome": actual_ordinary_outcome,
                     "reason": (
-                        "大模型文字与确定性竞彩让球结算冲突，已程序校正"
+                        "大模型文字与确定性胜平负/竞彩让球结算冲突，已程序校正"
                         if semantic_corrected else None
                     ),
                 },
@@ -626,18 +693,69 @@ class FAEAIReviewAnalyzer:
 
         def sanitize_global(value: Any) -> str:
             text = re.sub(r"\s+", " ", str(value or "")).strip()
-            for source in source_rows:
-                match_number = str(source.get("match_number") or "")
-                if not match_number or match_number not in text:
+            # Validate one natural-language clause at a time.  Applying one
+            # match's settlement to a paragraph containing several fixtures
+            # could itself corrupt valid text, so ambiguous clauses are left
+            # untouched and the Sporttery aggregate is generated separately.
+            chunks = re.split(r"([。；，！？\n])", text)
+            for index in range(0, len(chunks), 2):
+                chunk = chunks[index]
+                matched_sources = []
+                for source in source_rows:
+                    identifiers = {
+                        str(source.get("match_number") or ""),
+                        str(source.get("home_team") or ""),
+                        str(source.get("away_team") or ""),
+                    }
+                    if any(value and value in chunk for value in identifiers):
+                        matched_sources.append(source)
+                if len(matched_sources) != 1:
                     continue
+                source = matched_sources[0]
                 settlement = (
                     (source.get("result") or {})
                     .get("handicap_settlement") or {}
                 )
-                text, _ = _sanitize_handicap_result_claim(
-                    text, settlement.get("actual_outcome")
+                chunk, _ = _sanitize_handicap_result_claim(
+                    chunk, settlement.get("actual_outcome")
                 )
-            return text
+                chunk, _ = _sanitize_ordinary_result_claim(
+                    chunk,
+                    _deterministic_ordinary_outcome(
+                        (source.get("result") or {}).get("score")
+                    ),
+                )
+                chunks[index] = chunk
+            return "".join(chunks)
+
+        def deterministic_sporttery_lesson() -> str:
+            counts = {"让胜": 0, "让平": 0, "让负": 0}
+            examples = {"让胜": [], "让平": [], "让负": []}
+            for source in source_rows:
+                settlement = (
+                    (source.get("result") or {})
+                    .get("handicap_settlement") or {}
+                )
+                outcome = str(settlement.get("actual_outcome") or "")
+                if outcome not in counts:
+                    continue
+                counts[outcome] += 1
+                if len(examples[outcome]) < 4:
+                    examples[outcome].append(
+                        str(source.get("match_number") or "")
+                    )
+            parts = [
+                f"确定性竞彩让球结算：让胜{counts['让胜']}场、"
+                f"让平{counts['让平']}场、让负{counts['让负']}场。"
+            ]
+            for outcome in ("让平", "让胜", "让负"):
+                labels = "、".join(value for value in examples[outcome] if value)
+                if labels:
+                    parts.append(f"{outcome}示例：{labels}。")
+            parts.append(
+                "该统计只描述最终赛果；规则学习仍须结合赛前盘口并通过历史样本验证。"
+            )
+            return "".join(parts)
 
         def sanitize_global_list(
             value: Any, limit: int, item_limit: int
@@ -702,18 +820,37 @@ class FAEAIReviewAnalyzer:
                 continue
             target = cls._text(item.get("target"), "", 160)
             reason = cls._text(item.get("reason"), "", 400)
+            candidate_semantic_conflict = False
             if len(evidence_ids) == 1:
                 evidence_source = source_by_id.get(evidence_ids[0]) or {}
                 settlement = (
                     (evidence_source.get("result") or {})
                     .get("handicap_settlement") or {}
                 )
-                target, _ = _sanitize_handicap_result_claim(
+                target, target_handicap_changed = _sanitize_handicap_result_claim(
                     target, settlement.get("actual_outcome")
                 )
-                reason, _ = _sanitize_handicap_result_claim(
+                reason, reason_handicap_changed = _sanitize_handicap_result_claim(
                     reason, settlement.get("actual_outcome")
                 )
+                ordinary_outcome = _deterministic_ordinary_outcome(
+                    (evidence_source.get("result") or {}).get("score")
+                )
+                target, target_ordinary_changed = _sanitize_ordinary_result_claim(
+                    target, ordinary_outcome
+                )
+                reason, reason_ordinary_changed = _sanitize_ordinary_result_claim(
+                    reason, ordinary_outcome
+                )
+                candidate_semantic_conflict = any((
+                    target_handicap_changed,
+                    reason_handicap_changed,
+                    target_ordinary_changed,
+                    reason_ordinary_changed,
+                ))
+            if candidate_semantic_conflict:
+                blocked_learning_candidates += 1
+                continue
             if not target or not reason:
                 continue
             candidates.append({
@@ -750,9 +887,8 @@ class FAEAIReviewAnalyzer:
             },
             "market_lessons": {
                 key: (
-                    "竞彩让球采用确定性结算：主队-1时，赢2球及以上为让胜、"
-                    "恰好赢1球为让平，其余为让负；本次已拦截大模型语义冲突。"
-                    if key == "sporttery" and semantic_conflict_ids
+                    deterministic_sporttery_lesson()
+                    if key == "sporttery"
                     else sanitize_global(cls._text(
                         lessons.get(key), "本次样本不足，暂不调整。", 500
                     ))
@@ -763,16 +899,16 @@ class FAEAIReviewAnalyzer:
             },
             "matches": normalized_matches,
             "combination_review": {
-                "conclusion": cls._text(
+                "conclusion": sanitize_global(cls._text(
                     combo.get("conclusion"), "暂无已结算组合可复核。", 600
-                ),
-                "good_choices": cls._list(
+                )),
+                "good_choices": sanitize_global_list(
                     combo.get("good_choices"), 6, 220
                 ),
-                "bad_choices": cls._list(
+                "bad_choices": sanitize_global_list(
                     combo.get("bad_choices"), 6, 220
                 ),
-                "construction_advice": cls._list(
+                "construction_advice": sanitize_global_list(
                     combo.get("construction_advice"), 6, 220
                 ),
             },

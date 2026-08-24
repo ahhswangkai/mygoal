@@ -15,7 +15,7 @@ from .provider import ArkNarrativeClient, FAEError, FAEOutputError
 from .version import ENGINE_VERSION
 
 
-DAILY_PROMPT_VERSION = "five-market-daily-v26-calibrated-two-option"
+DAILY_PROMPT_VERSION = "five-market-daily-v27-value-ranked-two-option"
 
 OFFICIAL_PLAY_SELECTIONS = {"平局", "让平"}
 OFFICIAL_MIN_BET_SCORE = 70.0
@@ -27,6 +27,8 @@ TWO_OPTION_MIN_COVERAGE = 64.0
 TWO_OPTION_MIN_MARKET_CONFIDENCE = 65.0
 TWO_OPTION_MIN_SECOND_GAP = 2.0
 TWO_OPTION_DAILY_LIMIT = 5
+TWO_OPTION_LOW_PRICE_FAVORITE_LIMIT = 2
+TWO_OPTION_LOW_PRICE_FAVORITE_ODDS = 1.45
 TWO_OPTION_PLAY_SELECTIONS = {
     "主胜", "平局", "客胜", "让胜", "让平", "让负",
 }
@@ -3410,6 +3412,45 @@ class FAEDailyAIAnalyzer:
             _number(odds.get(selection)) is not None
             for selection in (primary, secondary)
         )
+        model_expected_return = None
+        equal_stake_expected_roi = None
+        pair_value_score = None
+        dutch_return = None
+        dutch_roi = None
+        shortest_odds = None
+        if complete_odds:
+            priced_rows = [
+                (
+                    float(item.get("model_probability") or 0) / 100,
+                    float(odds.get(str(item.get("selection") or "")) or 0),
+                )
+                for item in selected_rows
+            ]
+            model_expected_return = sum(
+                probability * price for probability, price in priced_rows
+            )
+            equal_stake_expected_roi = (
+                model_expected_return / len(priced_rows) - 1
+            ) * 100
+            pair_value_score = max(
+                0.0, min(100.0, 100.0 + equal_stake_expected_roi)
+            )
+            inverse_sum = sum(
+                1 / price for _, price in priced_rows if price > 0
+            )
+            if inverse_sum > 0:
+                dutch_return = 1 / inverse_sum
+                dutch_roi = (dutch_return - 1) * 100
+            shortest_odds = min(price for _, price in priced_rows)
+        coverage_edge = (
+            coverage - market_coverage
+            if market_coverage is not None else 0.0
+        )
+        low_price_favorite = bool(
+            market == "胜平负"
+            and shortest_odds is not None
+            and shortest_odds < TWO_OPTION_LOW_PRICE_FAVORITE_ODDS
+        )
         eligible = bool(
             coverage >= TWO_OPTION_MIN_COVERAGE
             and confidence >= TWO_OPTION_MIN_MARKET_CONFIDENCE
@@ -3417,10 +3458,23 @@ class FAEDailyAIAnalyzer:
             and complete_odds
             and not severe_data_risk
         )
+        # Coverage is the admission gate, not the final ordering rule.  The
+        # former formula almost entirely sorted by coverage and consequently
+        # filled the slate with 1.20-1.40 favourites.  Rank the admitted pair
+        # by its model-priced equal-stake value as well, while retaining a
+        # modest confidence/gap contribution.  Ordinary low-price favourites
+        # receive a transparent penalty and are capped at the daily selector.
+        low_price_penalty = (
+            max(0.0, TWO_OPTION_LOW_PRICE_FAVORITE_ODDS - shortest_odds) * 20
+            if low_price_favorite and shortest_odds is not None else 0.0
+        )
         rank_score = (
-            coverage
-            + min(12.0, max(0.0, second_gap)) * 0.55
-            + confidence * 0.12
+            coverage * 0.42
+            + float(pair_value_score or 0) * 0.38
+            + confidence * 0.08
+            + min(12.0, max(0.0, second_gap)) * 0.45
+            + max(-5.0, min(5.0, coverage_edge)) * 0.8
+            - low_price_penalty
         )
         reasons = []
         if coverage < TWO_OPTION_MIN_COVERAGE:
@@ -3453,6 +3507,27 @@ class FAEDailyAIAnalyzer:
             ),
             "second_over_third_gap": round(second_gap, 2),
             "market_confidence": round(confidence, 1),
+            "coverage_value_edge": round(coverage_edge, 2),
+            "pair_value_score": (
+                round(pair_value_score, 1)
+                if pair_value_score is not None else None
+            ),
+            "equal_stake_expected_roi": (
+                round(equal_stake_expected_roi, 1)
+                if equal_stake_expected_roi is not None else None
+            ),
+            "dutch_return": (
+                round(dutch_return, 4) if dutch_return is not None else None
+            ),
+            "dutch_roi": (
+                round(dutch_roi, 1) if dutch_roi is not None else None
+            ),
+            "shortest_odds": (
+                round(shortest_odds, 3)
+                if shortest_odds is not None else None
+            ),
+            "low_price_favorite": low_price_favorite,
+            "low_price_penalty": round(low_price_penalty, 2),
             "rank_score": round(rank_score, 2),
             "reason": (
                 f"同市场前两项覆盖分{coverage:.1f}，次选领先第三项"
@@ -3478,14 +3553,41 @@ class FAEDailyAIAnalyzer:
             analysis["two_option_recommendation"] = profile
             row["analysis"] = analysis
             rows.append(row)
+            analysis_source = str(row.get("analysis_source") or "")
+            ai_verified = analysis_source in {"", "volcengine-ark"}
+            profile["ai_verified"] = ai_verified
+            profile["analysis_source"] = analysis_source or "legacy"
+            if profile.get("actionable") and not ai_verified:
+                profile["actionable"] = False
+                profile["reason"] = (
+                    str(profile.get("reason") or "")
+                    + "；本场仅有FAE规则兜底，等待大模型研判后再进入双选核心"
+                ).strip("；")
+                analysis["two_option_recommendation"] = profile
+                row["analysis"] = analysis
             if profile.get("actionable"):
                 eligible.append((
                     float(profile.get("rank_score") or 0), index
                 ))
-        selected = {
-            index for _, index in sorted(eligible, reverse=True)[
-                :TWO_OPTION_DAILY_LIMIT
-            ]
+        ordered_eligible = sorted(eligible, reverse=True)
+        selected_order = []
+        low_price_count = 0
+        for _, candidate_index in ordered_eligible:
+            profile = (
+                (rows[candidate_index].get("analysis") or {})
+                .get("two_option_recommendation") or {}
+            )
+            if profile.get("low_price_favorite"):
+                if low_price_count >= TWO_OPTION_LOW_PRICE_FAVORITE_LIMIT:
+                    continue
+                low_price_count += 1
+            selected_order.append(candidate_index)
+            if len(selected_order) >= TWO_OPTION_DAILY_LIMIT:
+                break
+        selected = set(selected_order)
+        daily_rank_by_index = {
+            candidate_index: rank
+            for rank, candidate_index in enumerate(selected_order, start=1)
         }
         for index, row in enumerate(rows):
             analysis = row["analysis"]
@@ -3493,20 +3595,18 @@ class FAEDailyAIAnalyzer:
             shortlisted = index in selected
             profile["actionable"] = shortlisted
             profile["daily_rank"] = (
-                next(
-                    (
-                        rank for rank, (_, candidate_index) in enumerate(
-                            sorted(eligible, reverse=True), start=1
-                        ) if candidate_index == index
-                    ),
-                    None,
-                )
+                daily_rank_by_index.get(index)
                 if shortlisted else None
             )
             if not shortlisted and profile.get("rank_score") is not None:
+                suffix = (
+                    "；普通胜平负低于1.45的热门双选每日最多保留"
+                    f"{TWO_OPTION_LOW_PRICE_FAVORITE_LIMIT}场"
+                    if profile.get("low_price_favorite")
+                    else f"；全日仅保留前{TWO_OPTION_DAILY_LIMIT}场双选"
+                )
                 profile["reason"] = (
-                    str(profile.get("reason") or "")
-                    + f"；全日仅保留前{TWO_OPTION_DAILY_LIMIT}场双选"
+                    str(profile.get("reason") or "") + suffix
                 ).strip("；")
             analysis["two_option_recommendation"] = profile
             if shortlisted and analysis.get("no_bet"):
@@ -7693,10 +7793,21 @@ class FAEDailyAIAnalyzer:
                 "odds": odds,
                 "coverage_score": round(coverage, 2),
                 "market_confidence": round(confidence, 1),
+                "pair_value_score": profile.get("pair_value_score"),
+                "equal_stake_expected_roi": profile.get(
+                    "equal_stake_expected_roi"
+                ),
+                "dutch_roi": profile.get("dutch_roi"),
+                "coverage_value_edge": profile.get(
+                    "coverage_value_edge"
+                ),
+                "ai_verified": bool(profile.get("ai_verified")),
+                "analysis_source": profile.get("analysis_source"),
                 "daily_rank": profile.get("daily_rank"),
                 "rank_score": profile.get("rank_score"),
                 "reason": (
                     f"{priced}，覆盖分{coverage:g}，"
+                    f"价值分{float(profile.get('pair_value_score') or 0):g}，"
                     f"盘口可信度{confidence:g}；"
                     f"{profile.get('reason') or '达到双选正式门槛'}"
                 ),

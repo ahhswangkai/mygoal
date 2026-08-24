@@ -2,7 +2,7 @@
 
 ENGINE_NAME = "Football AI Engine"
 ENGINE_CODE = "FAE"
-ENGINE_VERSION = "2.13.5"
+ENGINE_VERSION = "2.13.6"
 SCHEMA_VERSION = "2.5"
 
 DIMENSION_WEIGHTS = {
@@ -89,6 +89,8 @@ VERSION_MANIFEST = {
         "推荐列表轻量接口与复盘、Skill按需加载，降低多比赛日首屏体积",
         "校准概率优先的主次选排序与每日最多5场高覆盖双选建议，单选核心和双选可考虑分层展示",
         "双选正式核心池：通过独立覆盖门槛后不再继承单选不下注，并从观察池移除",
+        "双选核心价值排序：覆盖率仅作入围门槛，加入等额期望收益、低赔热门限额与大模型来源校验",
+        "复盘双市场语义护栏：胜平负和竞彩让球均按确定性赛果纠错，拦截错误复盘记忆",
     ],
     "learning_policy": {
         "minimum_samples": 10,

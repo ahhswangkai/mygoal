@@ -1061,6 +1061,147 @@ class DailyAnalysisTests(unittest.TestCase):
             for row in result
         ), 5)
 
+    def test_two_option_value_ranking_beats_raw_coverage_order(self):
+        ordinary = {
+            "euro": {"current": [1.20, 5.85, 8.00]},
+            "fae_core": {
+                "probabilities": {
+                    "home_win": 78, "draw": 13, "away_win": 9,
+                },
+                "risk": {"dangerous": False},
+            },
+        }
+        handicap = {
+            "sporttery_handicap": {
+                "value": -1,
+                "current": [6.20, 3.95, 1.40],
+            },
+            "fae_core": {
+                "probabilities": {
+                    "hhad": {"win": 13, "draw": 22.24, "lose": 64},
+                },
+                "risk": {"dangerous": False},
+            },
+        }
+        ordinary_secondary = FAEDailyAIAnalyzer._secondary_play_decision(
+            ordinary, "主胜", "平局"
+        )
+        handicap_secondary = FAEDailyAIAnalyzer._secondary_play_decision(
+            handicap, "让负", "让平"
+        )
+        rows = [{
+            "match_id": "ordinary",
+            "analysis_source": "volcengine-ark",
+            "analysis": {
+                "primary_play": "主胜",
+                "secondary_play": ordinary_secondary["selection"],
+                "secondary_selection_guard": ordinary_secondary,
+                "market_confidence": {"score": 80},
+            },
+            "input_snapshot": ordinary,
+        }, {
+            "match_id": "handicap",
+            "analysis_source": "volcengine-ark",
+            "analysis": {
+                "primary_play": "让负",
+                "secondary_play": handicap_secondary["selection"],
+                "secondary_selection_guard": handicap_secondary,
+                "market_confidence": {"score": 68},
+            },
+            "input_snapshot": handicap,
+        }]
+
+        result = FAEDailyAIAnalyzer.apply_two_option_recommendations(rows)
+        profiles = {
+            row["match_id"]: row["analysis"]["two_option_recommendation"]
+            for row in result
+        }
+
+        self.assertGreater(
+            profiles["ordinary"]["coverage_score"],
+            profiles["handicap"]["coverage_score"],
+        )
+        self.assertEqual(profiles["handicap"]["daily_rank"], 1)
+        self.assertGreater(
+            profiles["handicap"]["pair_value_score"],
+            profiles["ordinary"]["pair_value_score"],
+        )
+
+    def test_fallback_pair_waits_for_ai_before_entering_core(self):
+        source = {
+            "sporttery_handicap": {
+                "value": -1,
+                "current": [2.10, 3.65, 2.72],
+            },
+            "fae_core": {
+                "probabilities": {
+                    "hhad": {"win": 46, "draw": 32, "lose": 22},
+                },
+                "risk": {"dangerous": False},
+            },
+        }
+        secondary = FAEDailyAIAnalyzer._secondary_play_decision(
+            source, "让胜", "让平"
+        )
+        result = FAEDailyAIAnalyzer.apply_two_option_recommendations([{
+            "match_id": "fallback",
+            "analysis_source": "fae-core-fallback",
+            "analysis": {
+                "primary_play": "让胜",
+                "secondary_play": secondary["selection"],
+                "secondary_selection_guard": secondary,
+                "market_confidence": {"score": 80},
+                "no_bet": True,
+            },
+            "input_snapshot": source,
+        }])[0]["analysis"]["two_option_recommendation"]
+
+        self.assertFalse(result["actionable"])
+        self.assertFalse(result["ai_verified"])
+        self.assertIn("等待大模型研判", result["reason"])
+
+    def test_low_price_ordinary_pairs_are_capped_at_two(self):
+        rows = []
+        for index, price in enumerate((1.20, 1.25, 1.30)):
+            source = {
+                "euro": {"current": [price, 5.20, 8.00]},
+                "fae_core": {
+                    "probabilities": {
+                        "home_win": 76 - index,
+                        "draw": 15 + index,
+                        "away_win": 9,
+                    },
+                    "risk": {"dangerous": False},
+                },
+            }
+            secondary = FAEDailyAIAnalyzer._secondary_play_decision(
+                source, "主胜", "平局"
+            )
+            rows.append({
+                "match_id": str(index),
+                "analysis_source": "volcengine-ark",
+                "analysis": {
+                    "primary_play": "主胜",
+                    "secondary_play": secondary["selection"],
+                    "secondary_selection_guard": secondary,
+                    "market_confidence": {"score": 80},
+                },
+                "input_snapshot": source,
+            })
+
+        result = FAEDailyAIAnalyzer.apply_two_option_recommendations(rows)
+        selected = [
+            row for row in result
+            if row["analysis"]["two_option_recommendation"]["actionable"]
+        ]
+
+        self.assertEqual(len(selected), 2)
+        self.assertTrue(all(
+            row["analysis"]["two_option_recommendation"]
+            ["low_price_favorite"]
+            for row in selected
+        ))
+
     def test_exact_margin_guard_re_ranks_both_remaining_handicap_outcomes(self):
         source = build_daily_match_input(match("202"))
         source["fae_core"]["probabilities"] = {

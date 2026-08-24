@@ -231,11 +231,11 @@ class FAEAIReviewAnalyzerTests(unittest.TestCase):
             "matches": [{
                 "match_id": "201",
                 "verdict": "判断失误",
-                "diagnosis": "主队赢2球归为让负，双选因此命中。",
+                "diagnosis": "主胜方向失手，主队赢2球归为让负，双选因此命中。",
                 "correct_signals": [],
                 "missed_signals": ["最终结算为让负"],
                 "data_quality_issues": [],
-                "counterfactual": "下次重新核对。",
+                "counterfactual": "让胜(-1)和让平(-1)同时命中，下次重新核对。",
                 "rule_tags": ["让球"],
             }],
             "learning_candidates": [{
@@ -255,9 +255,14 @@ class FAEAIReviewAnalyzerTests(unittest.TestCase):
 
         self.assertTrue(row["semantic_guard"]["triggered"])
         self.assertEqual(row["actual_handicap_outcome"], "让胜")
+        self.assertEqual(row["actual_ordinary_outcome"], "主胜")
         self.assertIn("确定性结果为让胜", row["diagnosis"])
         self.assertNotIn("归为让负", row["diagnosis"])
+        self.assertIn("主胜方向命中", row["diagnosis"])
+        self.assertNotIn("同时命中", row["counterfactual"])
+        self.assertIn("确定性让球赛果为让胜", row["counterfactual"])
         self.assertIn("周六201主队赢2球归为让胜", normalized["summary"]["conclusion"])
+        self.assertIn("让胜1场", normalized["market_lessons"]["sporttery"])
         self.assertEqual(normalized["learning_candidates"], [])
         self.assertEqual(
             normalized["semantic_guard"]["blocked_learning_candidates"], 1
