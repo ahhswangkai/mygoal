@@ -876,8 +876,10 @@
               <h2>
                 <span>全量逐场复盘</span>
                 <small>
-                  主选 {{ faeReview.summary?.singles?.hits || 0 }}/{{ faeReview.summary?.singles?.settled || 0 }}
-                  · 观察降级 {{ reviewNoBetCount }}
+                  逐场 {{ reviewAllMatchStats.hits }}/{{ reviewAllMatchStats.settled }}
+                  <template v-if="reviewAllMatchStats.pending">
+                    · 待赛 {{ reviewAllMatchStats.pending }}
+                  </template>
                 </small>
               </h2>
               <button
@@ -893,7 +895,9 @@
                   <strong>
                     {{ item.selection_text || item.selection }}
                   </strong>
-                  <i :class="item.status">{{ reviewStatusLabel(item.status, item.no_bet) }}</i>
+                  <i :class="reviewMatchStatus(item)">
+                    {{ reviewMatchStatusLabel(item) }}
+                  </i>
                   <small v-if="item.guardrail_triggered" class="guarded-pick">
                     AI原选{{ item.model_selection }}
                   </small>
@@ -1364,9 +1368,15 @@ const visibleTwoOptionCombinations = computed(() => (
   && isVisibleDailyMatch(dailyMatch(combo.double_pick.match_id))
   && isVisibleDailyMatch(dailyMatch(combo.anchor_pick.match_id))
 )).slice(0, 3))
-const reviewNoBetCount = computed(() => (
-  faeReview.value?.match_results || []
-).filter(item => item.no_bet).length)
+const reviewAllMatchStats = computed(() => {
+  const rows = faeReview.value?.match_results || []
+  const statuses = rows.map(reviewMatchStatus)
+  return {
+    hits: statuses.filter(status => status === 'hit').length,
+    settled: statuses.filter(status => ['hit', 'miss', 'push'].includes(status)).length,
+    pending: statuses.filter(status => !['hit', 'miss', 'push'].includes(status)).length
+  }
+})
 const twoOptionReviewRows = computed(() => {
   const byMatch = new Map()
   for (const item of faeReview.value?.two_option_results || []) {
@@ -1884,6 +1894,20 @@ function reviewStatusLabel(status, noBet = false) {
   if (status === 'skipped') return noBet ? '观察降级' : '观望'
   if (status === 'ungraded') return '未结算'
   return '待赛'
+}
+
+function reviewMatchStatus(item) {
+  if (
+    item?.status === 'skipped'
+    && ['hit', 'miss', 'push'].includes(item?.observation_status)
+  ) {
+    return item.observation_status
+  }
+  return item?.status || 'pending'
+}
+
+function reviewMatchStatusLabel(item) {
+  return reviewStatusLabel(reviewMatchStatus(item), item?.no_bet)
 }
 
 function twoOptionHitOdds(item) {
