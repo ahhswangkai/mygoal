@@ -56,9 +56,21 @@
                   <strong v-else-if="dailyAiContent.no_bet" class="daily-no-bet"><small>结论</small>不下注</strong>
                   <span v-if="dailyAiPrimaryRadar"><small>总盘结论</small>{{ dailyAiContent.decision || '观望' }}</span>
                   <span><small>赛果预测</small>{{ dailyAiContent.predicted_result || '观望' }}</span>
-                  <strong><small>主选</small>{{ dailyAiContent.primary_play || '观望' }}</strong>
-                  <span v-if="dailyAiContent.secondary_play && dailyAiContent.secondary_play !== '观望'">
-                    <small>防选</small>{{ dailyAiContent.secondary_play }}
+                  <strong>
+                    <small>单选</small>{{ dailyAiContent.single_play || dailyAiContent.primary_play || '观望' }}
+                    <template v-if="dailyAiContent.single_odds"> @{{ dailyAiContent.single_odds }}</template>
+                  </strong>
+                  <span
+                    v-if="(dailyAiContent.single_secondary_play || dailyAiContent.secondary_play)
+                      && (dailyAiContent.single_secondary_play || dailyAiContent.secondary_play) !== '观望'"
+                  >
+                    <small>次选</small>{{ dailyAiContent.single_secondary_play || dailyAiContent.secondary_play }}
+                    <template v-if="dailyAiContent.single_secondary_odds">
+                      @{{ dailyAiContent.single_secondary_odds }}
+                    </template>
+                  </span>
+                  <span v-if="dailyAiContent.primary_play && dailyAiContent.primary_play !== '观望'">
+                    <small>价值玩法</small>{{ dailyAiContent.primary_play }}
                   </span>
                   <span v-if="dailyAiContent.handicap_play && dailyAiContent.handicap_play !== '观望'">
                     <small>让球</small>{{ dailyAiContent.handicap_play }}
@@ -73,7 +85,8 @@
                 <strong>一致性护栏已生效</strong>
                 <span>
                   AI 原选 {{ dailyAiContent.model_primary_play }}，
-                  正式推荐按 {{ dailyAiContent.primary_play }} 记录与复盘
+                  价值玩法按 {{ dailyAiContent.primary_play }}；逐场单选按
+                  {{ dailyAiContent.single_play || dailyAiContent.primary_play }} 独立复盘
                 </span>
               </div>
               <p class="daily-detail-verdict">{{ dailyAiContent.verdict }}</p>

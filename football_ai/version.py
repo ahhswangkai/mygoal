@@ -2,7 +2,7 @@
 
 ENGINE_NAME = "Football AI Engine"
 ENGINE_CODE = "FAE"
-ENGINE_VERSION = "2.14.4"
+ENGINE_VERSION = "2.14.5"
 SCHEMA_VERSION = "2.9"
 
 DIMENSION_WEIGHTS = {
@@ -101,6 +101,7 @@ VERSION_MANIFEST = {
         "亚盘赔率组合观察：加入热门与下盘双方的初盘、即时水位、各自变化及两侧水位差",
         "大小球赔率组合观察：加入大小球双方初盘、即时水位、各自变化及初即时水位差",
         "结果玩法硬护栏：主选和次选仅允许胜平负或竞彩让球，大小球只保留为辅助证据",
+        "全量逐场概率单选：模型概率35%与市场去水概率65%融合，过滤1.50以下低赔率并与价值玩法独立复盘",
     ],
     "learning_policy": {
         "minimum_samples": 10,

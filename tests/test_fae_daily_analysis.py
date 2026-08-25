@@ -2310,6 +2310,10 @@ class DailyAnalysisTests(unittest.TestCase):
                 "analysis": {
                     "primary_play": "让平",
                     "secondary_play": "让负",
+                    "single_play": "主胜",
+                    "single_secondary_play": "平局",
+                    "single_odds": 1.72,
+                    "single_probability": 58.4,
                     "verdict": "模型结论",
                     "historical_odds_rules": ["large-audit-only-field"],
                 },
@@ -2339,6 +2343,8 @@ class DailyAnalysisTests(unittest.TestCase):
         self.assertNotIn("input_hash", compact)
         row = compact["matches"][0]
         self.assertEqual(row["analysis"]["primary_play"], "让平")
+        self.assertEqual(row["analysis"]["single_play"], "主胜")
+        self.assertEqual(row["analysis"]["single_odds"], 1.72)
         self.assertNotIn("historical_odds_rules", row["analysis"])
         self.assertNotIn("fundamentals", row["input_snapshot"])
         self.assertEqual(
@@ -2354,6 +2360,62 @@ class DailyAnalysisTests(unittest.TestCase):
                 "bet_score": 72,
                 "no_bet": False,
             },
+        )
+
+    def test_probability_single_filters_short_price_and_ignores_value_score(self):
+        source = {
+            "fae_core": {
+                "recommendation": {
+                    "category_scores": [
+                        {
+                            "label": "主胜",
+                            "odds": 1.42,
+                            "probability": 72,
+                            "market_implied_probability": 68,
+                            "bet_score": 90,
+                        },
+                        {
+                            "label": "让胜",
+                            "odds": 1.76,
+                            "probability": 59,
+                            "market_implied_probability": 56,
+                            "bet_score": 48,
+                        },
+                        {
+                            "label": "让平",
+                            "odds": 3.4,
+                            "probability": 27,
+                            "market_implied_probability": 26,
+                            "bet_score": 80,
+                        },
+                        {
+                            "label": "让负",
+                            "odds": 4.2,
+                            "probability": 14,
+                            "market_implied_probability": 18,
+                            "bet_score": 84,
+                        },
+                        {
+                            "label": "平局",
+                            "odds": 4.1,
+                            "probability": 19,
+                            "market_implied_probability": 22,
+                            "bet_score": 88,
+                        },
+                    ],
+                },
+            },
+        }
+
+        profile = FAEDailyAIAnalyzer._probability_single_profile(source)
+
+        self.assertEqual(profile["selection"], "让胜")
+        self.assertEqual(profile["secondary_selection"], "让平")
+        self.assertEqual(profile["odds"], 1.76)
+        self.assertEqual(profile["minimum_odds"], 1.5)
+        self.assertEqual(
+            profile["excluded_low_odds"],
+            [{"selection": "主胜", "odds": 1.42}],
         )
 
 

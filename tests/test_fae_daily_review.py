@@ -18,6 +18,8 @@ def source(
     no_bet=False,
     handicap_play=None,
     secondary_play=None,
+    single_play=None,
+    single_probability=None,
     historical_calibration=None,
 ):
     return {
@@ -29,6 +31,8 @@ def source(
         "analysis": {
             "primary_play": selection,
             "secondary_play": secondary_play,
+            "single_play": single_play,
+            "single_probability": single_probability,
             "handicap_play": handicap_play,
             "model_primary_play": "让平" if guarded else selection,
             "rating": rating,
@@ -136,6 +140,30 @@ class DailyAIReviewTests(unittest.TestCase):
         self.assertEqual(stats["singles"]["hits"], 2)
         self.assertEqual(stats["by_play"]["2串1"]["hits"], 1)
         self.assertEqual(stats["guardrail_conflicts"], 1)
+
+    def test_all_match_single_uses_probability_play_not_value_play(self):
+        snapshot = {
+            **self.snapshot,
+            "matches": [source(
+                "216",
+                "让负",
+                single_play="主胜",
+                single_probability=58.4,
+                handicap=-1,
+            )],
+            "daily_summary": {"recommended_combinations": []},
+        }
+        results = {
+            "216": {"status": 2, "home_score": 2, "away_score": 0},
+        }
+
+        review = FAEDailyAIReviewEngine().review(snapshot, results)
+        row = review["match_results"][0]
+
+        self.assertEqual(row["selection"], "主胜")
+        self.assertEqual(row["status"], "hit")
+        self.assertEqual(row["value_selection"], "让负")
+        self.assertEqual(row["single_probability"], 58.4)
 
     def test_settles_two_option_coverage_for_handicap_hedge(self):
         snapshot = {

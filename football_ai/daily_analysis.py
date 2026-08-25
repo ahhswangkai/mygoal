@@ -15,13 +15,19 @@ from .provider import ArkNarrativeClient, FAEError, FAEOutputError
 from .version import ENGINE_VERSION
 
 
-DAILY_PROMPT_VERSION = "five-market-daily-v29-result-market-hard-guard"
+DAILY_PROMPT_VERSION = "five-market-daily-v30-probability-single"
 
 OFFICIAL_PLAY_SELECTIONS = {"平局", "让平"}
 OFFICIAL_MIN_BET_SCORE = 70.0
 OFFICIAL_MIN_VALUE_SCORE = 60.0
 OFFICIAL_MIN_MARKET_CONFIDENCE = 70.0
 OFFICIAL_MIN_RATING = 4.0
+
+# The all-match single is a probability forecast, not a value-bet verdict.
+# Very short prices add little parlay value and are deliberately excluded.
+SINGLE_MIN_ODDS = 1.50
+SINGLE_MODEL_WEIGHT = 0.35
+SINGLE_MARKET_WEIGHT = 0.65
 
 TWO_OPTION_MIN_COVERAGE = 64.0
 TWO_OPTION_MIN_MARKET_CONFIDENCE = 65.0
@@ -72,6 +78,12 @@ DRAW_SELECTION_POLICY_DEFAULT = "conservative"
 DAILY_AI_COMPACT_ANALYSIS_FIELDS = (
     "primary_play",
     "secondary_play",
+    "single_play",
+    "single_secondary_play",
+    "single_odds",
+    "single_secondary_odds",
+    "single_probability",
+    "single_secondary_probability",
     "handicap_play",
     "predicted_result",
     "star_text",
@@ -7100,6 +7112,119 @@ class FAEDailyAIAnalyzer:
         ))[:3]
 
     @classmethod
+    def _probability_single_profile(
+        cls,
+        source: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Pick the highest-probability result option above the odds floor.
+
+        This forecast is intentionally independent from bet_score/value_score.
+        It blends the model estimate with the de-vig market probability and is
+        used by the all-match single review.  The value-bet primary remains in
+        ``primary_play`` for the formal recommendation pipeline.
+        """
+        raw_categories = (
+            (((source.get("fae_core") or {}).get("recommendation") or {})
+             .get("category_scores") or [])
+        )
+        candidates = []
+        excluded_low_odds = []
+        for raw in raw_categories:
+            label = str(raw.get("label") or "")
+            if label not in TWO_OPTION_PLAY_SELECTIONS:
+                continue
+            odds = _number(raw.get("odds"))
+            if odds is None:
+                continue
+            if odds < SINGLE_MIN_ODDS:
+                excluded_low_odds.append({
+                    "selection": label,
+                    "odds": round(odds, 3),
+                })
+                continue
+            profile = cls._historical_adjusted_profile(
+                source, dict(raw)
+            )
+            model_probability = _number(profile.get("probability"))
+            market_probability = _number(
+                profile.get("market_implied_probability")
+            )
+            if model_probability is None and market_probability is None:
+                continue
+            if model_probability is None:
+                blended_probability = market_probability
+            elif market_probability is None:
+                blended_probability = model_probability
+            else:
+                blended_probability = (
+                    model_probability * SINGLE_MODEL_WEIGHT
+                    + market_probability * SINGLE_MARKET_WEIGHT
+                )
+            candidates.append({
+                "selection": label,
+                "market": (
+                    "竞彩让球" if label in {"让胜", "让平", "让负"}
+                    else "胜平负"
+                ),
+                "odds": round(odds, 3),
+                "model_probability": (
+                    round(model_probability, 2)
+                    if model_probability is not None else None
+                ),
+                "market_probability": (
+                    round(market_probability, 2)
+                    if market_probability is not None else None
+                ),
+                "probability": round(blended_probability, 2),
+            })
+        if not candidates:
+            return {
+                "selection": "观望",
+                "secondary_selection": "观望",
+                "minimum_odds": SINGLE_MIN_ODDS,
+                "excluded_low_odds": excluded_low_odds,
+                "reason": "没有赔率不低于1.50且概率可核验的结果玩法",
+            }
+
+        ranked = sorted(
+            candidates,
+            key=lambda item: (
+                float(item.get("probability") or 0),
+                float(item.get("market_probability") or 0),
+                -float(item.get("odds") or 99),
+            ),
+            reverse=True,
+        )
+        primary = ranked[0]
+        same_market = [
+            item for item in ranked[1:]
+            if item.get("market") == primary.get("market")
+        ]
+        secondary = same_market[0] if same_market else {}
+        return {
+            "selection": primary.get("selection") or "观望",
+            "secondary_selection": (
+                secondary.get("selection") or "观望"
+            ),
+            "market": primary.get("market"),
+            "odds": primary.get("odds"),
+            "secondary_odds": secondary.get("odds"),
+            "probability": primary.get("probability"),
+            "secondary_probability": secondary.get("probability"),
+            "model_probability": primary.get("model_probability"),
+            "market_probability": primary.get("market_probability"),
+            "minimum_odds": SINGLE_MIN_ODDS,
+            "model_weight": SINGLE_MODEL_WEIGHT,
+            "market_weight": SINGLE_MARKET_WEIGHT,
+            "excluded_low_odds": excluded_low_odds,
+            "candidates": ranked,
+            "reason": (
+                f"过滤赔率低于{SINGLE_MIN_ODDS:.2f}的选项后，"
+                "按模型35%+市场去水概率65%选择单场最高概率项"
+            ),
+        }
+
+    @classmethod
     def _value_selection_guard(
         cls,
         source: Dict[str, Any],
@@ -7618,6 +7743,7 @@ class FAEDailyAIAnalyzer:
                 effective_primary_play,
                 analysis.get("secondary_play"),
             )
+            single_profile = cls._probability_single_profile(source)
             analysis.update({
                 "model_rating": model_rating,
                 "value_rating": value_rating,
@@ -7626,6 +7752,19 @@ class FAEDailyAIAnalyzer:
                 "rating_adjustments": list(dict.fromkeys(adjustments)),
                 "secondary_play": secondary_decision["selection"],
                 "secondary_selection_guard": secondary_decision,
+                "single_play": single_profile.get("selection", "观望"),
+                "single_secondary_play": single_profile.get(
+                    "secondary_selection", "观望"
+                ),
+                "single_odds": single_profile.get("odds"),
+                "single_secondary_odds": single_profile.get(
+                    "secondary_odds"
+                ),
+                "single_probability": single_profile.get("probability"),
+                "single_secondary_probability": single_profile.get(
+                    "secondary_probability"
+                ),
+                "single_probability_profile": single_profile,
                 "handicap_play": cls._handicap_play(
                     source, effective_primary_play
                 ),

@@ -433,7 +433,7 @@
                 <span class="daily-selection-pair">
                   <span class="daily-choice-stack">
                     <span class="daily-pick-choice primary">
-                      <i>主选</i>
+                      <i>单选</i>
                       <em>
                         <b>{{ dailyDisplayPrimary(item) }}</b>
                         <small v-if="dailyDisplayOdds(item, dailyDisplayPrimary(item))">
@@ -458,6 +458,13 @@
                   </strong>
                   <span class="daily-pick-notes">
                     <i>倾向 {{ item.analysis?.predicted_result || '观望' }}</i>
+                    <i
+                      v-if="item.analysis?.primary_play
+                        && item.analysis.primary_play !== '观望'
+                        && item.analysis.primary_play !== dailyDisplayPrimary(item)"
+                    >
+                      价值 {{ item.analysis.primary_play }}
+                    </i>
                     <i v-if="item.analysis?.handicap_play && item.analysis.handicap_play !== '观望'">
                       让球 {{ item.analysis.handicap_play }}
                     </i>
@@ -472,7 +479,8 @@
                   <strong>一致性护栏已生效</strong>
                   <span>
                     AI 原选 {{ item.analysis.model_primary_play }}，
-                    正式推荐按 {{ item.analysis.primary_play }} 记录与复盘
+                    价值玩法按 {{ item.analysis.primary_play }}；逐场单选按
+                    {{ item.analysis.single_play || item.analysis.primary_play }} 独立复盘
                   </span>
                 </div>
                 <p class="daily-match-verdict">{{ item.analysis?.verdict }}</p>
@@ -1620,6 +1628,8 @@ function dailyCandidateScores(item) {
 function dailyDisplayPlays(item) {
   const analysis = item?.analysis || {}
   const candidates = [
+    analysis.single_play,
+    analysis.single_secondary_play,
     analysis.primary_play,
     analysis.secondary_play,
     analysis.handicap_play,

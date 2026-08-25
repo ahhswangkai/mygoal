@@ -479,8 +479,19 @@ class FAEDailyAIReviewEngine:
         result = self._settle_selection(
             source,
             match,
-            str(analysis.get("primary_play") or "观望"),
+            str(
+                analysis.get("single_play")
+                or analysis.get("primary_play")
+                or "观望"
+            ),
         )
+        result["value_selection"] = analysis.get("primary_play")
+        result["single_probability"] = analysis.get(
+            "single_probability"
+        )
+        result["single_probability_profile"] = analysis.get(
+            "single_probability_profile"
+        ) or {}
         if analysis.get("no_bet"):
             if result.get("status") == "pending":
                 result["no_bet"] = True
