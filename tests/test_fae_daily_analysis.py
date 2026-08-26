@@ -1176,6 +1176,73 @@ class DailyAnalysisTests(unittest.TestCase):
             decision["strategy"], "had-model-market-coverage-v1"
         )
 
+    def test_ordinary_secondary_is_optional_for_extreme_favorite(self):
+        source = {
+            "euro": {"current": [1.18, 5.80, 9.20]},
+            "fae_core": {
+                "probabilities": {
+                    "home_win": 81,
+                    "draw": 11,
+                    "away_win": 8,
+                },
+            },
+        }
+
+        decision = FAEDailyAIAnalyzer._secondary_play_decision(
+            source, "主胜", "平局"
+        )
+
+        self.assertEqual(decision["selection"], "观望")
+        self.assertEqual(
+            decision["strategy"],
+            "optional-secondary-coverage-gate-v1",
+        )
+        self.assertFalse(decision["secondary_gate"]["passed"])
+        self.assertEqual(
+            decision["same_market_secondary_gate"]["proposed_selection"],
+            "平局",
+        )
+        self.assertLess(
+            decision["same_market_secondary_gate"]["coverage_score"], 20
+        )
+
+    def test_weak_ordinary_secondary_falls_back_to_handicap_direction(self):
+        source = {
+            "euro": {"current": [1.18, 5.80, 9.20]},
+            "sporttery_handicap": {
+                "value": -1,
+                "current": [1.62, 4.10, 3.75],
+            },
+            "fae_core": {
+                "probabilities": {
+                    "home_win": 81,
+                    "draw": 11,
+                    "away_win": 8,
+                    "hhad": {"win": 50, "draw": 31, "lose": 19},
+                },
+            },
+        }
+
+        decision = FAEDailyAIAnalyzer._secondary_play_decision(
+            source, "主胜", "平局"
+        )
+
+        self.assertEqual(decision["selection"], "让胜")
+        self.assertEqual(decision["strategy"], "cross-market-secondary-v1")
+        self.assertTrue(decision["cross_market"])
+        self.assertEqual(decision["target_market"], "竞彩让球")
+        self.assertTrue(decision["secondary_gate"]["passed"])
+        self.assertFalse(
+            decision["same_market_secondary_gate"]["passed"]
+        )
+
+        profile = FAEDailyAIAnalyzer._two_option_profile(source, {
+            "primary_play": "主胜",
+            "secondary_play": decision["selection"],
+        })
+        self.assertFalse(profile["actionable"])
+        self.assertIn("不属于同一结果市场", profile["reason"])
+
     def test_high_coverage_pair_is_actionable_without_promoting_single(self):
         source = {
             "sporttery_handicap": {
@@ -1259,7 +1326,7 @@ class DailyAnalysisTests(unittest.TestCase):
             for row in result
         ), 5)
 
-    def test_two_option_value_ranking_beats_raw_coverage_order(self):
+    def test_optional_secondary_removes_weak_extreme_favorite_pair(self):
         ordinary = {
             "euro": {"current": [1.20, 5.85, 8.00]},
             "fae_core": {
@@ -1315,15 +1382,10 @@ class DailyAnalysisTests(unittest.TestCase):
             for row in result
         }
 
-        self.assertGreater(
-            profiles["ordinary"]["coverage_score"],
-            profiles["handicap"]["coverage_score"],
-        )
+        self.assertFalse(profiles["ordinary"]["actionable"])
+        self.assertEqual(ordinary_secondary["selection"], "观望")
         self.assertEqual(profiles["handicap"]["daily_rank"], 1)
-        self.assertGreater(
-            profiles["handicap"]["pair_value_score"],
-            profiles["ordinary"]["pair_value_score"],
-        )
+        self.assertTrue(profiles["handicap"]["actionable"])
 
     def test_fallback_pair_waits_for_ai_before_entering_core(self):
         source = {
@@ -1358,7 +1420,7 @@ class DailyAnalysisTests(unittest.TestCase):
         self.assertFalse(result["ai_verified"])
         self.assertIn("等待大模型研判", result["reason"])
 
-    def test_low_price_ordinary_pairs_are_capped_at_two(self):
+    def test_low_price_ordinary_pairs_are_not_forced(self):
         rows = []
         for index, price in enumerate((1.20, 1.25, 1.30)):
             source = {
@@ -1393,11 +1455,10 @@ class DailyAnalysisTests(unittest.TestCase):
             if row["analysis"]["two_option_recommendation"]["actionable"]
         ]
 
-        self.assertEqual(len(selected), 2)
+        self.assertEqual(len(selected), 0)
         self.assertTrue(all(
-            row["analysis"]["two_option_recommendation"]
-            ["low_price_favorite"]
-            for row in selected
+            row["analysis"]["secondary_play"] == "观望"
+            for row in result
         ))
 
     def test_exact_margin_guard_re_ranks_both_remaining_handicap_outcomes(self):
@@ -2454,6 +2515,22 @@ class DailyAnalysisTests(unittest.TestCase):
                     "single_probability": 58.4,
                     "verdict": "模型结论",
                     "historical_odds_rules": ["large-audit-only-field"],
+                    "secondary_selection_guard": {
+                        "selection": "让负",
+                        "strategy": "optional-secondary-coverage-gate-v1",
+                        "cross_market": True,
+                        "source_market": "胜平负",
+                        "target_market": "竞彩让球",
+                        "secondary_gate": {
+                            "passed": False,
+                            "coverage_score": 13.77,
+                        },
+                        "candidates": [{
+                            "selection": "让负",
+                            "coverage_score": 13.77,
+                            "large_audit_field": "drop-me",
+                        }],
+                    },
                 },
                 "input_snapshot": {
                     "euro": {"current": [1.5, 3.8, 5.5]},
@@ -2484,6 +2561,22 @@ class DailyAnalysisTests(unittest.TestCase):
         self.assertEqual(row["analysis"]["single_play"], "主胜")
         self.assertEqual(row["analysis"]["single_odds"], 1.72)
         self.assertNotIn("historical_odds_rules", row["analysis"])
+        self.assertFalse(
+            row["analysis"]["secondary_selection_guard"]
+            ["secondary_gate"]["passed"]
+        )
+        self.assertTrue(
+            row["analysis"]["secondary_selection_guard"]["cross_market"]
+        )
+        self.assertEqual(
+            row["analysis"]["secondary_selection_guard"]["target_market"],
+            "竞彩让球",
+        )
+        self.assertEqual(
+            row["analysis"]["secondary_selection_guard"]
+            ["candidates"][0],
+            {"selection": "让负", "coverage_score": 13.77},
+        )
         self.assertNotIn("fundamentals", row["input_snapshot"])
         self.assertEqual(
             row["input_snapshot"]["supervised_shadow"]["model_id"],

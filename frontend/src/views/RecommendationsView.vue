@@ -411,7 +411,7 @@
                 <h2>{{ hasOfficialDailyRecommendations ? '比赛推荐' : '逐场观察列表' }}</h2>
                 <small>
                   {{ hasOfficialDailyRecommendations
-                    ? '每场保留主选、次选和风险原因，未过正式门槛的场次只标记为观察级。'
+                    ? '每场保留主选和风险原因；次选达到独立门槛才展示，未过正式门槛的场次只标记为观察级。'
                     : '今天没有达到正式门槛的推荐，以下比赛保留研判结论和风险原因。'
                   }}
                 </small>
@@ -441,8 +441,11 @@
                         </small>
                       </em>
                     </span>
-                    <span class="daily-pick-choice secondary">
-                      <i>次选</i>
+                    <span
+                      v-if="dailyDisplaySecondary(item) !== '观望'"
+                      class="daily-pick-choice secondary"
+                    >
+                      <i>{{ dailySecondaryLabel(item) }}</i>
                       <em>
                         <b>{{ dailyDisplaySecondary(item) }}</b>
                         <small v-if="dailyDisplayOdds(item, dailyDisplaySecondary(item))">
@@ -1655,7 +1658,25 @@ function dailyDisplayPrimary(item) {
 }
 
 function dailyDisplaySecondary(item) {
-  return dailyDisplayPlays(item).find(play => play !== dailyDisplayPrimary(item)) || '观望'
+  const analysis = item?.analysis || {}
+  const explicit = normalizeDailyPlay(analysis.secondary_play)
+  const rawSecondary = String(analysis.secondary_play || '').trim()
+  if (rawSecondary && !explicit) return '观望'
+  if (!explicit) return '观望'
+  const guard = analysis.secondary_selection_guard || {}
+  if (guard?.secondary_gate?.passed === false) return '观望'
+  const candidate = (guard.candidates || []).find(row => (
+    normalizeDailyPlay(row?.selection) === explicit
+  ))
+  const coverage = Number(candidate?.coverage_score)
+  if (Number.isFinite(coverage) && coverage < 20) return '观望'
+  return explicit === dailyDisplayPrimary(item) ? '观望' : explicit
+}
+
+function dailySecondaryLabel(item) {
+  return item?.analysis?.secondary_selection_guard?.cross_market
+    ? '方向'
+    : '次选'
 }
 
 function dailyDisplayOdds(item, play) {

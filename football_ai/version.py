@@ -2,7 +2,7 @@
 
 ENGINE_NAME = "Football AI Engine"
 ENGINE_CODE = "FAE"
-ENGINE_VERSION = "2.14.6"
+ENGINE_VERSION = "2.14.8"
 SCHEMA_VERSION = "2.9"
 
 DIMENSION_WEIGHTS = {
@@ -104,6 +104,8 @@ VERSION_MANIFEST = {
         "全量逐场概率单选：模型概率35%与市场去水概率65%融合，过滤1.50以下低赔率并与价值玩法独立复盘",
         "低赔率热门亚盘校准：结合竞彩让球深度差、热门水位与升退盘，有限修正让胜/让平/让负概率",
         "平局/让平榜单跨玩法互斥：同场只保留概率与证据更强方向，详情与复盘仍保留双模型结果",
+        "可选次选门槛：第二方向覆盖分不足时返回观望，不再为每场机械补平局或让平",
+        "跨市场可选次选：同市场不足时从另一结果市场选择独立方向，不计入双选覆盖与组合",
     ],
     "learning_policy": {
         "minimum_samples": 10,
