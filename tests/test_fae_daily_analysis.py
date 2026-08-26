@@ -325,6 +325,134 @@ class DailyAnalysisTests(unittest.TestCase):
 
         self.assertEqual(row["historical_goal_margin_model"], model)
 
+    def test_builds_low_odds_asian_model_for_one_goal_line(self):
+        source = match("2")
+        source.update({
+            "euro_initial_win": "1.40",
+            "euro_current_win": "1.35",
+            "asian_initial_handicap": "半/一",
+            "asian_current_handicap": "半/一",
+            "asian_initial_home_odds": "0.90",
+            "asian_current_home_odds": "0.90",
+        })
+
+        row = build_daily_match_input(source)
+        model = row["low_odds_asian_model"]
+
+        self.assertTrue(model["available"])
+        self.assertTrue(model["matched"])
+        self.assertEqual(model["favorite"]["side"], "home")
+        self.assertGreater(model["adjustment_pp"]["让平"], 0)
+        self.assertIn(
+            "official1_asian075_exact",
+            [item["key"] for item in model["signals"]],
+        )
+
+    def test_low_odds_asian_deepening_demotes_handicap_draw(self):
+        source = match("2")
+        source.update({
+            "euro_current_win": "1.35",
+            "asian_initial_handicap": "一/球半",
+            "asian_current_handicap": "球半",
+            "asian_initial_home_odds": "0.90",
+            "asian_current_home_odds": "0.90",
+        })
+
+        model = build_daily_match_input(source)["low_odds_asian_model"]
+
+        self.assertGreater(model["adjustment_pp"]["让胜"], 0)
+        self.assertLess(model["adjustment_pp"]["让平"], 0)
+        self.assertIn(
+            "asian_line_deepen",
+            [item["key"] for item in model["signals"]],
+        )
+
+    def test_low_odds_asian_model_ignores_non_short_favorite(self):
+        row = build_daily_match_input(match("2"))
+
+        self.assertFalse(row["low_odds_asian_model"]["available"])
+
+    def test_low_odds_asian_model_maps_away_favorite_cover_to_letlose(self):
+        source = match("2")
+        source.update({
+            "euro_initial_win": "7.00",
+            "euro_current_win": "7.50",
+            "euro_initial_lose": "1.40",
+            "euro_current_lose": "1.35",
+            "hi_handicap_value": "1",
+            "asian_initial_handicap": "受一/球半",
+            "asian_current_handicap": "受球半",
+            "asian_initial_away_odds": "0.90",
+            "asian_current_away_odds": "0.90",
+        })
+
+        model = build_daily_match_input(source)["low_odds_asian_model"]
+
+        self.assertEqual(model["favorite"]["side"], "away")
+        self.assertGreater(model["adjustment_pp"]["让负"], 0)
+        self.assertLess(model["adjustment_pp"]["让平"], 0)
+
+    def test_low_odds_asian_profile_calibrates_all_handicap_outcomes(self):
+        source_match = match("2")
+        source_match.update({
+            "euro_initial_win": "1.40",
+            "euro_current_win": "1.35",
+            "asian_initial_handicap": "半/一",
+            "asian_current_handicap": "半/一",
+            "asian_initial_home_odds": "0.90",
+            "asian_current_home_odds": "0.90",
+        })
+        source = build_daily_match_input(source_match)
+        categories = [
+            {
+                "label": "让胜",
+                "probability": 39,
+                "prediction_score": 65,
+                "odds": 2.30,
+                "market_implied_probability": 38,
+                "no_bet_reasons": [],
+            },
+            {
+                "label": "让平",
+                "probability": 27,
+                "prediction_score": 65,
+                "odds": 3.50,
+                "market_implied_probability": 27,
+                "no_bet_reasons": [],
+            },
+            {
+                "label": "让负",
+                "probability": 34,
+                "prediction_score": 65,
+                "odds": 2.40,
+                "market_implied_probability": 35,
+                "no_bet_reasons": [],
+            },
+        ]
+        source["fae_core"] = {
+            "recommendation": {
+                "market_confidence": {"score": 70},
+                "category_scores": categories,
+            },
+        }
+
+        adjusted = {
+            item["label"]: FAEDailyAIAnalyzer._historical_adjusted_profile(
+                source, item
+            )
+            for item in categories
+        }
+
+        self.assertGreater(adjusted["让平"]["probability"], 27)
+        self.assertTrue(
+            adjusted["让平"]["low_odds_asian_calibration"]["applied"]
+        )
+        self.assertAlmostEqual(
+            sum(item["probability"] for item in adjusted.values()),
+            100,
+            places=1,
+        )
+
     def test_similar_history_conservatively_calibrates_draw_value(self):
         source = {
             "fae_core": {
@@ -496,23 +624,28 @@ class DailyAnalysisTests(unittest.TestCase):
         self.assertEqual(result["decision"], "观察")
         self.assertEqual(result["formal_veto"]["selection"], "让平")
 
-    def test_draw_radar_summary_only_keeps_top_three_per_market(self):
+    def test_draw_radar_summary_keeps_each_match_in_one_market_only(self):
         matches = []
         for index in range(5):
+            ordinary_score, handicap_score = (
+                (90 - index, 60 + index)
+                if index in {0, 1, 4}
+                else (60 + index, 90 - index)
+            )
             matches.append({
                 "analysis": {
                     "draw_radar": {
                         "ordinary_draw": {
                             "match_id": str(index),
                             "tier": "watch",
-                            "score": 60 + index,
-                            "probability": 25,
+                            "score": ordinary_score,
+                            "probability": ordinary_score / 3,
                         },
                         "handicap_draw": {
                             "match_id": str(index),
                             "tier": "watch",
-                            "score": 70 + index,
-                            "probability": 25,
+                            "score": handicap_score,
+                            "probability": handicap_score / 3,
                         },
                     },
                 },
@@ -524,11 +657,16 @@ class DailyAnalysisTests(unittest.TestCase):
 
         self.assertEqual(
             [row["match_id"] for row in radar["ordinary_draw"]],
-            ["4", "3", "2"],
+            ["0", "1", "4"],
         )
         self.assertEqual(
             [row["match_id"] for row in radar["handicap_draw"]],
-            ["4", "3", "2"],
+            ["2", "3"],
+        )
+        self.assertEqual(
+            set(row["match_id"] for row in radar["ordinary_draw"])
+            & set(row["match_id"] for row in radar["handicap_draw"]),
+            set(),
         )
 
     def test_summary_promotion_removes_hard_vetoed_formal_pool_row(self):

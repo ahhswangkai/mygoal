@@ -952,34 +952,6 @@
               </button>
             </section>
 
-            <section v-if="faeReview.handicap_results?.length" class="daily-review-block">
-              <h2>
-                <span>竞彩让球参考结果</span>
-                <small>{{ faeReview.summary?.handicap?.hits || 0 }}/{{ faeReview.summary?.handicap?.settled || 0 }}</small>
-              </h2>
-              <button
-                v-for="item in faeReview.handicap_results"
-                :key="`handicap-${item.match_id}`"
-                type="button"
-                @click="goToDetail(item.match_id)"
-              >
-                <span class="review-match-info">
-                  <b>{{ item.match_number }}</b>{{ item.home_team }} vs {{ item.away_team }}
-                </span>
-                <span class="review-pick-info">
-                  <strong>{{ item.selection_text || item.selection }}</strong>
-                  <i :class="item.status">{{ reviewStatusLabel(item.status) }}</i>
-                </span>
-                <span class="review-result-info">
-                  <em>
-                    {{ item.result_score || '待赛' }}
-                    <small v-if="item.odds">@{{ item.odds }}</small>
-                  </em>
-                  <small v-if="isSettledStatus(item.status)">{{ signedMetric(item.profit) }}单位</small>
-                </span>
-              </button>
-            </section>
-
             <section class="daily-review-block combo-review-block">
               <h2><span>当天组合结果</span><small>2串1 / 3串1</small></h2>
               <article v-for="item in faeReview.combo_results" :key="item.key">
@@ -1282,9 +1254,28 @@ const shouldShowDailyMatchList = computed(() => (
 const dailyMatchMap = computed(() => Object.fromEntries(
   (faeDailyAi.value?.matches || []).map(item => [String(item.match_id), item])
 ))
+function radarCandidateStrength(item) {
+  return [
+    item?.tier === 'core' ? 1 : 0,
+    Number(item?.probability || 0),
+    Number(item?.score || 0),
+    Number(item?.odds_value ?? -999),
+    Number(item?.effective_sample || 0)
+  ]
+}
+function isStrongerRadarCandidate(left, right) {
+  const leftStrength = radarCandidateStrength(left)
+  const rightStrength = radarCandidateStrength(right)
+  for (let index = 0; index < leftStrength.length; index += 1) {
+    if (leftStrength[index] !== rightStrength[index]) {
+      return leftStrength[index] > rightStrength[index]
+    }
+  }
+  return false
+}
 const drawRadarGroups = computed(() => {
   const radar = faeDailyAi.value?.daily_summary?.draw_radar || {}
-  return [
+  const groups = [
     {
       key: 'ordinary_draw',
       title: '最可能平局',
@@ -1297,10 +1288,23 @@ const drawRadarGroups = computed(() => {
       excluded: radar.excluded_count?.handicap_draw || 0,
       items: radar.handicap_draw || []
     }
-  ].map(group => ({
+  ]
+  const winnerByMatch = new Map()
+  groups.forEach(group => {
+    group.items.forEach(item => {
+      if (!isVisibleDailyMatch(dailyMatch(item.match_id))) return
+      const matchId = String(item.match_id)
+      const current = winnerByMatch.get(matchId)
+      if (!current || isStrongerRadarCandidate(item, current.item)) {
+        winnerByMatch.set(matchId, { key: group.key, item })
+      }
+    })
+  })
+  return groups.map(group => ({
     ...group,
     items: group.items.filter(item => (
-      isVisibleDailyMatch(dailyMatch(item.match_id))
+      isVisibleDailyMatch(dailyMatch(item.match_id)) &&
+      winnerByMatch.get(String(item.match_id))?.key === group.key
     )).sort((left, right) => (
       Number(right.probability || 0) - Number(left.probability || 0)
     )).slice(0, 3)

@@ -15,7 +15,7 @@ from .provider import ArkNarrativeClient, FAEError, FAEOutputError
 from .version import ENGINE_VERSION
 
 
-DAILY_PROMPT_VERSION = "five-market-daily-v30-probability-single"
+DAILY_PROMPT_VERSION = "five-market-daily-v31-low-odds-asian"
 
 OFFICIAL_PLAY_SELECTIONS = {"平局", "让平"}
 OFFICIAL_MIN_BET_SCORE = 70.0
@@ -178,6 +178,9 @@ def compact_daily_ai_run(source: Optional[Dict[str, Any]]) -> Optional[Dict[str,
                 "historical_goal_margin_model": snapshot.get(
                     "historical_goal_margin_model"
                 ) or {},
+                "low_odds_asian_model": snapshot.get(
+                    "low_odds_asian_model"
+                ) or {},
                 "supervised_shadow": snapshot.get(
                     "supervised_shadow"
                 ) or {},
@@ -316,6 +319,7 @@ def _clean_handicap(value: Any) -> str:
 LEAGUE_TACTICAL_MODEL_VERSION = "league-tactical-model-v1"
 UPSET_WARNING_MODEL_VERSION = "upset-warning-v1"
 ODDS_BAND_MODEL_VERSION = "odds-band-model-v1"
+LOW_ODDS_ASIAN_MODEL_VERSION = "low-odds-asian-hhad-v1"
 
 # 历史回测：让平不能靠“升盘高水/欧亚背离”单独升级。
 # 正向信号主要来自：联赛画像 + 竞彩让1球 + 热门胜赔区间 + 让平赔率区间。
@@ -1152,6 +1156,310 @@ def _build_odds_band_model(
     }
 
 
+def _build_low_odds_asian_handicap_model(
+    match: Dict[str, Any],
+    sporttery_handicap: Optional[float],
+    current_asian_risk: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Calibrate low-priced favorites with the observed Asian line structure.
+
+    The model is deliberately small and finite.  It translates six months of
+    settled matches into percentage-point nudges for the three Sporttery
+    handicap outcomes instead of treating a short 1X2 price as an automatic
+    handicap winner.
+    """
+    euro_current = [
+        _number(match.get("euro_current_win")),
+        _number(match.get("euro_current_draw")),
+        _number(match.get("euro_current_lose")),
+    ]
+    unavailable = {
+        "version": LOW_ODDS_ASIAN_MODEL_VERSION,
+        "available": False,
+        "matched": False,
+        "adjustment_pp": {"让胜": 0.0, "让平": 0.0, "让负": 0.0},
+        "centric_adjustment_pp": {
+            "cover": 0.0, "exact": 0.0, "fail": 0.0,
+        },
+        "signals": [],
+    }
+    if any(value is None or value <= 1 for value in euro_current):
+        return {**unavailable, "message": "欧赔数据不足"}
+
+    favorite_index = min((0, 2), key=lambda index: euro_current[index])
+    favorite_side = "home" if favorite_index == 0 else "away"
+    favorite_odds = euro_current[favorite_index]
+    if favorite_odds is None or favorite_odds >= 1.50:
+        return {
+            **unavailable,
+            "message": "最低胜赔不低于1.50，不进入低赔率热门样本层",
+            "favorite": {
+                "side": favorite_side,
+                "team": _favorite_team_name(match, favorite_side),
+                "odds": favorite_odds,
+            },
+        }
+    if sporttery_handicap in (None, 0):
+        return {**unavailable, "message": "竞彩让球数缺失或为0"}
+    aligned = (
+        (favorite_side == "home" and sporttery_handicap < 0)
+        or (favorite_side == "away" and sporttery_handicap > 0)
+    )
+    if not aligned:
+        return {
+            **unavailable,
+            "message": "欧赔热门方与竞彩让球方不一致",
+            "favorite": {
+                "side": favorite_side,
+                "team": _favorite_team_name(match, favorite_side),
+                "odds": favorite_odds,
+            },
+        }
+
+    initial_line = _handicap_value_from_text(
+        match.get("asian_initial_handicap")
+    )
+    current_line = _handicap_value_from_text(
+        match.get("asian_current_handicap")
+    )
+    if current_line is None:
+        return {**unavailable, "message": "亚洲盘口深度缺失"}
+    current_depth = (
+        current_line if favorite_side == "home" else -current_line
+    )
+    initial_depth = (
+        initial_line if favorite_side == "home" else -initial_line
+    ) if initial_line is not None else None
+    if current_depth <= 0:
+        return {**unavailable, "message": "亚洲盘口与欧赔热门方不一致"}
+
+    favorite_water_field = (
+        "asian_current_home_odds"
+        if favorite_side == "home" else "asian_current_away_odds"
+    )
+    initial_favorite_water_field = (
+        "asian_initial_home_odds"
+        if favorite_side == "home" else "asian_initial_away_odds"
+    )
+    favorite_water = _number(match.get(favorite_water_field))
+    initial_favorite_water = _number(match.get(initial_favorite_water_field))
+    line_change = (
+        round(current_depth - initial_depth, 3)
+        if initial_depth is not None else None
+    )
+    water_change = (
+        round(favorite_water - initial_favorite_water, 3)
+        if favorite_water is not None and initial_favorite_water is not None
+        else None
+    )
+    official_depth = abs(float(sporttery_handicap))
+    depth_gap = round(current_depth - official_depth, 3)
+    adjustments = {"cover": 0.0, "exact": 0.0, "fail": 0.0}
+    signals: List[Dict[str, Any]] = []
+
+    def add_signal(
+        key: str,
+        deltas: Dict[str, float],
+        reason: str,
+        sample: int,
+        observed: Dict[str, float],
+    ) -> None:
+        for outcome, delta in deltas.items():
+            adjustments[outcome] += float(delta)
+        signals.append({
+            "key": key,
+            "adjustment_pp": {
+                outcome: round(float(deltas.get(outcome, 0)), 2)
+                for outcome in ("cover", "exact", "fail")
+            },
+            "sample": sample,
+            "observed_rate": observed,
+            "reason": reason,
+        })
+
+    if official_depth == 1:
+        if current_depth <= 0.875:
+            add_signal(
+                "official1_asian075_exact",
+                {"exact": 3.0, "cover": -1.0},
+                "竞彩让1球而亚盘约半一，历史中恰好赢1球占比33.96%",
+                53,
+                {"cover": 35.85, "exact": 33.96, "fail": 30.19},
+            )
+        elif current_depth <= 1.125:
+            add_signal(
+                "official1_asian100_neutral",
+                {"exact": 1.0},
+                "竞彩与亚盘同为1球，历史恰好赢1球略高于全样本",
+                103,
+                {"cover": 34.95, "exact": 28.16, "fail": 36.89},
+            )
+        elif current_depth < 1.50:
+            add_signal(
+                "official1_asian125_exact",
+                {"exact": 2.5, "cover": -1.0},
+                "竞彩让1球而亚盘约球半前档，精确1球仍有历史支撑",
+                104,
+                {"cover": 34.62, "exact": 31.73, "fail": 33.65},
+            )
+        else:
+            add_signal(
+                "official1_asian150_cover",
+                {"cover": 4.0, "exact": -4.0},
+                "竞彩只让1球但亚盘至少球半，历史更偏穿盘而非让平",
+                47,
+                {"cover": 55.32, "exact": 17.02, "fail": 27.66},
+            )
+    elif official_depth >= 2:
+        if current_depth <= 1.50:
+            add_signal(
+                "official2_asian150_fail",
+                {"fail": 4.0, "cover": -3.0},
+                "竞彩让2球但亚盘不深于球半，历史热门不穿比例51.61%",
+                31,
+                {"cover": 19.35, "exact": 29.03, "fail": 51.61},
+            )
+        elif current_depth >= 1.75:
+            add_signal(
+                "official2_asian175_cover",
+                {"cover": 3.0, "exact": -3.0},
+                "竞彩让2球且亚盘至少球半/两球，历史穿盘比例提高",
+                74,
+                {"cover": 47.30, "exact": 18.92, "fail": 33.78},
+            )
+
+    if depth_gap <= -0.50:
+        add_signal(
+            "asian_much_shallower_than_official",
+            {"fail": 4.0, "cover": -3.0},
+            "亚盘比竞彩让球浅至少半球，历史热门不穿比例46.15%",
+            52,
+            {"cover": 28.85, "exact": 25.00, "fail": 46.15},
+        )
+    elif depth_gap >= 0.50:
+        add_signal(
+            "asian_much_deeper_than_official",
+            {"cover": 4.0, "exact": -3.0},
+            "亚盘比竞彩让球深至少半球，历史穿盘比例50.77%",
+            65,
+            {"cover": 50.77, "exact": 18.46, "fail": 30.77},
+        )
+
+    if favorite_water is not None:
+        if 0.76 <= favorite_water <= 0.85:
+            add_signal(
+                "favorite_low_water_not_strength",
+                {"fail": 2.0, "cover": -2.0},
+                "热门0.76-0.85低水并非强穿信号，历史不穿比例42.64%",
+                129,
+                {"cover": 29.46, "exact": 27.91, "fail": 42.64},
+            )
+        elif 0.86 <= favorite_water <= 0.95:
+            add_signal(
+                "favorite_normal_low_water_cover",
+                {"cover": 2.0, "fail": -1.0},
+                "热门0.86-0.95水位历史穿盘比例47.47%",
+                158,
+                {"cover": 47.47, "exact": 22.78, "fail": 29.75},
+            )
+        elif 0.96 <= favorite_water <= 1.05:
+            add_signal(
+                "favorite_middle_water_exact",
+                {"exact": 1.0},
+                "热门0.96-1.05中水下精确赢盘边界略有增加",
+                160,
+                {"cover": 36.88, "exact": 28.12, "fail": 35.00},
+            )
+
+    if line_change is not None:
+        if line_change >= 0.24:
+            add_signal(
+                "asian_line_deepen",
+                {"cover": 3.0, "exact": -2.0},
+                "近期不可变赛前样本中升盘后穿盘比例56.41%",
+                39,
+                {"cover": 56.41, "exact": 17.95, "fail": 25.64},
+            )
+        elif line_change <= -0.24:
+            add_signal(
+                "asian_line_retreat",
+                {"fail": 4.0, "cover": -3.0},
+                "近期不可变赛前样本中退盘后不穿比例54.55%",
+                11,
+                {"cover": 18.18, "exact": 27.27, "fail": 54.55},
+            )
+        elif water_change is not None and water_change >= 0.05:
+            add_signal(
+                "asian_stable_water_rise",
+                {"exact": 2.0},
+                "亚盘稳定但热门升水，近期样本精确赢球差比例35.29%",
+                17,
+                {"cover": 41.18, "exact": 35.29, "fail": 23.53},
+            )
+        elif water_change is not None and water_change <= -0.05:
+            add_signal(
+                "asian_stable_water_drop",
+                {"fail": 2.0, "cover": -1.0},
+                "亚盘不升而热门降水，近期样本未形成稳定穿盘优势",
+                34,
+                {"cover": 35.29, "exact": 20.59, "fail": 44.12},
+            )
+
+    adjustments = {
+        key: round(max(-5.0, min(5.0, value)), 2)
+        for key, value in adjustments.items()
+    }
+    raw_adjustments = (
+        {
+            "让胜": adjustments["cover"],
+            "让平": adjustments["exact"],
+            "让负": adjustments["fail"],
+        }
+        if favorite_side == "home" else {
+            "让胜": adjustments["fail"],
+            "让平": adjustments["exact"],
+            "让负": adjustments["cover"],
+        }
+    )
+    strongest = max(
+        ("cover", "exact", "fail"),
+        key=lambda key: adjustments[key],
+    )
+    return {
+        "version": LOW_ODDS_ASIAN_MODEL_VERSION,
+        "available": True,
+        "matched": bool(signals),
+        "favorite": {
+            "side": favorite_side,
+            "team": _favorite_team_name(match, favorite_side),
+            "odds": favorite_odds,
+        },
+        "official_handicap": sporttery_handicap,
+        "asian": {
+            "initial_depth": initial_depth,
+            "current_depth": current_depth,
+            "depth_gap_from_official": depth_gap,
+            "line_change": line_change,
+            "initial_favorite_water": initial_favorite_water,
+            "current_favorite_water": favorite_water,
+            "favorite_water_change": water_change,
+        },
+        "centric_adjustment_pp": adjustments,
+        "adjustment_pp": raw_adjustments,
+        "favored_outcome": strongest,
+        "signals": signals[:8],
+        "sample_basis": {
+            "six_month_initial_market": 451,
+            "recent_immutable_movement": 108,
+        },
+        "governance": (
+            "只对最低胜赔低于1.50且欧赔热门与竞彩让球方一致的比赛，"
+            "按亚盘深度、深度差、水位和走势作最多±5个百分点的有限校准；"
+            "cover/exact/fail分别表示热门穿盘、恰好走到让球边界、热门不穿。"
+        ),
+    }
+
+
 def _odds_band_match_from_input(source: Dict[str, Any]) -> Dict[str, Any]:
     euro = source.get("euro") or {}
     asian = source.get("asian") or {}
@@ -1757,6 +2065,11 @@ def build_daily_match_input(
         sporttery_handicap,
         current_asian_risk,
     )
+    low_odds_asian_model = _build_low_odds_asian_handicap_model(
+        match,
+        sporttery_handicap,
+        current_asian_risk,
+    )
     upset_warning_model = _build_upset_warning_model(
         match,
         sporttery_handicap,
@@ -1872,6 +2185,7 @@ def build_daily_match_input(
         },
         "league_tactical_model": league_tactical_model,
         "odds_band_model": odds_band_model,
+        "low_odds_asian_model": low_odds_asian_model,
         "upset_warning_model": upset_warning_model,
         "current_asian_risk": current_asian_risk,
         "fundamentals": fundamentals,
@@ -2597,6 +2911,7 @@ class FAEDailyAIAnalyzer:
             "联赛画像中的命中率、让平率、进球率是历史条件频率，不是真实胜率；不得单独据此推荐，必须与当天五项市场证据一致。",
             "league_tactical_model是人工沉淀的联赛模板指数，包含平局、让平、大小球和冷门指数；它只用于筛选和解释，不能覆盖赔率价值、盘口一致性和数据质量。",
             "odds_band_model是赔率区间扫描器：favorite_heat表示热门过热，underdog_upset表示下盘爆冷，handicap_draw_value表示让平价值；1.40-1.70热门危险区、1.80-2.20均势区、客场1.70-2.20陷阱区、平赔低位和盘口过深都只能作为降级热门或提高平/让平扫描权重的证据。",
+            "low_odds_asian_model是低于1.50胜赔热门的竞彩让球校准层：cover/exact/fail分别表示热门穿盘、恰好走到竞彩让球边界、热门不穿；必须结合竞彩让球数、亚盘深度差、热门水位和升退盘解释，adjustment_pp只允许作有限概率修正，不得写成确定规律。",
             "普通平局采用历史回测版规则：统一模型只允许正向联赛的均势平进入正式池，必须满足平赔2.75-3.20、亚盘退浅或平手保护、上/下盘水位区间正常；平赔2.85-3.14为核心区间，其余只能小试。另有联赛专属模型：葡超小球平、挪超退盘平、荷甲中低总球平、英超降水平、英冠半球不动平、澳超高平赔中低总球、意甲升盘高水平；巴甲只作为平局基线观察模型，不得因单日命中直接升级；日职中低总球目前只观察。强热门冷平若未命中联赛专属模型，只能观察，禁止进入正式推荐。",
             "让平升级采用历史回测版规则：通用模型只允许正向联赛、竞彩让1球、热门胜赔1.26-1.40、让平赔3.30-3.70，并要求亚盘上盘水位0.65-1.04、下盘水位不低于0.75；热门胜赔1.41-1.55只能小试。另有联赛专属让平口袋：意甲中赔让平、德甲中热门让平、法甲高让平赔、英超中高总球小球让平、西甲小球水位让平、沙特高赔大球让平、欧罗巴低水让平；挪超降水让平当前样本不足只观察。让平必须再通过净胜1球路径检查：若降水不升盘但竞彩受让保护项明显低赔，说明更像热门不穿或失手，不升级让平。≤1.25超热、让2球、低命中联赛、上盘≥1.08不得升级；升盘高水、欧亚背离和退盘只作为风险证据，不能单独推让平。",
             "小球只表示进球总数受限，不等于平局：若强方胜赔至少下降0.10、对手胜赔至少上升0.10，且亚盘真实升深或强方处于明确低水，必须把强方小胜放主选、平局放防选。",
@@ -2688,6 +3003,7 @@ class FAEDailyAIAnalyzer:
             "历史联赛频率不是真实概率，必须让位于本场欧赔、亚盘、竞彩、大小球和市场一致性。",
             "league_tactical_model是联赛模板指数，只能作为低到中权重筛选层；指数高但赔率价值、盘口一致性或数据质量不足时仍必须降级或不下注。",
             "odds_band_model是赔率区间扫描器：favorite_heat、underdog_upset、handicap_draw_value分别对应热门过热、下盘爆冷、让平价值；指数高只能降低热门或增加防选，不得脱离盘口一致性直接反买。",
+            "low_odds_asian_model只校准最低胜赔低于1.50的竞彩让球三项：竞彩让1球配亚盘半一/一球/球半前档时比较让平，亚盘至少球半或明显深于竞彩时提高穿盘；亚盘明显浅于竞彩或退盘时提高不穿；热门0.76-0.85低水不能直接当作强穿。所有调整均受样本数和±5个百分点上限约束。",
             "普通平局采用历史回测版规则：统一模型只允许正向联赛的均势平进入正式池，必须满足平赔2.75-3.20、亚盘退浅或平手保护、上/下盘水位区间正常；平赔2.85-3.14为核心区间，其余只能小试。另有联赛专属模型：葡超小球平、挪超退盘平、荷甲中低总球平、英超降水平、英冠半球不动平、澳超高平赔中低总球、意甲升盘高水平；巴甲只作为平局基线观察模型，不得因单日命中直接升级；日职中低总球目前只观察。强热门冷平若未命中联赛专属模型，只能观察，禁止进入正式推荐。",
             "让平升级采用历史回测版规则：通用模型只允许正向联赛、竞彩让1球、热门胜赔1.26-1.40、让平赔3.30-3.70，并要求亚盘上盘水位0.65-1.04、下盘水位不低于0.75；热门胜赔1.41-1.55只能小试。另有联赛专属让平口袋：意甲中赔让平、德甲中热门让平、法甲高让平赔、英超中高总球小球让平、西甲小球水位让平、沙特高赔大球让平、欧罗巴低水让平；挪超降水让平当前样本不足只观察。让平必须再通过净胜1球路径检查：若降水不升盘但竞彩受让保护项明显低赔，说明更像热门不穿或失手，不升级让平。≤1.25超热、让2球、低命中联赛、上盘≥1.08不得升级；升盘高水、欧亚背离和退盘只作为风险证据，不能单独推让平。",
             "小球只限制比分上限，不自动支持平局：强方胜赔下降、对手胜赔上升，并得到亚盘真实升深或明确低水支持时，优先强方小胜，平局只作防选。",
@@ -3776,20 +4092,24 @@ class FAEDailyAIAnalyzer:
             or (source.get("sporttery_handicap") or {}).get("initial")
             or []
         )
-        candidates = [
-            (
+        candidates = []
+        for index, (label, key) in enumerate((
+            ("让胜", "win"),
+            ("让平", "draw"),
+            ("让负", "lose"),
+        )):
+            if label not in compatible:
+                continue
+            profile = cls._play_value_profile(source, label)
+            probability = _number(profile.get("probability"))
+            if probability is None:
+                probability = _number(hhad.get(key))
+            candidates.append((
                 label,
-                _number(hhad.get(key)),
+                probability,
                 _number(odds_values[index])
                 if len(odds_values) > index else None,
-            )
-            for index, (label, key) in enumerate((
-                ("让胜", "win"),
-                ("让平", "draw"),
-                ("让负", "lose"),
             ))
-            if label in compatible
-        ]
         valid = [item for item in candidates if item[1] is not None]
         return max(
             valid,
@@ -3800,13 +4120,174 @@ class FAEDailyAIAnalyzer:
         )[0] if valid else "观望"
 
     @classmethod
+    def _low_odds_asian_adjusted_profile(
+        cls,
+        source: Dict[str, Any],
+        profile: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Apply the empirical short-favorite Asian/H-HAD calibration."""
+        result = dict(profile or {})
+        label = str(result.get("label") or "")
+        if label not in {"让胜", "让平", "让负"}:
+            return result
+        if (result.get("low_odds_asian_calibration") or {}).get("applied"):
+            return result
+        model = source.get("low_odds_asian_model") or {}
+        adjustments = model.get("adjustment_pp") or {}
+        if not model.get("available") or not model.get("matched"):
+            return result
+        base_probability = _number(result.get("probability"))
+        adjustment = _number(adjustments.get(label))
+        if base_probability is None or adjustment is None:
+            return result
+
+        categories = (
+            (((source.get("fae_core") or {}).get("recommendation") or {})
+             .get("category_scores") or [])
+        )
+        base_probabilities = {
+            str(item.get("label") or ""): _number(item.get("probability"))
+            for item in categories
+            if str(item.get("label") or "") in {"让胜", "让平", "让负"}
+        }
+        calibrated_probability = base_probability + adjustment
+        if all(base_probabilities.get(key) is not None for key in (
+            "让胜", "让平", "让负"
+        )):
+            base_total = sum(
+                float(base_probabilities[key])
+                for key in ("让胜", "让平", "让负")
+            )
+            shifted = {
+                key: max(
+                    0.1,
+                    float(base_probabilities[key])
+                    + float(_number(adjustments.get(key)) or 0),
+                )
+                for key in ("让胜", "让平", "让负")
+            }
+            shifted_total = sum(shifted.values())
+            normalized = {
+                key: value / shifted_total * base_total
+                for key, value in shifted.items()
+            }
+            deltas = {
+                key: normalized[key] - float(base_probabilities[key])
+                for key in normalized
+            }
+            max_delta = max(abs(value) for value in deltas.values())
+            scale = min(1.0, 4.0 / max_delta) if max_delta else 1.0
+            calibrated_probability = (
+                float(base_probabilities[label]) + deltas[label] * scale
+            )
+        calibrated_probability = round(
+            max(
+                0.1,
+                min(
+                    99.0,
+                    base_probability + max(
+                        -4.0,
+                        min(4.0, calibrated_probability - base_probability),
+                    ),
+                ),
+            ),
+            2,
+        )
+
+        odds = _number(result.get("odds"))
+        market_probability = _number(
+            result.get("market_implied_probability")
+        )
+        expected_return = (
+            calibrated_probability / 100 * odds
+            if odds is not None and odds > 1 else None
+        )
+        value_edge = (
+            calibrated_probability - market_probability
+            if market_probability is not None else None
+        )
+        value_score = (
+            round(55 + value_edge * 1.8 + (expected_return - 1) * 30)
+            if value_edge is not None and expected_return is not None else 38
+        )
+        value_score = max(0, min(99, value_score))
+        market_confidence = (
+            (((source.get("fae_core") or {}).get("recommendation") or {})
+             .get("market_confidence") or {})
+        )
+        confidence_score = float(market_confidence.get("score") or 50)
+        prediction_score = float(result.get("prediction_score") or 50)
+        bet_score = round(
+            value_score * 0.55
+            + confidence_score * 0.30
+            + prediction_score * 0.15
+        )
+        bet_score = max(0, min(99, bet_score))
+        generic_reasons = {
+            "赔率价值不足",
+            "综合投注分未达门槛",
+            "低赔率亚盘校准后赔率价值不足",
+            "低赔率亚盘校准后综合投注分未达门槛",
+        }
+        reasons = [
+            str(reason) for reason in result.get("no_bet_reasons") or []
+            if str(reason) not in generic_reasons
+        ]
+        if value_score < 52:
+            reasons.append("低赔率亚盘校准后赔率价值不足")
+        if bet_score < 55:
+            reasons.append("低赔率亚盘校准后综合投注分未达门槛")
+        result.update({
+            "raw_probability": (
+                result.get("raw_probability")
+                if result.get("raw_probability") is not None
+                else base_probability
+            ),
+            "probability": calibrated_probability,
+            "value_probability": calibrated_probability,
+            "value_edge": (
+                round(value_edge, 2) if value_edge is not None else None
+            ),
+            "expected_return": (
+                round(expected_return, 3)
+                if expected_return is not None else None
+            ),
+            "value_score": value_score,
+            "bet_score": bet_score,
+            "score": bet_score,
+            "stars": cls._rating(bet_score / 20),
+            "no_bet_reasons": list(dict.fromkeys(reasons)),
+            "no_bet": bool(reasons),
+            "low_odds_asian_calibration": {
+                "applied": True,
+                "version": model.get("version"),
+                "base_probability": base_probability,
+                "calibrated_probability": calibrated_probability,
+                "raw_adjustment_pp": adjustment,
+                "effective_adjustment_pp": round(
+                    calibrated_probability - base_probability, 2
+                ),
+                "favorite": model.get("favorite"),
+                "asian": model.get("asian"),
+                "signal_ids": [
+                    item.get("key") for item in model.get("signals") or []
+                    if item.get("key")
+                ],
+                "sample_basis": model.get("sample_basis"),
+            },
+        })
+        return result
+
+    @classmethod
     def _historical_adjusted_profile(
         cls,
         source: Dict[str, Any],
         profile: Dict[str, Any],
     ) -> Dict[str, Any]:
         """Conservatively calibrate draw plays with similar finished matches."""
-        result = dict(profile or {})
+        result = cls._low_odds_asian_adjusted_profile(
+            source, dict(profile or {})
+        )
         policy = draw_selection_policy_profile(
             (source or {}).get("draw_selection_policy")
         )
@@ -3877,7 +4358,12 @@ class FAEDailyAIAnalyzer:
         bet_score = max(0, min(99, bet_score))
         reasons = [
             str(reason) for reason in result.get("no_bet_reasons") or []
-            if str(reason) not in {"赔率价值不足", "综合投注分未达门槛"}
+            if str(reason) not in {
+                "赔率价值不足",
+                "综合投注分未达门槛",
+                "低赔率亚盘校准后赔率价值不足",
+                "低赔率亚盘校准后综合投注分未达门槛",
+            }
         ]
         metric_label = str(result.get("label") or "")
         effective_sample = _number(metric.get("effective_sample"))
@@ -3898,7 +4384,11 @@ class FAEDailyAIAnalyzer:
         if bet_score < 55:
             reasons.append("历史校准后综合投注分未达门槛")
         result.update({
-            "raw_probability": core_probability,
+            "raw_probability": (
+                result.get("raw_probability")
+                if result.get("raw_probability") is not None
+                else core_probability
+            ),
             "probability": calibrated_probability,
             "value_probability": calibrated_probability,
             "value_edge": round(value_edge, 2)
@@ -6094,10 +6584,11 @@ class FAEDailyAIAnalyzer:
         """Expose core/watch radar rows even when official pools exclude them."""
         result = dict(summary or {})
         radar = {
-            "version": "draw-radar-v2",
+            "version": "draw-radar-v3-exclusive-ranking",
             "policy": (
-                "每天普通平局与竞彩让平各展示前三；只有核心且非负"
-                "赔率价值候选可参与组合，观察层和高风险赔率区间只复盘。"
+                "每天普通平局与竞彩让平分别最多展示前三；同一场只进入"
+                "概率和证据更强的一榜。只有核心且非负赔率价值候选可参与"
+                "组合，观察层和高风险赔率区间只复盘。"
             ),
             "ordinary_draw": [],
             "handicap_draw": [],
@@ -6106,6 +6597,7 @@ class FAEDailyAIAnalyzer:
                 "handicap_draw": 0,
             },
         }
+        candidates_by_match: Dict[str, List[tuple[str, Dict[str, Any]]]] = {}
         for item in matches:
             candidates = (
                 (item.get("analysis") or {}).get("draw_radar") or {}
@@ -6116,7 +6608,26 @@ class FAEDailyAIAnalyzer:
                     radar["excluded_count"][key] += 1
                     continue
                 if candidate.get("match_id"):
-                    radar[key].append(candidate)
+                    match_id = str(candidate.get("match_id"))
+                    candidates_by_match.setdefault(match_id, []).append((
+                        key, candidate,
+                    ))
+
+        def candidate_strength(
+            value: tuple[str, Dict[str, Any]],
+        ) -> tuple[bool, float, float, float, float]:
+            _, candidate = value
+            return (
+                candidate.get("tier") == "core",
+                float(candidate.get("probability") or 0),
+                float(candidate.get("score") or 0),
+                float(candidate.get("odds_value") or -999),
+                float(candidate.get("effective_sample") or 0),
+            )
+
+        for rows in candidates_by_match.values():
+            key, candidate = max(rows, key=candidate_strength)
+            radar[key].append(candidate)
         for key in ("ordinary_draw", "handicap_draw"):
             radar[key] = sorted(
                 radar[key],
