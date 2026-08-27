@@ -318,7 +318,10 @@
             <section
               v-for="group in dailyPoolGroups"
               :key="group.key"
-              :class="{ 'two-option-pool': group.key === 'two_option_core' }"
+              :class="{
+                'two-option-pool': group.key === 'two_option_core',
+                'official-single-pool': group.key === 'official_single'
+              }"
             >
               <h2>{{ group.title }}</h2>
               <button
@@ -334,6 +337,9 @@
                 <span class="daily-pool-meta">
                   <i v-if="item.role">{{ item.role }}</i>
                   <strong v-if="group.key === 'two_option_core'">{{ item.selection_text }}</strong>
+                  <strong v-else-if="group.key === 'official_single'">
+                    {{ item.selection }}<template v-if="item.odds"> @{{ formatPickOdds(item.odds) }}</template>
+                  </strong>
                   <strong v-else-if="item.rating">{{ starText(item.rating) }}</strong>
                 </span>
                 <small>{{ displayDailyText(item.reason) }}</small>
@@ -614,6 +620,16 @@
 
           <div class="review-stats-grid">
             <article>
+              <span>正式池命中</span>
+              <strong>{{ faeStats.official_bets?.hit_rate || 0 }}%</strong>
+              <small>{{ faeStats.official_bets?.hits || 0 }}/{{ faeStats.official_bets?.settled || 0 }} 命中</small>
+            </article>
+            <article>
+              <span>正式池ROI</span>
+              <strong :class="metricClass(faeStats.official_bets?.roi)">{{ signedMetric(faeStats.official_bets?.roi) }}%</strong>
+              <small>仅统计通过全部门槛的单选</small>
+            </article>
+            <article>
               <span>累计单场</span>
               <strong>{{ faeStats.singles?.hit_rate || 0 }}%</strong>
               <small>{{ faeStats.singles?.hits || 0 }}/{{ faeStats.singles?.settled || 0 }} 命中</small>
@@ -883,6 +899,42 @@
           </div>
 
           <template v-if="faeReview">
+            <section
+              v-if="faeReview.official_bet_results?.length"
+              class="daily-review-block official-review-block"
+            >
+              <h2>
+                <span>正式投注池复盘</span>
+                <small>
+                  {{ faeReview.summary?.official_bets?.hits || 0 }}/{{ faeReview.summary?.official_bets?.settled || 0 }} 命中
+                  · ROI {{ signedMetric(faeReview.summary?.official_bets?.roi) }}%
+                </small>
+              </h2>
+              <button
+                v-for="item in faeReview.official_bet_results"
+                :key="`official-${item.match_id}`"
+                type="button"
+                @click="goToDetail(item.match_id)"
+              >
+                <span class="review-match-info">
+                  <b>{{ item.match_number }}</b>{{ item.home_team }} vs {{ item.away_team }}
+                </span>
+                <span class="review-pick-info">
+                  <strong>{{ item.selection_text || item.selection }}</strong>
+                  <i :class="reviewMatchStatus(item)">
+                    {{ reviewMatchStatusLabel(item) }}
+                  </i>
+                </span>
+                <span class="review-result-info">
+                  <em>
+                    {{ item.result_score || '待赛' }}
+                    <small v-if="item.odds">@{{ item.odds }}</small>
+                  </em>
+                  <small v-if="isSettledStatus(item.status)">{{ signedMetric(item.profit) }}单位</small>
+                </span>
+              </button>
+            </section>
+
             <section class="daily-review-block">
               <h2>
                 <span>全量逐场复盘</span>
@@ -1228,6 +1280,7 @@ const supervisedShadow = computed(() => (
   faeDailyAi.value?.daily_summary?.supervised_shadow || {}
 ))
 const dailyPoolLabels = {
+  official_single: '正式投注池',
   two_option_core: '双选核心',
   draw: '平局精选',
   handicap_draw: '让平精选'
@@ -2709,6 +2762,16 @@ onBeforeUnmount(() => {
   border-color: #f4cbd2;
 }
 
+.daily-pools section.official-single-pool {
+  grid-column: 1 / -1;
+  background: linear-gradient(135deg, #f3fbf7, #fff);
+  border-color: #cbe8d8;
+}
+
+.daily-pools section.official-single-pool h2 {
+  color: #16875b;
+}
+
 .daily-pools section.two-option-pool h2 {
   color: #dc3150;
 }
@@ -4008,6 +4071,19 @@ onBeforeUnmount(() => {
 .daily-review-block > h2 small {
   color: #e53955;
   font-size: 12px;
+}
+
+.official-review-block {
+  border-color: #cfe8dc;
+}
+
+.official-review-block > h2 {
+  color: #176f50;
+  background: #f2faf6;
+}
+
+.official-review-block > h2 small {
+  color: #16875b;
 }
 
 .daily-review-block > button {

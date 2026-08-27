@@ -280,6 +280,14 @@ class FAEDailyAIReviewEngine:
             )
             for item in matches
         ]
+        official_bet_results = [
+            result
+            for item in matches
+            for result in [self._settle_official_bet(
+                item, matches_by_id.get(str(item.get("match_id"))) or {}
+            )]
+            if result is not None
+        ]
         handicap_results = [
             result
             for item in matches
@@ -388,6 +396,7 @@ class FAEDailyAIReviewEngine:
             "completed": pending == 0,
             "pending_matches": pending,
             "match_results": match_results,
+            "official_bet_results": official_bet_results,
             "handicap_results": handicap_results,
             "two_option_results": two_option_results,
             "draw_radar_results": draw_radar_results,
@@ -395,6 +404,9 @@ class FAEDailyAIReviewEngine:
             "conflicts": conflicts,
             "summary": {
                 "singles": summarize_ai_settled(match_results),
+                "official_bets": summarize_ai_settled(
+                    official_bet_results
+                ),
                 "handicap": summarize_ai_settled(handicap_results),
                 "two_option": {
                     "overall": summarize_two_option(unique_two_options),
@@ -505,6 +517,37 @@ class FAEDailyAIReviewEngine:
             result["profit"] = None
             result["no_bet"] = True
             result["no_bet_reasons"] = analysis.get("no_bet_reasons") or []
+        return result
+
+    def _settle_official_bet(
+        self, source: Dict[str, Any], match: Dict[str, Any]
+    ) -> Optional[Dict[str, Any]]:
+        """Settle only the independently gated formal all-play single."""
+        analysis = source.get("analysis") or {}
+        profile = analysis.get("official_bet_recommendation") or {}
+        if not profile.get("actionable"):
+            return None
+        selection = str(profile.get("selection") or "")
+        if selection not in TWO_OPTION_SELECTIONS:
+            return None
+        result = self._settle_selection(source, match, selection)
+        result.update({
+            "result_type": "official_bet",
+            "official_bet": True,
+            "daily_rank": profile.get("daily_rank"),
+            "probability": profile.get("probability"),
+            "model_probability": profile.get("model_probability"),
+            "market_probability": profile.get("market_probability"),
+            "model_expected_return": profile.get(
+                "model_expected_return"
+            ),
+            "model_market_edge": profile.get("model_market_edge"),
+            "value_score": profile.get("value_score"),
+            "bet_score": profile.get("bet_score"),
+            "market_confidence": profile.get("market_confidence"),
+            "rank_score": profile.get("rank_score"),
+            "gate_reason": profile.get("reason"),
+        })
         return result
 
     def _settle_two_option_references(
@@ -811,6 +854,7 @@ def aggregate_daily_ai_reviews(
 ) -> Dict[str, Any]:
     rows = list(reviews)
     matches: List[Dict[str, Any]] = []
+    official_bet_results: List[Dict[str, Any]] = []
     handicap_results: List[Dict[str, Any]] = []
     two_option_results: List[Dict[str, Any]] = []
     draw_radar_results: List[Dict[str, Any]] = []
@@ -822,6 +866,10 @@ def aggregate_daily_ai_reviews(
             **row,
             "review_owner_date": owner_date,
         } for row in review.get("match_results") or [])
+        official_bet_results.extend({
+            **row,
+            "review_owner_date": owner_date,
+        } for row in review.get("official_bet_results") or [])
         handicap_results.extend({
             **row,
             "review_owner_date": owner_date,
@@ -857,6 +905,7 @@ def aggregate_daily_ai_reviews(
             )
         ),
         "singles": summarize_ai_settled(matches),
+        "official_bets": summarize_ai_settled(official_bet_results),
         "handicap": summarize_ai_settled(handicap_results),
         "two_option": {
             "overall": summarize_two_option(two_option_results),

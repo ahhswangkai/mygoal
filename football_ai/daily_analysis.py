@@ -15,7 +15,7 @@ from .provider import ArkNarrativeClient, FAEError, FAEOutputError
 from .version import ENGINE_VERSION
 
 
-DAILY_PROMPT_VERSION = "five-market-daily-v33-cross-market-secondary"
+DAILY_PROMPT_VERSION = "five-market-daily-v34-replay-guards"
 
 OFFICIAL_PLAY_SELECTIONS = {"平局", "让平"}
 OFFICIAL_MIN_BET_SCORE = 70.0
@@ -28,6 +28,21 @@ OFFICIAL_MIN_RATING = 4.0
 SINGLE_MIN_ODDS = 1.50
 SINGLE_MODEL_WEIGHT = 0.35
 SINGLE_MARKET_WEIGHT = 0.65
+SINGLE_SHORT_FAVORITE_HANDICAP_MIN_PROBABILITY = 33.0
+
+# Every match still receives a probability direction, but only a small,
+# independently gated subset may enter the formal all-play betting pool.  This
+# is deliberately separate from ``no_bet``: that legacy flag governs the
+# specialised draw/handicap-draw value pool and therefore rejects ordinary
+# win/lose directions by design.
+OFFICIAL_SINGLE_DAILY_LIMIT = 5
+OFFICIAL_SINGLE_MIN_PROBABILITY = 33.0
+OFFICIAL_SINGLE_MIN_MARKET_CONFIDENCE = 55.0
+OFFICIAL_SINGLE_MIN_MODEL_EXPECTED_RETURN = 0.85
+OFFICIAL_SINGLE_MIN_MODEL_MARKET_EDGE = -3.0
+OFFICIAL_SINGLE_MIN_VALUE_SCORE = 50.0
+OFFICIAL_SINGLE_MIN_BET_SCORE = 50.0
+OFFICIAL_SINGLE_MIN_MODEL_RATING = 2.5
 
 TWO_OPTION_MIN_COVERAGE = 64.0
 TWO_OPTION_MIN_MARKET_CONFIDENCE = 65.0
@@ -64,6 +79,7 @@ HANDICAP_DRAW_WEEKLY_RISK_ODDS = (3.50, 4.00)
 HANDICAP_SECONDARY_MODEL_WEIGHT = 0.65
 HANDICAP_SECONDARY_MARKET_WEIGHT = 0.35
 DAILY_AI_MAX_BATCH_SIZE = 10
+DAILY_AI_RECOVERY_BATCH_SIZE = 3
 ASIAN_HARD_DOWNGRADE_RISKS = {
     "deepen_high_water",
     "upper_water_rise",
@@ -101,6 +117,7 @@ DAILY_AI_COMPACT_ANALYSIS_FIELDS = (
     "decision",
     "historical_calibration",
     "two_option_recommendation",
+    "official_bet_recommendation",
     "draw_radar",
     "market_analysis",
     "evidence",
@@ -2291,6 +2308,7 @@ class FAEDailyAIAnalyzer:
         ))
         # Re-rank the complete retained + fresh slate so a one-match T-30 run
         # cannot make every previously analysed match look actionable.
+        combined = cls.apply_official_bet_recommendations(combined)
         combined = cls.apply_two_option_recommendations(combined)
         result["matches"] = combined
         result["analyzed_match_count"] = len(fresh)
@@ -2391,6 +2409,36 @@ class FAEDailyAIAnalyzer:
         provider_batches = []
         successful_match_ids = set()
         failed_match_ids = set()
+        primary_batch_count = (len(rows) + size - 1) // size
+
+        def normalize_provider_output(
+            parsed: Dict[str, Any], batch: List[Dict[str, Any]]
+        ) -> Dict[str, Any]:
+            value = parsed
+            if len(batch) == 1:
+                generated_match = (
+                    value.get("match")
+                    if isinstance(value.get("match"), dict)
+                    else value
+                )
+                if generated_match.get("match_id"):
+                    value = {
+                        "daily_summary": {},
+                        "matches": [generated_match],
+                    }
+            return value
+
+        def returned_match_ids(
+            parsed: Dict[str, Any], expected: Iterable[str]
+        ) -> set[str]:
+            expected_ids = {str(item) for item in expected}
+            return {
+                str(item.get("match_id"))
+                for item in parsed.get("matches") or []
+                if isinstance(item, dict)
+                and str(item.get("match_id") or "") in expected_ids
+            }
+
         for index in range(0, len(rows), size):
             batch = rows[index:index + size]
             batch_number = index // size + 1
@@ -2415,17 +2463,30 @@ class FAEDailyAIAnalyzer:
             batch_hash = self._request_hash("detail", prompt)
             cached = batch_cache_get(batch_hash) if batch_cache_get else None
             if cached and isinstance(cached.get("output"), dict):
-                outputs.append(cached["output"])
+                cached_output = normalize_provider_output(
+                    cached["output"], batch
+                )
+                outputs.append(cached_output)
+                returned_ids = returned_match_ids(
+                    cached_output, batch_match_ids
+                )
                 provider_batches.append({
                     **(cached.get("provider_meta") or {}),
-                    "status": "completed",
+                    "status": (
+                        "completed" if len(returned_ids) == len(batch)
+                        else "partial"
+                    ),
                     "cache_hit": True,
                     "batch_hash": batch_hash,
                     "batch_number": batch_number,
                     "match_count": len(batch),
                     "match_ids": batch_match_ids,
+                    "returned_match_count": len(returned_ids),
+                    "missing_match_ids": sorted(
+                        set(batch_match_ids) - returned_ids
+                    ),
                 })
-                successful_match_ids.update(batch_match_ids)
+                successful_match_ids.update(returned_ids)
                 continue
             try:
                 text, metadata = self.client.generate(prompt)
@@ -2455,29 +2516,27 @@ class FAEDailyAIAnalyzer:
                     "error": message,
                 })
                 continue
-            if len(batch) == 1:
-                generated_match = (
-                    parsed.get("match")
-                    if isinstance(parsed.get("match"), dict)
-                    else parsed
-                )
-                if generated_match.get("match_id"):
-                    parsed = {
-                        "daily_summary": {},
-                        "matches": [generated_match],
-                    }
+            parsed = normalize_provider_output(parsed, batch)
+            returned_ids = returned_match_ids(parsed, batch_match_ids)
             outputs.append(parsed)
             batch_metadata = {
                 **metadata,
-                "status": "completed",
+                "status": (
+                    "completed" if len(returned_ids) == len(batch)
+                    else "partial"
+                ),
                 "cache_hit": False,
                 "batch_hash": batch_hash,
                 "batch_number": batch_number,
                 "match_count": len(batch),
                 "match_ids": batch_match_ids,
+                "returned_match_count": len(returned_ids),
+                "missing_match_ids": sorted(
+                    set(batch_match_ids) - returned_ids
+                ),
             }
             provider_batches.append(batch_metadata)
-            successful_match_ids.update(batch_match_ids)
+            successful_match_ids.update(returned_ids)
             if batch_cache_save:
                 batch_cache_save({
                     "batch_hash": batch_hash,
@@ -2493,6 +2552,126 @@ class FAEDailyAIAnalyzer:
                     "generated_at": datetime.now(timezone.utc).isoformat(),
                 })
 
+        # Models occasionally omit one or more rows even though the provider
+        # request itself succeeds.  Count only returned IDs as AI analysed and
+        # retry all omissions in compact recovery batches.  This prevents a
+        # silent deterministic fallback from being reported as Ark coverage.
+        all_match_ids = {str(item.get("match_id")) for item in rows}
+        missing_rows = [
+            item for item in rows
+            if str(item.get("match_id")) not in successful_match_ids
+        ]
+        recovery_size = min(size, DAILY_AI_RECOVERY_BATCH_SIZE)
+        for index in range(0, len(missing_rows), recovery_size):
+            batch = missing_rows[index:index + recovery_size]
+            recovery_number = index // recovery_size + 1
+            batch_match_ids = [
+                str(item.get("match_id")) for item in batch
+            ]
+            prompt = (
+                self._build_single_prompt(
+                    owner_date,
+                    batch[0],
+                    recovery_number,
+                    review_memory=memory,
+                )
+                if len(batch) == 1
+                else self._build_prompt(
+                    owner_date,
+                    batch,
+                    recovery_number,
+                    review_memory=memory,
+                )
+            )
+            recovery_instruction = (
+                "# 漏项补全批次\n"
+                "上次返回遗漏了比赛。本次必须且只能返回以下match_id，"
+                "每场恰好一次：" + "、".join(batch_match_ids) + "\n\n"
+            )
+            input_marker = (
+                "# 比赛输入\n" if len(batch) == 1
+                else "# 当日比赛输入\n"
+            )
+            prompt = prompt.replace(
+                input_marker,
+                recovery_instruction + input_marker,
+                1,
+            )
+            batch_hash = self._request_hash("detail-recovery", prompt)
+            cached = batch_cache_get(batch_hash) if batch_cache_get else None
+            metadata = {}
+            try:
+                cached_output = (
+                    normalize_provider_output(cached["output"], batch)
+                    if cached and isinstance(cached.get("output"), dict)
+                    else None
+                )
+                cached_ids = (
+                    returned_match_ids(cached_output, batch_match_ids)
+                    if cached_output else set()
+                )
+                if cached_output and len(cached_ids) == len(batch):
+                    parsed = cached_output
+                    metadata = cached.get("provider_meta") or {}
+                    cache_hit = True
+                else:
+                    text, metadata = self.client.generate(prompt)
+                    parsed = self._extract_json(text)
+                    cache_hit = False
+                parsed = normalize_provider_output(parsed, batch)
+            except FAEError as exc:
+                provider_batches.append({
+                    "kind": "detail-recovery",
+                    "status": "failed",
+                    "cache_hit": False,
+                    "batch_hash": batch_hash,
+                    "batch_number": recovery_number,
+                    "match_count": len(batch),
+                    "match_ids": batch_match_ids,
+                    "error": str(exc)[:300],
+                })
+                continue
+            outputs.append(parsed)
+            returned_ids = returned_match_ids(parsed, batch_match_ids)
+            successful_match_ids.update(returned_ids)
+            provider_batches.append({
+                **metadata,
+                "kind": "detail-recovery",
+                "status": (
+                    "completed" if len(returned_ids) == len(batch)
+                    else "partial"
+                ),
+                "cache_hit": cache_hit,
+                "batch_hash": batch_hash,
+                "batch_number": recovery_number,
+                "match_count": len(batch),
+                "match_ids": batch_match_ids,
+                "returned_match_count": len(returned_ids),
+                "missing_match_ids": sorted(
+                    set(batch_match_ids) - returned_ids
+                ),
+            })
+            if (
+                not cache_hit
+                and len(returned_ids) == len(batch)
+                and batch_cache_save
+            ):
+                batch_cache_save({
+                    "batch_hash": batch_hash,
+                    "owner_date": str(owner_date)[:10],
+                    "kind": "detail-recovery",
+                    "batch_number": recovery_number,
+                    "match_ids": batch_match_ids,
+                    "model": self.client.model,
+                    "prompt_version": DAILY_PROMPT_VERSION,
+                    "review_memory_hash": memory.get("memory_hash"),
+                    "output": parsed,
+                    "provider_meta": metadata,
+                    "generated_at": datetime.now(timezone.utc).isoformat(),
+                })
+
+        failed_match_ids = all_match_ids - successful_match_ids
+
         if not successful_match_ids:
             errors = [
                 str(item.get("error") or "")
@@ -2501,7 +2680,7 @@ class FAEDailyAIAnalyzer:
             ]
             detail = next((item for item in errors if item), "未知错误")
             raise FAEOutputError(
-                f"全部{len(provider_batches)}批大模型研判失败: {detail}"
+                f"全部{primary_batch_count}批大模型研判失败: {detail}"
             )
 
         normalized_matches = []
@@ -2526,13 +2705,16 @@ class FAEDailyAIAnalyzer:
         stored_matches = self.apply_draw_radar_recommendation_overrides(
             stored_matches
         )
+        stored_matches = self.apply_official_bet_recommendations(
+            stored_matches
+        )
         stored_matches = self.apply_two_option_recommendations(stored_matches)
         stored_matches = self.normalize_match_memory_governance(
             stored_matches, memory
         )
         synthesis_meta = None
         global_summary = None
-        if len(outputs) > 1:
+        if primary_batch_count > 1:
             try:
                 synthesis_prompt = self._build_synthesis_prompt(
                     owner_date,
@@ -2681,14 +2863,31 @@ class FAEDailyAIAnalyzer:
             "input_hash": input_hash,
             "generated_at": generated_at,
             "match_count": len(stored_matches),
-            "batch_count": len(outputs),
+            "batch_count": primary_batch_count,
             "completed_batch_count": sum(
                 1 for item in provider_batches
-                if item.get("status") == "completed"
+                if (
+                    item.get("kind") != "detail-recovery"
+                    and item.get("status") == "completed"
+                )
             ),
             "failed_batch_count": sum(
                 1 for item in provider_batches
-                if item.get("status") == "failed"
+                if (
+                    item.get("kind") != "detail-recovery"
+                    and item.get("status") == "failed"
+                )
+            ),
+            "partial_batch_count": sum(
+                1 for item in provider_batches
+                if (
+                    item.get("kind") != "detail-recovery"
+                    and item.get("status") == "partial"
+                )
+            ),
+            "recovery_batch_count": sum(
+                1 for item in provider_batches
+                if item.get("kind") == "detail-recovery"
             ),
             "ai_analyzed_match_count": len(successful_match_ids),
             "fallback_match_count": len(failed_match_ids),
@@ -2916,7 +3115,7 @@ class FAEDailyAIAnalyzer:
             "主选排序的第一目标是命中概率：先比较同市场全部三个结果的历史校准概率，再比较市场去水概率；赔率价值只决定是否值得单选下注，不能把低概率高赔率项提到高概率方向之前。",
             "双选只有在同一市场第二方向也达到独立覆盖门槛时才成立；成立后应覆盖校准覆盖概率最高的两个结果。跨市场次选只表示独立方向，结果存在重叠，严禁概率相加、严禁计入双选覆盖或组合。",
             "若让平对应的historical_goal_margin_model同时满足expected_return<0.95且value_edge<-5%，让平不得作为主选；应改用同市场校准概率最高的方向项，让平最多保留为观察防选。",
-            "亚盘不配合（退盘、升盘高水、上盘升水、降水不升盘、欧亚背离、热门浅盘）时，胜负方向必须硬降级为观察，不得只写风险提示后继续推荐。",
+            "联赛中亚盘不配合（退盘、升盘高水、上盘升水、降水不升盘、欧亚背离、热门浅盘）时，胜负方向必须硬降级为观察。杯赛/淘汰赛/两回合赛事若只有退盘或降水不升盘单一信号，且没有欧赔走弱、竞彩保护或阵容赛程第二项独立证据，只降低置信度，不得直接反转方向；赛事阶段缺失时必须说明未知。",
             "大小球跳动达到0.75或以上时优先标记数据异常，不得据此强推方向。",
             "不得伪造近期状态、伤停、首发、天气、战意和赛程；输入缺失必须明确说明。",
             "fundamentals来自500赛前页：recent、history、team_rankings、future可作基本面证据；lineups.status=predicted仅表示预计阵容，禁止称为官方首发；injuries.status=no_listed_players仅表示页面未列出球员，禁止称为确认无伤停。",
@@ -2927,6 +3126,7 @@ class FAEDailyAIAnalyzer:
             "league_tactical_model是人工沉淀的联赛模板指数，包含平局、让平、大小球和冷门指数；它只用于筛选和解释，不能覆盖赔率价值、盘口一致性和数据质量。",
             "odds_band_model是赔率区间扫描器：favorite_heat表示热门过热，underdog_upset表示下盘爆冷，handicap_draw_value表示让平价值；1.40-1.70热门危险区、1.80-2.20均势区、客场1.70-2.20陷阱区、平赔低位和盘口过深都只能作为降级热门或提高平/让平扫描权重的证据。",
             "low_odds_asian_model是低于1.50胜赔热门的竞彩让球校准层：cover/exact/fail分别表示热门穿盘、恰好走到竞彩让球边界、热门不穿；必须结合竞彩让球数、亚盘深度差、热门水位和升退盘解释，adjustment_pp只允许作有限概率修正，不得写成确定规律。",
+            "最低胜赔低于1.50只表示该胜负选项投注回报不足，不等于热门会失手。过滤低赔热门后仍必须输出概率最高的可投注方向，不得改成观望；若替代项与热门穿盘方向不一致或融合概率未达到三项均分基线33%，必须标记低赔替代风险，但不能隐藏逐场结论。",
             "普通平局采用历史回测版规则：统一模型只允许正向联赛的均势平进入正式池，必须满足平赔2.75-3.20、亚盘退浅或平手保护、上/下盘水位区间正常；平赔2.85-3.14为核心区间，其余只能小试。另有联赛专属模型：葡超小球平、挪超退盘平、荷甲中低总球平、英超降水平、英冠半球不动平、澳超高平赔中低总球、意甲升盘高水平；巴甲只作为平局基线观察模型，不得因单日命中直接升级；日职中低总球目前只观察。强热门冷平若未命中联赛专属模型，只能观察，禁止进入正式推荐。",
             "让平升级采用历史回测版规则：通用模型只允许正向联赛、竞彩让1球、热门胜赔1.26-1.40、让平赔3.30-3.70，并要求亚盘上盘水位0.65-1.04、下盘水位不低于0.75；热门胜赔1.41-1.55只能小试。另有联赛专属让平口袋：意甲中赔让平、德甲中热门让平、法甲高让平赔、英超中高总球小球让平、西甲小球水位让平、沙特高赔大球让平、欧罗巴低水让平；挪超降水让平当前样本不足只观察。让平必须再通过净胜1球路径检查：若降水不升盘但竞彩受让保护项明显低赔，说明更像热门不穿或失手，不升级让平。≤1.25超热、让2球、低命中联赛、上盘≥1.08不得升级；升盘高水、欧亚背离和退盘只作为风险证据，不能单独推让平。",
             "小球只表示进球总数受限，不等于平局：若强方胜赔至少下降0.10、对手胜赔至少上升0.10，且亚盘真实升深或强方处于明确低水，必须把强方小胜放主选、平局放防选。",
@@ -3019,6 +3219,7 @@ class FAEDailyAIAnalyzer:
             "league_tactical_model是联赛模板指数，只能作为低到中权重筛选层；指数高但赔率价值、盘口一致性或数据质量不足时仍必须降级或不下注。",
             "odds_band_model是赔率区间扫描器：favorite_heat、underdog_upset、handicap_draw_value分别对应热门过热、下盘爆冷、让平价值；指数高只能降低热门或增加防选，不得脱离盘口一致性直接反买。",
             "low_odds_asian_model只校准最低胜赔低于1.50的竞彩让球三项：竞彩让1球配亚盘半一/一球/球半前档时比较让平，亚盘至少球半或明显深于竞彩时提高穿盘；亚盘明显浅于竞彩或退盘时提高不穿；热门0.76-0.85低水不能直接当作强穿。所有调整均受样本数和±5个百分点上限约束。",
+            "最低胜赔低于1.50只表示该胜负选项投注回报不足，不等于热门会失手。过滤低赔热门后仍必须输出概率最高的可投注方向，不得改成观望；若替代项与热门穿盘方向不一致或融合概率未达到三项均分基线33%，必须标记低赔替代风险，但不能隐藏逐场结论。",
             "普通平局采用历史回测版规则：统一模型只允许正向联赛的均势平进入正式池，必须满足平赔2.75-3.20、亚盘退浅或平手保护、上/下盘水位区间正常；平赔2.85-3.14为核心区间，其余只能小试。另有联赛专属模型：葡超小球平、挪超退盘平、荷甲中低总球平、英超降水平、英冠半球不动平、澳超高平赔中低总球、意甲升盘高水平；巴甲只作为平局基线观察模型，不得因单日命中直接升级；日职中低总球目前只观察。强热门冷平若未命中联赛专属模型，只能观察，禁止进入正式推荐。",
             "让平升级采用历史回测版规则：通用模型只允许正向联赛、竞彩让1球、热门胜赔1.26-1.40、让平赔3.30-3.70，并要求亚盘上盘水位0.65-1.04、下盘水位不低于0.75；热门胜赔1.41-1.55只能小试。另有联赛专属让平口袋：意甲中赔让平、德甲中热门让平、法甲高让平赔、英超中高总球小球让平、西甲小球水位让平、沙特高赔大球让平、欧罗巴低水让平；挪超降水让平当前样本不足只观察。让平必须再通过净胜1球路径检查：若降水不升盘但竞彩受让保护项明显低赔，说明更像热门不穿或失手，不升级让平。≤1.25超热、让2球、低命中联赛、上盘≥1.08不得升级；升盘高水、欧亚背离和退盘只作为风险证据，不能单独推让平。",
             "小球只限制比分上限，不自动支持平局：强方胜赔下降、对手胜赔上升，并得到亚盘真实升深或明确低水支持时，优先强方小胜，平局只作防选。",
@@ -3028,7 +3229,7 @@ class FAEDailyAIAnalyzer:
             "单选核心只允许平局或让平，且必须投注分>=70、价值指数>=60、盘口可信度>=70、星级>=4；逐场主选按校准概率排序。同市场第二项达到门槛时形成防选，否则可以比较另一结果市场的最强独立方向。",
             "未达到单选核心时仍须给出概率最高的主选；两个结果市场都没有达到独立门槛的次选时secondary_play填观望，不得机械补防选。不得输出大球/小球作为主次选。",
             "让平的历史进球差expected_return<0.95且value_edge<-5%时禁止排主选；同市场方向项概率领先至少3个百分点且为最低赔率项时，方向项必须排在让平之前。",
-            "亚盘不配合时胜负方向必须硬降级为观察，不能只写风险提示后继续推荐。",
+            "联赛中亚盘不配合时胜负方向必须硬降级为观察。杯赛/淘汰赛/两回合赛事若只有退盘或降水不升盘单一信号，且没有欧赔走弱、竞彩保护或阵容赛程第二项独立证据，只降低置信度，不得直接反转方向；赛事阶段缺失时必须说明未知。",
             "upset_warning_model达到重点防冷时，热门胜负方向必须降级为观察或不下注；防选优先写平局、受让保护项或让平，但不得把爆冷预警写成确定赛果。",
             "historical_goal_margin_model将普通平局定义为0球分差，将让平定义为当前竞彩让球数对应的精确净胜球差；两种玩法必须分开引用。仅eligible_for_adjustment=true且effective_sample达标时允许参与校准。",
             "historical_odds_rules是固定历史回放的有限修正规则；只能引用matched_rule_ids中已命中项及其sample、hit_rate、market_probability和adjustment_pp，不得写成必出规律。",
@@ -3648,6 +3849,7 @@ class FAEDailyAIAnalyzer:
                     selected_row.get("expected_return")
                 )
                 value_return = _number(value_row.get("expected_return"))
+                value_coverage = _number(value_row.get("coverage_score"))
                 return_gain = (
                     value_return - selected_return
                     if selected_return is not None
@@ -3658,6 +3860,11 @@ class FAEDailyAIAnalyzer:
                     and return_gain is not None
                     and return_gain >= TWO_OPTION_SECONDARY_VALUE_MIN_GAIN
                     and value_return >= TWO_OPTION_SECONDARY_VALUE_MIN_RETURN
+                    # Value protection may re-rank two already valid hedges,
+                    # but it must never replace a passing coverage candidate
+                    # with one that fails the independent direction floor.
+                    and value_coverage is not None
+                    and value_coverage >= TWO_OPTION_MIN_SECONDARY_COVERAGE
                 ):
                     value_protection = {
                         "triggered": True,
@@ -4331,6 +4538,257 @@ class FAEDailyAIAnalyzer:
                 "core" if shortlisted else "watch"
             )
             analysis["two_option_recommendation"] = profile
+            row["analysis"] = analysis
+        return rows
+
+    @classmethod
+    def _official_bet_profile(
+        cls,
+        source: Dict[str, Any],
+        analysis: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Build the independent formal-pool gate for the all-match single.
+
+        ``single_play`` answers which priced result is most likely after the
+        1.50 odds floor.  It does not answer whether that result deserves a
+        stake.  The formal pool adds value, market-consistency and data-risk
+        gates without hiding the underlying direction when they fail.
+        """
+        single = analysis.get("single_probability_profile") or {}
+        selection = str(
+            single.get("selection")
+            or analysis.get("single_play")
+            or "观望"
+        )
+        candidates = [
+            dict(item) for item in single.get("candidates") or []
+            if str(item.get("selection") or "")
+            in TWO_OPTION_PLAY_SELECTIONS
+        ]
+        candidate = next((
+            item for item in candidates
+            if str(item.get("selection") or "") == selection
+        ), {})
+        value = cls._play_value_profile(source, selection)
+        odds = _number(candidate.get("odds"))
+        if odds is None:
+            odds = _number(value.get("odds"))
+        probability = _number(candidate.get("probability"))
+        model_probability = _number(candidate.get("model_probability"))
+        if model_probability is None:
+            model_probability = _number(value.get("probability"))
+        market_probability = _number(candidate.get("market_probability"))
+        if market_probability is None:
+            market_probability = _number(
+                value.get("market_implied_probability")
+            )
+        model_expected_return = (
+            model_probability / 100 * odds
+            if model_probability is not None and odds is not None else None
+        )
+        model_market_edge = (
+            model_probability - market_probability
+            if model_probability is not None
+            and market_probability is not None else None
+        )
+        confidence = _number(
+            (analysis.get("market_confidence") or {}).get("score")
+        ) or 0.0
+        value_score = _number(value.get("value_score")) or 0.0
+        bet_score = _number(value.get("bet_score"))
+        if bet_score is None:
+            bet_score = _number(value.get("score")) or 0.0
+        model_rating = _number(analysis.get("model_rating")) or 0.0
+        warnings = [str(item) for item in source.get("data_warnings") or []]
+        risk = (source.get("fae_core") or {}).get("risk") or {}
+        current_asian = (source.get("asian") or {}).get("current") or []
+        waters = [
+            _number(current_asian[index])
+            for index in (0, 2) if len(current_asian) > index
+        ]
+        extreme_water = any(
+            item is not None and (item < 0.60 or item > 1.25)
+            for item in waters
+        )
+        severe_data_risk = bool(
+            risk.get("dangerous")
+            or extreme_water
+            or any("跳至" in item or "跳档" in item for item in warnings)
+            or (analysis.get("non_cover_guard") or {}).get("force_no_bet")
+        )
+        short_favorite_guard = single.get("short_favorite_guard") or {}
+        upset_warning = source.get("upset_warning_model") or {}
+        upset_score = _number(upset_warning.get("score")) or 0.0
+        favorite_side = str(upset_warning.get("favorite_side") or "")
+        favorite_selection = {
+            "home": "主胜",
+            "away": "客胜",
+        }.get(favorite_side)
+        high_upset_favorite_conflict = bool(
+            upset_score >= 75
+            and favorite_selection
+            and selection == favorite_selection
+        )
+        reasons = []
+        if selection not in TWO_OPTION_PLAY_SELECTIONS:
+            reasons.append("没有形成可结算的结果玩法方向")
+        if odds is None or odds < SINGLE_MIN_ODDS:
+            reasons.append(f"赔率低于{SINGLE_MIN_ODDS:.2f}正式池下限")
+        if probability is None or probability < OFFICIAL_SINGLE_MIN_PROBABILITY:
+            reasons.append(
+                "融合概率低于"
+                f"{OFFICIAL_SINGLE_MIN_PROBABILITY:g}%正式池门槛"
+            )
+        if confidence < OFFICIAL_SINGLE_MIN_MARKET_CONFIDENCE:
+            reasons.append(
+                f"盘口可信度低于{OFFICIAL_SINGLE_MIN_MARKET_CONFIDENCE:g}分"
+            )
+        if (
+            model_expected_return is None
+            or model_expected_return
+            < OFFICIAL_SINGLE_MIN_MODEL_EXPECTED_RETURN
+        ):
+            reasons.append(
+                "模型赔率期望低于"
+                f"{OFFICIAL_SINGLE_MIN_MODEL_EXPECTED_RETURN:.2f}"
+            )
+        if (
+            model_market_edge is None
+            or model_market_edge < OFFICIAL_SINGLE_MIN_MODEL_MARKET_EDGE
+        ):
+            reasons.append(
+                "模型概率相对市场低于"
+                f"{OFFICIAL_SINGLE_MIN_MODEL_MARKET_EDGE:+g}个百分点"
+            )
+        if value_score < OFFICIAL_SINGLE_MIN_VALUE_SCORE:
+            reasons.append(
+                f"价值指数低于{OFFICIAL_SINGLE_MIN_VALUE_SCORE:g}分"
+            )
+        if bet_score < OFFICIAL_SINGLE_MIN_BET_SCORE:
+            reasons.append(
+                f"投注分低于{OFFICIAL_SINGLE_MIN_BET_SCORE:g}分"
+            )
+        if model_rating < OFFICIAL_SINGLE_MIN_MODEL_RATING:
+            reasons.append(
+                f"大模型原始评级低于{OFFICIAL_SINGLE_MIN_MODEL_RATING:g}星"
+            )
+        if short_favorite_guard.get("triggered"):
+            reasons.append("低赔热门替代方向未通过独立穿盘确认")
+        if high_upset_favorite_conflict:
+            reasons.append("普通胜负热门方向与75分以上防冷预警冲突")
+        if severe_data_risk:
+            reasons.append("存在危险盘口、异常跳档或极端水位")
+
+        eligible = not reasons
+        rank_score = (
+            float(probability or 0) * 0.42
+            + confidence * 0.18
+            + value_score * 0.14
+            + float(bet_score or 0) * 0.10
+            + max(-5.0, min(8.0, float(model_market_edge or 0))) * 1.0
+            + max(
+                -6.0,
+                min(8.0, (float(model_expected_return or 0) - 1) * 100),
+            ) * 0.8
+        )
+        return {
+            "actionable": eligible,
+            "qualified_before_daily_limit": eligible,
+            "selection": selection,
+            "market": candidate.get("market"),
+            "odds": round(odds, 3) if odds is not None else None,
+            "probability": (
+                round(probability, 2) if probability is not None else None
+            ),
+            "model_probability": (
+                round(model_probability, 2)
+                if model_probability is not None else None
+            ),
+            "market_probability": (
+                round(market_probability, 2)
+                if market_probability is not None else None
+            ),
+            "model_market_edge": (
+                round(model_market_edge, 2)
+                if model_market_edge is not None else None
+            ),
+            "model_expected_return": (
+                round(model_expected_return, 3)
+                if model_expected_return is not None else None
+            ),
+            "value_score": round(value_score, 1),
+            "bet_score": round(float(bet_score or 0), 1),
+            "market_confidence": round(confidence, 1),
+            "model_rating": round(model_rating, 1),
+            "rank_score": round(rank_score, 2),
+            "severe_data_risk": severe_data_risk,
+            "upset_warning_score": round(upset_score, 1),
+            "high_upset_favorite_conflict": high_upset_favorite_conflict,
+            "reason": (
+                "同时通过融合概率、赔率价值、盘口可信度和风险门槛"
+                if eligible else "；".join(dict.fromkeys(reasons))
+            ),
+        }
+
+    @classmethod
+    def apply_official_bet_recommendations(
+        cls,
+        matches: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """Select at most three AI-verified singles for the formal pool."""
+        rows = []
+        eligible = []
+        for index, item in enumerate(matches):
+            row = dict(item or {})
+            analysis = dict(row.get("analysis") or {})
+            profile = cls._official_bet_profile(
+                row.get("input_snapshot") or {}, analysis
+            )
+            analysis_source = str(row.get("analysis_source") or "")
+            ai_verified = analysis_source == "volcengine-ark"
+            profile["ai_verified"] = ai_verified
+            profile["analysis_source"] = analysis_source or "legacy"
+            if profile.get("actionable") and not ai_verified:
+                profile["actionable"] = False
+                profile["qualified_before_daily_limit"] = False
+                profile["reason"] = (
+                    str(profile.get("reason") or "")
+                    + "；本场不是火山大模型研判，不能进入正式投注池"
+                ).strip("；")
+            analysis["official_bet_recommendation"] = profile
+            row["analysis"] = analysis
+            rows.append(row)
+            if profile.get("actionable"):
+                eligible.append((
+                    float(profile.get("rank_score") or 0), index
+                ))
+
+        selected_order = [
+            index for _, index in sorted(eligible, reverse=True)
+        ][:OFFICIAL_SINGLE_DAILY_LIMIT]
+        selected = set(selected_order)
+        rank_by_index = {
+            index: rank
+            for rank, index in enumerate(selected_order, start=1)
+        }
+        for index, row in enumerate(rows):
+            analysis = row["analysis"]
+            profile = dict(
+                analysis.get("official_bet_recommendation") or {}
+            )
+            was_eligible = bool(profile.get("actionable"))
+            shortlisted = index in selected
+            profile["actionable"] = shortlisted
+            profile["daily_rank"] = rank_by_index.get(index)
+            profile["recommendation_level"] = (
+                "official" if shortlisted else "direction"
+            )
+            if was_eligible and not shortlisted:
+                profile["reason"] = (
+                    str(profile.get("reason") or "")
+                    + f"；全日正式投注池仅保留前{OFFICIAL_SINGLE_DAILY_LIMIT}场"
+                ).strip("；")
+            analysis["official_bet_recommendation"] = profile
             row["analysis"] = analysis
         return rows
 
@@ -7927,7 +8385,7 @@ class FAEDailyAIAnalyzer:
             (((source.get("fae_core") or {}).get("recommendation") or {})
              .get("category_scores") or [])
         )
-        candidates = []
+        all_candidates = []
         excluded_low_odds = []
         for raw in raw_categories:
             label = str(raw.get("label") or "")
@@ -7935,12 +8393,6 @@ class FAEDailyAIAnalyzer:
                 continue
             odds = _number(raw.get("odds"))
             if odds is None:
-                continue
-            if odds < SINGLE_MIN_ODDS:
-                excluded_low_odds.append({
-                    "selection": label,
-                    "odds": round(odds, 3),
-                })
                 continue
             profile = cls._historical_adjusted_profile(
                 source, dict(raw)
@@ -7960,7 +8412,7 @@ class FAEDailyAIAnalyzer:
                     model_probability * SINGLE_MODEL_WEIGHT
                     + market_probability * SINGLE_MARKET_WEIGHT
                 )
-            candidates.append({
+            candidate = {
                 "selection": label,
                 "market": (
                     "竞彩让球" if label in {"让胜", "让平", "让负"}
@@ -7976,7 +8428,18 @@ class FAEDailyAIAnalyzer:
                     if market_probability is not None else None
                 ),
                 "probability": round(blended_probability, 2),
-            })
+            }
+            all_candidates.append(candidate)
+            if odds < SINGLE_MIN_ODDS:
+                excluded_low_odds.append({
+                    "selection": label,
+                    "odds": round(odds, 3),
+                })
+
+        candidates = [
+            item for item in all_candidates
+            if float(item.get("odds") or 0) >= SINGLE_MIN_ODDS
+        ]
         if not candidates:
             return {
                 "selection": "观望",
@@ -7995,7 +8458,71 @@ class FAEDailyAIAnalyzer:
             ),
             reverse=True,
         )
+        all_ranked = sorted(
+            all_candidates,
+            key=lambda item: (
+                float(item.get("probability") or 0),
+                float(item.get("market_probability") or 0),
+                -float(item.get("odds") or 99),
+            ),
+            reverse=True,
+        )
         primary = ranked[0]
+        short_favorite_guard = {
+            "triggered": False,
+            "short_favorite": None,
+            "allowed_handicap_selection": None,
+            "minimum_handicap_probability": (
+                SINGLE_SHORT_FAVORITE_HANDICAP_MIN_PROBABILITY
+            ),
+        }
+        raw_leader = all_ranked[0] if all_ranked else {}
+        raw_leader_selection = str(raw_leader.get("selection") or "")
+        raw_leader_odds = _number(raw_leader.get("odds"))
+        if (
+            raw_leader_selection in {"主胜", "客胜"}
+            and raw_leader_odds is not None
+            and raw_leader_odds < SINGLE_MIN_ODDS
+        ):
+            handicap = _number(
+                (source.get("sporttery_handicap") or {}).get("value")
+            )
+            allowed_handicap_selection = None
+            if (
+                raw_leader_selection == "主胜"
+                and handicap is not None
+                and handicap < 0
+            ):
+                allowed_handicap_selection = "让胜"
+            elif (
+                raw_leader_selection == "客胜"
+                and handicap is not None
+                and handicap > 0
+            ):
+                allowed_handicap_selection = "让负"
+            selected_probability = _number(primary.get("probability"))
+            independently_supported = bool(
+                primary.get("selection") == allowed_handicap_selection
+                and selected_probability is not None
+                and selected_probability
+                >= SINGLE_SHORT_FAVORITE_HANDICAP_MIN_PROBABILITY
+            )
+            short_favorite_guard = {
+                "triggered": not independently_supported,
+                "short_favorite": raw_leader_selection,
+                "short_favorite_odds": round(raw_leader_odds, 3),
+                "proposed_selection": primary.get("selection"),
+                "proposed_probability": selected_probability,
+                "allowed_handicap_selection": allowed_handicap_selection,
+                "minimum_handicap_probability": (
+                    SINGLE_SHORT_FAVORITE_HANDICAP_MIN_PROBABILITY
+                ),
+                "reason": (
+                    "低于1.50的热门只代表投注价值不足，不能据此反推"
+                    "平局、让平或热门不穿；当前仍保留概率最高的可投注"
+                    "替代项，并标记其未独立达到热门穿盘确认条件"
+                ),
+            }
         same_market = [
             item for item in ranked[1:]
             if item.get("market") == primary.get("market")
@@ -8017,8 +8544,11 @@ class FAEDailyAIAnalyzer:
             "model_weight": SINGLE_MODEL_WEIGHT,
             "market_weight": SINGLE_MARKET_WEIGHT,
             "excluded_low_odds": excluded_low_odds,
+            "short_favorite_guard": short_favorite_guard,
             "candidates": ranked,
             "reason": (
+                short_favorite_guard.get("reason")
+                if short_favorite_guard.get("triggered") else
                 f"过滤赔率低于{SINGLE_MIN_ODDS:.2f}的选项后，"
                 "按模型35%+市场去水概率65%选择单场最高概率项"
             ),
@@ -9030,7 +9560,7 @@ class FAEDailyAIAnalyzer:
         }
         for key, items in source_pools.items():
             if key in {
-                "core", "two_option_core", "away_small_win",
+                "core", "official_single", "two_option_core", "away_small_win",
                 "handicap_lose",
             }:
                 continue
@@ -9165,6 +9695,56 @@ class FAEDailyAIAnalyzer:
                 "handicap_play": handicap_play,
                 "reason": "，".join(reason_parts),
                 "role": "主选",
+            })
+        official_single_candidates = sorted(
+            (
+                item for item in matches
+                if (((item.get("analysis") or {})
+                    .get("official_bet_recommendation") or {})
+                    .get("actionable"))
+            ),
+            key=lambda item: int(
+                (((item.get("analysis") or {})
+                  .get("official_bet_recommendation") or {})
+                 .get("daily_rank") or 999)
+            ),
+        )[:OFFICIAL_SINGLE_DAILY_LIMIT]
+        pools["official_single"] = []
+        for item in official_single_candidates:
+            profile = (
+                (item.get("analysis") or {})
+                .get("official_bet_recommendation") or {}
+            )
+            selection = str(profile.get("selection") or "")
+            odds = _number(profile.get("odds"))
+            probability = _number(profile.get("probability"))
+            confidence = _number(profile.get("market_confidence"))
+            reason_parts = [
+                f"正式单选{selection}"
+                + (f"@{odds:g}" if odds is not None else ""),
+            ]
+            if probability is not None:
+                reason_parts.append(f"融合概率{probability:g}%")
+            if confidence is not None:
+                reason_parts.append(f"盘口可信度{confidence:g}分")
+            pools["official_single"].append({
+                "match_id": str(item.get("match_id") or ""),
+                "selection": selection,
+                "odds": odds,
+                "probability": probability,
+                "model_probability": profile.get("model_probability"),
+                "market_probability": profile.get("market_probability"),
+                "model_expected_return": profile.get(
+                    "model_expected_return"
+                ),
+                "model_market_edge": profile.get("model_market_edge"),
+                "value_score": profile.get("value_score"),
+                "bet_score": profile.get("bet_score"),
+                "market_confidence": confidence,
+                "daily_rank": profile.get("daily_rank"),
+                "rank_score": profile.get("rank_score"),
+                "reason": "，".join(reason_parts),
+                "role": "正式投注",
             })
         two_option_candidates = sorted(
             (

@@ -3,6 +3,7 @@ import unittest
 
 from football_ai.daily_analysis import (
     DAILY_AI_MAX_BATCH_SIZE,
+    DAILY_AI_RECOVERY_BATCH_SIZE,
     FAEDailyAIAnalyzer,
     build_daily_match_input,
     compact_daily_ai_run,
@@ -828,6 +829,10 @@ class DailyAnalysisTests(unittest.TestCase):
 
         self.assertEqual(result["match_count"], 2)
         self.assertEqual(result["batch_count"], 1)
+        self.assertEqual(result["ai_analyzed_match_count"], 1)
+        self.assertEqual(result["fallback_match_count"], 1)
+        self.assertEqual(result["recovery_batch_count"], 1)
+        self.assertTrue(result["partial_success"])
         self.assertEqual(
             result["matches"][0]["analysis"]["primary_play"], "让平"
         )
@@ -837,15 +842,18 @@ class DailyAnalysisTests(unittest.TestCase):
         self.assertEqual(
             result["daily_summary"]["recommended_combinations"], []
         )
-        self.assertIn("五项检查", client.prompt)
+        self.assertIn("固定检查欧赔", client.prompt)
         self.assertIn("不输出隐藏思维链", client.prompt)
         self.assertIn("热门方向没有真实升深", client.prompt)
-        self.assertIn("禁止使用历史0%命中区间", client.prompt)
+        self.assertIn("单日0/N或N/N属于小样本", client.prompt)
         self.assertIn("联赛历史画像", client.prompt)
-        self.assertIn("大球、小球只能写入market_analysis.total", client.prompt)
+        self.assertIn(
+            "大球、小球只作为market_analysis.total辅助证据",
+            client.prompt,
+        )
         self.assertEqual(result["review_memory"]["memory_hash"], "memory-1")
 
-    def test_daily_analysis_caps_batches_at_ten_and_keeps_partial_success(self):
+    def test_daily_analysis_caps_batches_at_ten_and_recovers_failed_batch(self):
         client = PartialBatchArkClient()
         analyzer = FAEDailyAIAnalyzer(client)
         rows = [
@@ -862,18 +870,23 @@ class DailyAnalysisTests(unittest.TestCase):
         )
 
         self.assertEqual(DAILY_AI_MAX_BATCH_SIZE, 10)
-        self.assertEqual(client.detail_batch_sizes, [10, 10, 1])
+        self.assertEqual(DAILY_AI_RECOVERY_BATCH_SIZE, 3)
+        self.assertEqual(
+            client.detail_batch_sizes,
+            [10, 10, 1, 3, 3, 3, 1],
+        )
         self.assertEqual(result["batch_count"], 3)
         self.assertEqual(result["completed_batch_count"], 2)
         self.assertEqual(result["failed_batch_count"], 1)
-        self.assertEqual(result["ai_analyzed_match_count"], 11)
-        self.assertEqual(result["fallback_match_count"], 10)
-        self.assertTrue(result["partial_success"])
+        self.assertEqual(result["recovery_batch_count"], 4)
+        self.assertEqual(result["ai_analyzed_match_count"], 21)
+        self.assertEqual(result["fallback_match_count"], 0)
+        self.assertFalse(result["partial_success"])
         failed_rows = [
             item for item in result["matches"]
             if item["analysis_source"] == "fae-core-fallback"
         ]
-        self.assertEqual(len(failed_rows), 10)
+        self.assertEqual(len(failed_rows), 0)
         self.assertTrue(any(
             "本批暂用FAE核心结论" in warning
             for warning in result["daily_summary"]["warnings"]
@@ -881,6 +894,13 @@ class DailyAnalysisTests(unittest.TestCase):
         self.assertEqual(
             len([item for item in checkpoints if item["kind"] == "detail"]),
             2,
+        )
+        self.assertEqual(
+            len([
+                item for item in checkpoints
+                if item["kind"] == "detail-recovery"
+            ]),
+            4,
         )
 
     def test_daily_analysis_still_fails_when_every_provider_batch_fails(self):
@@ -1090,6 +1110,35 @@ class DailyAnalysisTests(unittest.TestCase):
             for row in decision["candidates"]
         }
         self.assertGreater(scores["让胜"], scores["让平"])
+
+    def test_handicap_value_protection_cannot_choose_below_gate_candidate(self):
+        """Replay the 08-26 周三001 secondary-selection structure."""
+        source = {
+            "sporttery_handicap": {
+                "value": -1,
+                "current": [4.50, 3.90, 1.54],
+            },
+            "fae_core": {
+                "probabilities": {
+                    "hhad": {"win": 20, "draw": 22, "lose": 58},
+                },
+            },
+        }
+
+        decision = FAEDailyAIAnalyzer._secondary_play_decision(
+            source, "让负", "让平"
+        )
+
+        self.assertEqual(decision["selection"], "让平")
+        self.assertFalse(decision.get("cross_market", False))
+        self.assertTrue(decision["secondary_gate"]["passed"])
+        self.assertFalse(decision["value_protection"]["triggered"])
+        scores = {
+            row["selection"]: row["coverage_score"]
+            for row in decision["candidates"]
+        }
+        self.assertGreaterEqual(scores["让平"], 20)
+        self.assertLess(scores["让胜"], 20)
 
     def test_handicap_secondary_keeps_letdraw_when_it_really_ranks_second(self):
         source = {
@@ -2595,6 +2644,7 @@ class DailyAnalysisTests(unittest.TestCase):
 
     def test_probability_single_filters_short_price_and_ignores_value_score(self):
         source = {
+            "sporttery_handicap": {"value": -1},
             "fae_core": {
                 "recommendation": {
                     "category_scores": [
@@ -2648,6 +2698,259 @@ class DailyAnalysisTests(unittest.TestCase):
             profile["excluded_low_odds"],
             [{"selection": "主胜", "odds": 1.42}],
         )
+
+    def test_probability_single_marks_short_favorite_inversion_risk(self):
+        source = {
+            "sporttery_handicap": {"value": -2},
+            "fae_core": {
+                "recommendation": {
+                    "category_scores": [
+                        {
+                            "label": "主胜",
+                            "odds": 1.12,
+                            "probability": 82,
+                            "market_implied_probability": 80,
+                        },
+                        {
+                            "label": "让胜",
+                            "odds": 2.40,
+                            "probability": 29,
+                            "market_implied_probability": 35,
+                        },
+                        {
+                            "label": "让平",
+                            "odds": 4.00,
+                            "probability": 22,
+                            "market_implied_probability": 21,
+                        },
+                        {
+                            "label": "让负",
+                            "odds": 2.16,
+                            "probability": 49,
+                            "market_implied_probability": 44,
+                        },
+                    ],
+                },
+            },
+        }
+
+        profile = FAEDailyAIAnalyzer._probability_single_profile(source)
+
+        self.assertEqual(profile["selection"], "让负")
+        self.assertTrue(profile["short_favorite_guard"]["triggered"])
+        self.assertEqual(
+            profile["short_favorite_guard"]["proposed_selection"],
+            "让负",
+        )
+
+    def test_probability_single_keeps_independently_supported_cover(self):
+        source = {
+            "sporttery_handicap": {"value": -1},
+            "fae_core": {
+                "recommendation": {
+                    "category_scores": [
+                        {
+                            "label": "主胜",
+                            "odds": 1.14,
+                            "probability": 82,
+                            "market_implied_probability": 79,
+                        },
+                        {
+                            "label": "让胜",
+                            "odds": 1.72,
+                            "probability": 58,
+                            "market_implied_probability": 55,
+                        },
+                        {
+                            "label": "让平",
+                            "odds": 3.90,
+                            "probability": 25,
+                            "market_implied_probability": 25,
+                        },
+                        {
+                            "label": "让负",
+                            "odds": 3.50,
+                            "probability": 17,
+                            "market_implied_probability": 20,
+                        },
+                    ],
+                },
+            },
+        }
+
+        profile = FAEDailyAIAnalyzer._probability_single_profile(source)
+
+        self.assertEqual(profile["selection"], "让胜")
+        self.assertFalse(profile["short_favorite_guard"]["triggered"])
+
+    def test_official_bet_pool_is_independent_and_limited_to_five(self):
+        rows = []
+        for index, probability in enumerate((58, 57, 56, 55, 54, 53)):
+            source = {
+                "euro": {"current": [1.80, 3.50, 4.20]},
+                "asian": {"current": [0.88, "半球", 0.98]},
+                "fae_core": {
+                    "risk": {"dangerous": False},
+                    "recommendation": {
+                        "category_scores": [{
+                            "label": "主胜",
+                            "odds": 1.80,
+                            "probability": probability,
+                            "market_implied_probability": 53,
+                            "value_score": 64,
+                            "bet_score": 70,
+                            "no_bet": False,
+                        }],
+                    },
+                },
+            }
+            rows.append({
+                "match_id": str(index),
+                "analysis_source": "volcengine-ark",
+                "analysis": {
+                    "single_play": "主胜",
+                    "single_probability_profile": {
+                        "selection": "主胜",
+                        "candidates": [{
+                            "selection": "主胜",
+                            "market": "胜平负",
+                            "odds": 1.80,
+                            "probability": probability,
+                            "model_probability": probability,
+                            "market_probability": 53,
+                        }],
+                        "short_favorite_guard": {"triggered": False},
+                    },
+                    "market_confidence": {"score": 76},
+                    "model_rating": 4,
+                    # The specialised draw/handicap-draw pool may reject this
+                    # ordinary result without blocking the new formal pool.
+                    "no_bet": True,
+                },
+                "input_snapshot": source,
+            })
+
+        result = FAEDailyAIAnalyzer.apply_official_bet_recommendations(rows)
+        selected = [
+            row for row in result
+            if row["analysis"]["official_bet_recommendation"]["actionable"]
+        ]
+
+        self.assertEqual(len(selected), 5)
+        self.assertTrue(all(
+            row["analysis"]["official_bet_recommendation"]["ai_verified"]
+            for row in selected
+        ))
+        self.assertEqual(
+            [
+                row["analysis"]["official_bet_recommendation"]["daily_rank"]
+                for row in selected
+            ],
+            [1, 2, 3, 4, 5],
+        )
+
+    def test_official_bet_pool_rejects_fallback_and_short_favorite_proxy(self):
+        source = {
+            "euro": {"current": [1.40, 4.20, 7.50]},
+            "asian": {"current": [0.88, "一球", 0.98]},
+            "fae_core": {
+                "risk": {"dangerous": False},
+                "recommendation": {
+                    "category_scores": [{
+                        "label": "让胜",
+                        "odds": 1.80,
+                        "probability": 55,
+                        "market_implied_probability": 52,
+                        "value_score": 65,
+                        "bet_score": 70,
+                    }],
+                },
+            },
+        }
+        row = {
+            "match_id": "fallback",
+            "analysis_source": "fae-core-fallback",
+            "analysis": {
+                "single_play": "让胜",
+                "single_probability_profile": {
+                    "selection": "让胜",
+                    "candidates": [{
+                        "selection": "让胜",
+                        "market": "竞彩让球",
+                        "odds": 1.80,
+                        "probability": 55,
+                        "model_probability": 55,
+                        "market_probability": 52,
+                    }],
+                    "short_favorite_guard": {"triggered": True},
+                },
+                "market_confidence": {"score": 80},
+                "model_rating": 4.5,
+            },
+            "input_snapshot": source,
+        }
+
+        profile = (
+            FAEDailyAIAnalyzer.apply_official_bet_recommendations([row])[0]
+            ["analysis"]["official_bet_recommendation"]
+        )
+
+        self.assertFalse(profile["actionable"])
+        self.assertIn("低赔热门替代方向", profile["reason"])
+
+    def test_official_bet_pool_rejects_high_upset_favorite_conflict(self):
+        source = {
+            "euro": {"current": [1.65, 3.70, 5.20]},
+            "asian": {"current": [0.88, "半球", 0.98]},
+            "upset_warning_model": {
+                "score": 75,
+                "favorite_side": "home",
+            },
+            "fae_core": {
+                "risk": {"dangerous": False},
+                "recommendation": {
+                    "category_scores": [{
+                        "label": "主胜",
+                        "odds": 1.65,
+                        "probability": 58,
+                        "market_implied_probability": 54,
+                        "value_score": 65,
+                        "bet_score": 70,
+                    }],
+                },
+            },
+        }
+        row = {
+            "match_id": "upset-risk",
+            "analysis_source": "volcengine-ark",
+            "analysis": {
+                "single_play": "主胜",
+                "single_probability_profile": {
+                    "selection": "主胜",
+                    "candidates": [{
+                        "selection": "主胜",
+                        "market": "胜平负",
+                        "odds": 1.65,
+                        "probability": 58,
+                        "model_probability": 58,
+                        "market_probability": 54,
+                    }],
+                    "short_favorite_guard": {"triggered": False},
+                },
+                "market_confidence": {"score": 80},
+                "model_rating": 4,
+            },
+            "input_snapshot": source,
+        }
+
+        profile = (
+            FAEDailyAIAnalyzer.apply_official_bet_recommendations([row])[0]
+            ["analysis"]["official_bet_recommendation"]
+        )
+
+        self.assertFalse(profile["actionable"])
+        self.assertTrue(profile["high_upset_favorite_conflict"])
+        self.assertIn("防冷预警冲突", profile["reason"])
 
 
 if __name__ == "__main__":

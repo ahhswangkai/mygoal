@@ -360,6 +360,45 @@ class DailyAIReviewTests(unittest.TestCase):
             review["summary"]["draw_radar"]["watch"]["hits"], 1
         )
 
+    def test_settles_formal_all_play_pool_independently_from_no_bet(self):
+        pick = source(
+            "205", "平局", euro=(1.80, 3.50, 4.20), no_bet=True,
+            single_play="主胜",
+        )
+        pick["analysis"]["official_bet_recommendation"] = {
+            "actionable": True,
+            "selection": "主胜",
+            "daily_rank": 1,
+            "probability": 55,
+            "model_probability": 56,
+            "market_probability": 53,
+            "model_expected_return": 1.008,
+            "model_market_edge": 3,
+            "value_score": 64,
+            "bet_score": 70,
+            "market_confidence": 76,
+            "rank_score": 61,
+            "reason": "通过正式池门槛",
+        }
+        snapshot = {
+            **self.snapshot,
+            "matches": [pick],
+            "daily_summary": {"recommended_combinations": []},
+        }
+        results = {
+            "205": {"status": 2, "home_score": 2, "away_score": 1},
+        }
+
+        review = FAEDailyAIReviewEngine().review(snapshot, results)
+
+        self.assertEqual(review["match_results"][0]["status"], "skipped")
+        self.assertEqual(len(review["official_bet_results"]), 1)
+        self.assertEqual(
+            review["official_bet_results"][0]["status"], "hit"
+        )
+        self.assertEqual(review["summary"]["official_bets"]["hits"], 1)
+        self.assertEqual(review["summary"]["official_bets"]["roi"], 80.0)
+
 
 if __name__ == "__main__":
     unittest.main()

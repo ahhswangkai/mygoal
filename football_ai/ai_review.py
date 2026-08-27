@@ -14,7 +14,7 @@ from .provider import ArkNarrativeClient, FAEOutputError
 from .version import ENGINE_VERSION
 
 
-AI_REVIEW_PROMPT_VERSION = "fae-deep-review-v10-market-semantic-guard"
+AI_REVIEW_PROMPT_VERSION = "fae-deep-review-v11-deterministic-metrics"
 SETTLED_STATUSES = {"hit", "miss", "push"}
 LEARNING_SCOPES = {
     "euro",
@@ -72,6 +72,65 @@ def _deterministic_ordinary_outcome(score: Any) -> Optional[str]:
         return None
     home, away = int(parsed.group(1)), int(parsed.group(2))
     return "主胜" if home > away else "客胜" if home < away else "平局"
+
+
+def _metric_snapshot(value: Any) -> Dict[str, Any]:
+    """Copy only deterministic settlement metrics into the AI audit."""
+    source = value if isinstance(value, dict) else {}
+    keys = (
+        "total", "settled", "hits", "misses", "pushes", "hit_rate",
+        "equal_stake", "equal_stake_return", "equal_stake_profit",
+        "equal_stake_roi",
+    )
+    return {
+        key: (
+            int(source.get(key))
+            if isinstance(source.get(key), bool) else source.get(key)
+        )
+        for key in keys if key in source
+    }
+
+
+def _verified_settlement_summary(review: Dict[str, Any]) -> Dict[str, Any]:
+    """Expose the program settlement as the only aggregate source of truth."""
+    summary = review.get("summary") or {}
+    radar = summary.get("draw_radar") or {}
+    two_option = summary.get("two_option") or {}
+    return {
+        "main_direction": _metric_snapshot(summary.get("singles")),
+        "official_bets": _metric_snapshot(summary.get("official_bets")),
+        "handicap_reference": _metric_snapshot(summary.get("handicap")),
+        "ordinary_draw": _metric_snapshot(radar.get("ordinary_draw")),
+        "handicap_draw": _metric_snapshot(radar.get("handicap_draw")),
+        "two_option": _metric_snapshot(two_option.get("overall")),
+        "source": "deterministic-program-settlement",
+    }
+
+
+def _verified_settlement_text(value: Dict[str, Any]) -> str:
+    labels = (
+        ("主选/观察", "main_direction"),
+        ("正式投注池", "official_bets"),
+        ("普通平", "ordinary_draw"),
+        ("让平", "handicap_draw"),
+        ("双选", "two_option"),
+    )
+    parts = []
+    for label, key in labels:
+        metric = value.get(key) or {}
+        settled = metric.get("settled")
+        hits = metric.get("hits")
+        if settled in (None, 0) or hits is None:
+            continue
+        detail = f"{label}{hits}/{settled}"
+        roi = metric.get("equal_stake_roi")
+        if key == "two_option" and roi is not None:
+            detail += f"，等额ROI{float(roi):+g}%"
+        parts.append(detail)
+    return (
+        "确定性结算：" + "；".join(parts) + "。"
+        if parts else "确定性结算：暂无可核验的已结算统计。"
+    )
 
 
 _HANDICAP_RESULT_CLAIM = re.compile(
@@ -335,6 +394,9 @@ class FAEAIReviewAnalyzer:
             "engine_version": review.get("engine_version"),
             "pre_match_model": snapshot.get("model"),
             "review_summary": review.get("summary") or {},
+            "verified_settlement_summary": (
+                _verified_settlement_summary(review)
+            ),
             "matches": sorted(
                 matches, key=lambda item: str(item.get("match_id") or "")
             ),
@@ -373,7 +435,11 @@ class FAEAIReviewAnalyzer:
         prompt = self._build_prompt(payload)
         text, metadata = self.client.generate(prompt)
         parsed = self._extract_json(text)
-        normalized = self._normalize(parsed, matches)
+        normalized = self._normalize(
+            parsed,
+            matches,
+            payload.get("verified_settlement_summary") or {},
+        )
         normalized = self.humanize_review_match_ids(normalized, matches)
         return {
             "status": "completed",
@@ -477,6 +543,7 @@ class FAEAIReviewAnalyzer:
             "必须分别复核正式主选与handicap_prediction中的竞彩让球参考；普通主胜命中不能掩盖让胜、让平或让负未中。",
             "必须单独复核two_option_predictions：主选+防选或让球双选任一命中即为覆盖命中；这只评估方向覆盖，不得包装成单注ROI。",
             "review_summary.two_option.overall已经按比赛去重，并额外提供equal_stake_roi；不得使用raw_rows重复计算同一场，也不得只报覆盖率而忽略等额双选收益。",
+            "所有总场数、命中数、命中率和ROI只能逐字引用verified_settlement_summary；禁止自行计数。该字段与模型判断冲突时，以程序确定性统计为准。",
             "所有已完赛比赛都必须复盘，包括prediction.no_bet=true的不下注比赛和selection=观望的观察比赛；不下注不是跳过，而是风险控制决策，需要判断合理还是过保守。",
             "prediction.no_bet=true时，result.status通常为skipped，result.observation_status表示如果按赛前观察方向下注会命中、未中或走盘；若observation_status=miss，优先复核不下注是否避免错误，若observation_status=hit，必须复核是否过度保守。",
             "selection=观望且没有具体下注方向时，不能按命中率评价，只复核是否正确识别了数据不足、盘口冲突或风险。",
@@ -508,6 +575,7 @@ class FAEAIReviewAnalyzer:
         cls,
         parsed: Dict[str, Any],
         source_matches: Iterable[Dict[str, Any]],
+        verified_settlement_summary: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         source_rows = list(source_matches)
         source_by_id = {
@@ -769,6 +837,25 @@ class FAEAIReviewAnalyzer:
             parsed.get("summary")
             if isinstance(parsed.get("summary"), dict) else {}
         )
+        verified_summary = dict(verified_settlement_summary or {})
+        verified_text = _verified_settlement_text(verified_summary)
+        ai_conclusion = sanitize_global(cls._text(
+            summary.get("conclusion"), "", 1000
+        ))
+        # Aggregate arithmetic belongs to the deterministic review engine.
+        # Keep only qualitative model clauses after the verified headline so
+        # a narrative miscount can never become the displayed daily result.
+        qualitative_clauses = [
+            clause.strip()
+            for clause in re.split(r"[。；\n]+", ai_conclusion)
+            if clause.strip()
+            and not re.search(r"\d+\s*(?:/|场|%|次)", clause)
+        ]
+        qualitative_conclusion = "；".join(qualitative_clauses[:3])
+        verified_conclusion = (
+            f"{verified_text} AI诊断：{qualitative_conclusion}。"
+            if qualitative_conclusion else verified_text
+        )
         lessons = (
             parsed.get("market_lessons")
             if isinstance(parsed.get("market_lessons"), dict) else {}
@@ -867,11 +954,7 @@ class FAEAIReviewAnalyzer:
 
         return {
             "summary": {
-                "conclusion": sanitize_global(cls._text(
-                    summary.get("conclusion"),
-                    "AI 深度复盘已完成，请结合逐场诊断查看。",
-                    1000,
-                )),
+                "conclusion": verified_conclusion,
                 "what_worked": sanitize_global_list(
                     summary.get("what_worked"), 6, 260
                 ),
@@ -918,6 +1001,7 @@ class FAEAIReviewAnalyzer:
                 "corrected_match_ids": sorted(semantic_conflict_ids),
                 "blocked_learning_candidates": blocked_learning_candidates,
             },
+            "verified_settlement_summary": verified_summary,
         }
 
     @classmethod

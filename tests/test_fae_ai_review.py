@@ -195,6 +195,16 @@ class FAEAIReviewAnalyzerTests(unittest.TestCase):
         self.assertEqual(
             result["coverage"]["settled_handicap_references"], 1
         )
+        self.assertEqual(
+            audit_input["verified_settlement_summary"]
+            ["main_direction"]["hits"],
+            1,
+        )
+        self.assertTrue(
+            result["summary"]["conclusion"].startswith(
+                "确定性结算：主选/观察1/1"
+            )
+        )
         self.assertEqual(candidate["delta"], 0.15)
         self.assertEqual(candidate["minimum_samples"], 10)
         self.assertEqual(candidate["evidence_match_ids"], ["201"])
@@ -314,6 +324,41 @@ class FAEAIReviewAnalyzerTests(unittest.TestCase):
             result["learning_candidates"][0]["evidence_match_ids"],
             [raw_id],
         )
+
+    def test_verified_metrics_replace_ai_aggregate_miscount(self):
+        analyzer = FAEAIReviewAnalyzer(FakeReviewClient())
+        audit_input = analyzer.build_input(snapshot(), review())
+        parsed = {
+            "summary": {
+                "conclusion": (
+                    "普通平命中4场，让平命中9场。"
+                    "盘口解释仍需要扩大样本验证。"
+                ),
+            },
+            "matches": [],
+        }
+        verified = {
+            "main_direction": {"settled": 12, "hits": 6},
+            "ordinary_draw": {"settled": 9, "hits": 1},
+            "handicap_draw": {"settled": 10, "hits": 3},
+            "two_option": {
+                "settled": 8,
+                "hits": 5,
+                "equal_stake_roi": -22.5,
+            },
+            "source": "deterministic-program-settlement",
+        }
+
+        normalized = analyzer._normalize(
+            parsed, audit_input["matches"], verified
+        )
+
+        conclusion = normalized["summary"]["conclusion"]
+        self.assertIn("普通平1/9", conclusion)
+        self.assertIn("让平3/10", conclusion)
+        self.assertIn("双选5/8，等额ROI-22.5%", conclusion)
+        self.assertNotIn("让平命中9场", conclusion)
+        self.assertIn("盘口解释仍需要扩大样本验证", conclusion)
 
 
 if __name__ == "__main__":
