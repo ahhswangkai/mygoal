@@ -314,6 +314,35 @@ class FAEDailyAIReviewEngine:
         snapshot_by_id = {
             str(item.get("match_id")): item for item in matches
         }
+        high_confidence_single_results = []
+        for pick in (
+            (((snapshot.get("daily_summary") or {}).get(
+                "supervised_shadow"
+            ) or {}).get("high_confidence_single") or [])
+        ):
+            match_id = str(pick.get("match_id") or "")
+            selection = str(pick.get("selection") or "")
+            if selection not in TWO_OPTION_SELECTIONS:
+                continue
+            settled = self._settle_selection(
+                snapshot_by_id.get(match_id) or {},
+                matches_by_id.get(match_id) or {},
+                selection,
+            )
+            settled.update({
+                "result_type": "high_confidence_single",
+                "daily_rank": pick.get("daily_rank"),
+                "probability": pick.get("probability"),
+                "model_probability": pick.get("model_probability"),
+                "market_probability": pick.get("market_probability"),
+                "model_market_gap_pp": pick.get(
+                    "model_market_gap_pp"
+                ),
+                "value_edge": pick.get("value_edge"),
+                "policy_status": pick.get("policy_status"),
+                "gate_reason": pick.get("reason"),
+            })
+            high_confidence_single_results.append(settled)
         combo_results = []
         for index, combo in enumerate(
             ((snapshot.get("daily_summary") or {}).get(
@@ -397,6 +426,9 @@ class FAEDailyAIReviewEngine:
             "pending_matches": pending,
             "match_results": match_results,
             "official_bet_results": official_bet_results,
+            "high_confidence_single_results": (
+                high_confidence_single_results
+            ),
             "handicap_results": handicap_results,
             "two_option_results": two_option_results,
             "draw_radar_results": draw_radar_results,
@@ -406,6 +438,9 @@ class FAEDailyAIReviewEngine:
                 "singles": summarize_ai_settled(match_results),
                 "official_bets": summarize_ai_settled(
                     official_bet_results
+                ),
+                "high_confidence_singles": summarize_ai_settled(
+                    high_confidence_single_results
                 ),
                 "handicap": summarize_ai_settled(handicap_results),
                 "two_option": {

@@ -23,9 +23,15 @@ import numpy as np
 from .league_profile import _handicap_value
 
 
-SUPERVISED_SCHEMA_VERSION = "1.3"
-SUPERVISED_MODEL_VERSION = "draw-margin-supervised-v4"
+SUPERVISED_SCHEMA_VERSION = "1.4"
+SUPERVISED_MODEL_VERSION = "draw-margin-supervised-v5"
 MARGIN_CLASSES = (-3, -2, -1, 0, 1, 2, 3)
+SINGLE_SELECTIONS = ("主胜", "平局", "客胜", "让胜", "让平", "让负")
+SINGLE_MIN_ODDS = 1.50
+SINGLE_MAX_ODDS = 2.20
+SINGLE_DAILY_LIMIT = 2
+SINGLE_POLICY_PROBABILITIES = (42.0, 46.0, 50.0, 54.0, 58.0)
+SINGLE_POLICY_GAPS = (-6.0, -2.0, 0.0, 4.0, 8.0)
 
 FEATURE_NAMES = (
     "euro_home_odds",
@@ -76,6 +82,17 @@ FEATURE_NAMES = (
     "missing_asian",
     "missing_sporttery_handicap",
     "missing_total",
+)
+SINGLE_META_FEATURE_NAMES = (
+    *FEATURE_NAMES,
+    "candidate_odds",
+    "candidate_market_probability",
+    "selection_home_win",
+    "selection_draw",
+    "selection_away_win",
+    "selection_handicap_win",
+    "selection_handicap_draw",
+    "selection_handicap_lose",
 )
 
 # Fixed pre-match bins keep pattern descriptions auditable.  Results choose
@@ -215,6 +232,10 @@ def extract_prematch_features(
 ) -> Dict[str, Any]:
     """Convert one immutable FAE snapshot to a stable numeric feature row."""
     source = _source(snapshot_match)
+    prematch_analysis = snapshot_match.get("analysis") or {}
+    prematch_official = (
+        prematch_analysis.get("official_bet_recommendation") or {}
+    )
     euro = source.get("euro") or {}
     asian = source.get("asian") or {}
     hhad = source.get("sporttery_handicap") or {}
@@ -434,15 +455,43 @@ def extract_prematch_features(
         "features": feature_values,
         "feature_vector": [feature_values[name] for name in FEATURE_NAMES],
         "market": {
+            "ordinary_home_probability": euro_probs[0],
             "ordinary_draw_probability": euro_probs[1],
+            "ordinary_away_probability": euro_probs[2],
+            "ordinary_home_odds": _at(euro_current, 0),
             "ordinary_draw_odds": _at(euro_current, 1),
+            "ordinary_away_odds": _at(euro_current, 2),
+            "handicap_home_probability": hhad_probs[0],
             "handicap_draw_probability": hhad_probs[1],
+            "handicap_away_probability": hhad_probs[2],
+            "handicap_home_odds": _at(hhad_current, 0),
             "handicap_draw_odds": _at(hhad_current, 1),
+            "handicap_away_odds": _at(hhad_current, 2),
             "handicap": _number(hhad.get("value")),
         },
         "quality": {
             "missing_markets": missing,
             "complete": not missing,
+        },
+        "prematch_ai": {
+            "selection": str(
+                prematch_analysis.get("single_play")
+                or prematch_analysis.get("primary_play")
+                or ""
+            ),
+            "analysis_source": str(
+                snapshot_match.get("analysis_source") or ""
+            ),
+            "ai_verified": (
+                str(snapshot_match.get("analysis_source") or "")
+                == "volcengine-ark"
+            ),
+            "official_actionable": bool(
+                prematch_official.get("actionable")
+            ),
+            "official_selection": str(
+                prematch_official.get("selection") or ""
+            ),
         },
     }
 
@@ -476,6 +525,14 @@ def build_training_example(
         "goal_margin_class": clipped_margin,
         "ordinary_draw": margin == 0,
         "handicap_draw": handicap_draw,
+        "ordinary_selection": (
+            "主胜" if margin > 0 else "客胜" if margin < 0 else "平局"
+        ),
+        "handicap_selection": (
+            "让胜" if handicap is not None and margin + handicap > 0
+            else "让负" if handicap is not None and margin + handicap < 0
+            else "让平" if handicap is not None else None
+        ),
     }
     return row
 
@@ -923,15 +980,24 @@ def _apply_pattern_signal(
     return adjusted, (adjusted - probability) * 100.0
 
 
-def _standardizer(vectors: List[List[float]]) -> Tuple[List[float], List[float]]:
+def _standardizer_width(
+    vectors: List[List[float]], width: int
+) -> Tuple[List[float], List[float]]:
     if not vectors:
-        return [0.0] * len(FEATURE_NAMES), [1.0] * len(FEATURE_NAMES)
-    means = [sum(row[index] for row in vectors) / len(vectors) for index in range(len(FEATURE_NAMES))]
+        return [0.0] * width, [1.0] * width
+    means = [
+        sum(row[index] for row in vectors) / len(vectors)
+        for index in range(width)
+    ]
     scales = []
     for index, mean in enumerate(means):
         variance = sum((row[index] - mean) ** 2 for row in vectors) / len(vectors)
         scales.append(max(0.01, math.sqrt(variance)))
     return means, scales
+
+
+def _standardizer(vectors: List[List[float]]) -> Tuple[List[float], List[float]]:
+    return _standardizer_width(vectors, len(FEATURE_NAMES))
 
 
 def _scale(vector: Sequence[float], means: Sequence[float], scales: Sequence[float]) -> List[float]:
@@ -1013,9 +1079,17 @@ def _league_priors(examples: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
 
 
 def _weight_explanation(weights: Sequence[float], limit: int = 6) -> Dict[str, Any]:
+    return _weight_explanation_named(weights, FEATURE_NAMES, limit=limit)
+
+
+def _weight_explanation_named(
+    weights: Sequence[float],
+    names: Sequence[str],
+    limit: int = 6,
+) -> Dict[str, Any]:
     rows = [
         {"feature": name, "coefficient": round(float(weight), 6)}
-        for name, weight in zip(FEATURE_NAMES, list(weights)[1:])
+        for name, weight in zip(names, list(weights)[1:])
     ]
     return {
         "positive": sorted(
@@ -1028,6 +1102,72 @@ def _weight_explanation(weights: Sequence[float], limit: int = 6) -> Dict[str, A
             key=lambda row: row["coefficient"],
         )[:limit],
     }
+
+
+def _result_probabilities_from_margins(
+    margins: Dict[int, float],
+    handicap: Optional[float],
+) -> Dict[str, Optional[float]]:
+    """Aggregate one coherent goal-margin distribution into six outcomes."""
+    output: Dict[str, Optional[float]] = {
+        "主胜": sum(value for margin, value in margins.items() if margin > 0),
+        "平局": margins.get(0, 0.0),
+        "客胜": sum(value for margin, value in margins.items() if margin < 0),
+        "让胜": None,
+        "让平": None,
+        "让负": None,
+    }
+    if handicap is None:
+        return output
+    output["让胜"] = sum(
+        value for margin, value in margins.items()
+        if margin + handicap > 0
+    )
+    output["让平"] = sum(
+        value for margin, value in margins.items()
+        if abs(margin + handicap) < 1e-9
+    )
+    output["让负"] = sum(
+        value for margin, value in margins.items()
+        if margin + handicap < 0
+    )
+    return output
+
+
+def _single_market_terms(
+    market: Dict[str, Any], selection: str
+) -> Tuple[Optional[float], Optional[float], str]:
+    mapping = {
+        "主胜": ("ordinary_home_probability", "ordinary_home_odds", "胜平负"),
+        "平局": ("ordinary_draw_probability", "ordinary_draw_odds", "胜平负"),
+        "客胜": ("ordinary_away_probability", "ordinary_away_odds", "胜平负"),
+        "让胜": ("handicap_home_probability", "handicap_home_odds", "竞彩让球"),
+        "让平": ("handicap_draw_probability", "handicap_draw_odds", "竞彩让球"),
+        "让负": ("handicap_away_probability", "handicap_away_odds", "竞彩让球"),
+    }
+    probability_key, odds_key, market_name = mapping[selection]
+    return (
+        _number(market.get(probability_key)),
+        _number(market.get(odds_key)),
+        market_name,
+    )
+
+
+def _single_meta_vector(
+    feature_row: Dict[str, Any], selection: str
+) -> Optional[List[float]]:
+    market_probability, odds, _ = _single_market_terms(
+        feature_row.get("market") or {}, selection
+    )
+    if market_probability is None or odds is None or odds <= 1:
+        return None
+    one_hot = [float(selection == value) for value in SINGLE_SELECTIONS]
+    return [
+        *[float(value) for value in feature_row.get("feature_vector") or []],
+        float(odds),
+        float(market_probability),
+        *one_hot,
+    ]
     output = {}
     prior_strength = 30.0
     for league, row in leagues.items():
@@ -1080,6 +1220,28 @@ class FAESupervisedTrainer:
         margin_weights = _fit_softmax(
             vectors, margin_indexes, epochs=140 if fast else 360
         )
+        single_meta_rows = [
+            (vector, int(_single_event_hit(row, selection)))
+            for row in rows
+            for selection in SINGLE_SELECTIONS
+            for vector in [_single_meta_vector(row, selection)]
+            if vector is not None
+        ]
+        single_meta_raw_vectors = [
+            vector for vector, _ in single_meta_rows
+        ]
+        single_meta_means, single_meta_scales = _standardizer_width(
+            single_meta_raw_vectors, len(SINGLE_META_FEATURE_NAMES)
+        )
+        single_meta_vectors = [
+            _scale(vector, single_meta_means, single_meta_scales)
+            for vector in single_meta_raw_vectors
+        ]
+        single_meta_weights = _fit_binary(
+            single_meta_vectors,
+            [label for _, label in single_meta_rows],
+            epochs=140 if fast else 360,
+        )
         feature_patterns = {
             "ordinary_draw": mine_feature_patterns(
                 rows, "ordinary_draw"
@@ -1099,6 +1261,11 @@ class FAESupervisedTrainer:
             "draw_weights": draw_weights,
             "margin_classes": list(MARGIN_CLASSES),
             "margin_weights": margin_weights,
+            "single_meta_feature_names": list(SINGLE_META_FEATURE_NAMES),
+            "single_meta_feature_means": single_meta_means,
+            "single_meta_feature_scales": single_meta_scales,
+            "single_meta_weights": single_meta_weights,
+            "single_meta_sample_count": len(single_meta_rows),
             "sample_count": len(rows),
             "training_days": len(dates),
             "training_start_date": dates[0] if dates else None,
@@ -1111,6 +1278,9 @@ class FAESupervisedTrainer:
                     str(margin): _weight_explanation(margin_weights[index])
                     for index, margin in enumerate(MARGIN_CLASSES)
                 },
+                "high_confidence_single": _weight_explanation_named(
+                    single_meta_weights, SINGLE_META_FEATURE_NAMES
+                ),
                 "note": (
                     "系数来自标准化赛前特征；正负表示模型方向，"
                     "不代表单变量因果关系。"
@@ -1131,7 +1301,8 @@ class FAESupervisedTrainer:
         identity = sha256(json.dumps(
             {key: artifact[key] for key in (
                 "model_version", "feature_names", "draw_weights",
-                "margin_weights", "feature_patterns", "sample_count",
+                "margin_weights", "single_meta_weights",
+                "feature_patterns", "sample_count",
                 "training_end_date",
             )}, sort_keys=True, default=str
         ).encode("utf-8")).hexdigest()[:16]
@@ -1295,6 +1466,232 @@ class FAESupervisedPredictor:
         weekend_penalty_pp = 0.75 if feature_row["features"].get("weekend") and daily_match_count >= 12 else 0.0
         total_penalty_pp = pool_penalty_pp + weekend_penalty_pp
 
+        model_outcomes = _result_probabilities_from_margins(
+            margin_probabilities, handicap
+        )
+        league_margins = {
+            int(margin): float(probability)
+            for margin, probability in (
+                league_row.get("margin_probabilities") or {}
+            ).items()
+        }
+        league_outcomes = _result_probabilities_from_margins(
+            league_margins, handicap
+        ) if league_margins else {}
+        meta_probabilities: Dict[str, float] = {}
+        meta_weights = self.artifact.get("single_meta_weights") or []
+        if meta_weights:
+            for selection in SINGLE_SELECTIONS:
+                raw_vector = _single_meta_vector(feature_row, selection)
+                if raw_vector is None:
+                    continue
+                scaled_vector = _scale(
+                    raw_vector,
+                    self.artifact.get("single_meta_feature_means")
+                    or [0.0] * len(SINGLE_META_FEATURE_NAMES),
+                    self.artifact.get("single_meta_feature_scales")
+                    or [1.0] * len(SINGLE_META_FEATURE_NAMES),
+                )
+                meta_probabilities[selection] = _sigmoid(sum(
+                    weight * value
+                    for weight, value in zip(meta_weights, scaled_vector)
+                ))
+            for market_selections in (
+                ("主胜", "平局", "客胜"),
+                ("让胜", "让平", "让负"),
+            ):
+                total = sum(
+                    meta_probabilities.get(selection, 0.0)
+                    for selection in market_selections
+                )
+                if total > 0:
+                    for selection in market_selections:
+                        if selection in meta_probabilities:
+                            meta_probabilities[selection] /= total
+        single_candidates = []
+        for selection in SINGLE_SELECTIONS:
+            margin_probability = _number(model_outcomes.get(selection))
+            raw_probability = _number(meta_probabilities.get(selection))
+            if raw_probability is None:
+                raw_probability = margin_probability
+            if raw_probability is None:
+                continue
+            league_probability = _number(league_outcomes.get(selection))
+            if league_probability is not None and not meta_probabilities:
+                raw_probability = (
+                    raw_probability * (1.0 - league_weight)
+                    + league_probability * league_weight
+                )
+            market_probability, odds, market_name = _single_market_terms(
+                market, selection
+            )
+            probability = (
+                market_probability
+                + reliability * (raw_probability - market_probability)
+                if market_probability is not None else raw_probability
+            )
+            probability = max(0.01, min(0.99, probability))
+            ranking_probability = max(
+                0.01, probability - total_penalty_pp / 100.0
+            )
+            single_candidates.append({
+                "selection": selection,
+                "market": market_name,
+                "odds": round(odds, 3) if odds is not None else None,
+                "probability": round(probability * 100, 2),
+                "ranking_probability": round(
+                    ranking_probability * 100, 2
+                ),
+                "model_probability": round(raw_probability * 100, 2),
+                "goal_margin_probability": (
+                    round(margin_probability * 100, 2)
+                    if margin_probability is not None else None
+                ),
+                "market_probability": (
+                    round(market_probability * 100, 2)
+                    if market_probability is not None else None
+                ),
+                "market_edge_pp": (
+                    round((probability - market_probability) * 100, 2)
+                    if market_probability is not None else None
+                ),
+                "value_edge": (
+                    round((probability * odds - 1.0) * 100, 2)
+                    if odds is not None and odds > 1 else None
+                ),
+            })
+
+        for candidate in single_candidates:
+            market_rows = [
+                row for row in single_candidates
+                if row["market"] == candidate["market"]
+            ]
+            model_order = sorted(
+                market_rows,
+                key=lambda row: float(row.get("probability") or 0),
+                reverse=True,
+            )
+            market_order = sorted(
+                market_rows,
+                key=lambda row: float(
+                    row.get("market_probability") or 0
+                ),
+                reverse=True,
+            )
+            candidate["model_market_rank"] = (
+                model_order.index(candidate) + 1
+            )
+            candidate["market_rank"] = market_order.index(candidate) + 1
+            other_model_probabilities = [
+                float(row.get("probability") or 0)
+                for row in model_order if row is not candidate
+            ]
+            candidate["model_market_gap_pp"] = round(
+                float(candidate.get("probability") or 0)
+                - max(other_model_probabilities or [0.0]),
+                2,
+            )
+            candidate["market_direction_agreement"] = bool(
+                candidate["model_market_rank"] == 1
+                and candidate["market_rank"] == 1
+            )
+
+        priced_candidates = [
+            candidate for candidate in single_candidates
+            if (
+                _number(candidate.get("odds")) is not None
+                and SINGLE_MIN_ODDS
+                <= float(candidate["odds"])
+                <= SINGLE_MAX_ODDS
+                and candidate.get("market_direction_agreement")
+            )
+        ]
+        priced_candidates.sort(
+            key=lambda candidate: (
+                float(candidate.get("ranking_probability") or 0),
+                float(candidate.get("model_market_gap_pp") or 0),
+                float(candidate.get("value_edge") or -999),
+            ),
+            reverse=True,
+        )
+        best_single = priced_candidates[0] if priced_candidates else None
+        single_policy = dict(
+            self.artifact.get("high_confidence_single_policy") or {}
+        )
+        minimum_probability = float(
+            single_policy.get("minimum_probability")
+            if single_policy.get("minimum_probability") is not None
+            else 58.0
+        )
+        minimum_gap = float(
+            single_policy.get("minimum_gap_pp")
+            if single_policy.get("minimum_gap_pp") is not None else 6.0
+        )
+        single_reasons = []
+        if not best_single:
+            single_reasons.append("没有赔率与市场方向同时合格的单选")
+        else:
+            if float(best_single.get("probability") or 0) < minimum_probability:
+                single_reasons.append(
+                    f"模型概率低于{minimum_probability:g}%"
+                )
+            if float(best_single.get("model_market_gap_pp") or 0) < minimum_gap:
+                single_reasons.append(
+                    f"同市场领先优势低于{minimum_gap:g}个百分点"
+                )
+            if not feature_row.get("quality", {}).get("complete"):
+                single_reasons.append("欧赔、亚盘、竞彩让球或大小球数据不完整")
+        policy_active = bool(single_policy.get("active"))
+        qualified = bool(best_single and not single_reasons)
+        high_confidence_single = {
+            "selection": (
+                best_single.get("selection") if best_single else None
+            ),
+            "market": best_single.get("market") if best_single else None,
+            "odds": best_single.get("odds") if best_single else None,
+            "probability": (
+                best_single.get("probability") if best_single else None
+            ),
+            "ranking_probability": (
+                best_single.get("ranking_probability")
+                if best_single else None
+            ),
+            "model_probability": (
+                best_single.get("model_probability") if best_single else None
+            ),
+            "market_probability": (
+                best_single.get("market_probability") if best_single else None
+            ),
+            "value_edge": (
+                best_single.get("value_edge") if best_single else None
+            ),
+            "model_market_gap_pp": (
+                best_single.get("model_market_gap_pp")
+                if best_single else None
+            ),
+            "market_direction_agreement": bool(
+                best_single
+                and best_single.get("market_direction_agreement")
+            ),
+            "qualified_before_daily_limit": qualified,
+            "actionable_before_daily_limit": qualified and policy_active,
+            "policy_active": policy_active,
+            "policy_status": single_policy.get("status") or "shadow_only",
+            "minimum_probability": minimum_probability,
+            "minimum_gap_pp": minimum_gap,
+            "minimum_odds": float(
+                single_policy.get("minimum_odds") or SINGLE_MIN_ODDS
+            ),
+            "maximum_odds": float(
+                single_policy.get("maximum_odds") or SINGLE_MAX_ODDS
+            ),
+            "reason": (
+                "通过监督概率、同市场领先、赔率区间和四市场完整性门槛"
+                if qualified else "；".join(single_reasons)
+            ),
+            "candidates": single_candidates,
+        }
+
         def output_probability(
             probability: Optional[float],
             market_probability: Optional[float],
@@ -1397,6 +1794,7 @@ class FAESupervisedPredictor:
                 "favorite_win_probability": round(favorite_win_probability * 100, 2) if favorite_win_probability is not None else None,
                 "conditional_exact_margin_probability": round(conditional_exact * 100, 2) if conditional_exact is not None else None,
             },
+            "high_confidence_single": high_confidence_single,
             "goal_margin_distribution": {
                 str(margin): round(probability * 100, 2)
                 for margin, probability in margin_probabilities.items()
@@ -1650,6 +2048,207 @@ def _combo_metric(
     }
 
 
+def _single_event_hit(
+    example: Dict[str, Any], selection: Optional[str]
+) -> bool:
+    label = example.get("label") or {}
+    if selection in {"主胜", "平局", "客胜"}:
+        return selection == label.get("ordinary_selection")
+    if selection in {"让胜", "让平", "让负"}:
+        return selection == label.get("handicap_selection")
+    return False
+
+
+def _select_high_confidence_single_events(
+    events: Iterable[Dict[str, Any]],
+    *,
+    minimum_probability: float,
+    minimum_gap_pp: float,
+    daily_limit: int = SINGLE_DAILY_LIMIT,
+) -> List[Dict[str, Any]]:
+    grouped: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+    for event in events:
+        odds = _number(event.get("odds"))
+        if (
+            odds is None
+            or odds < SINGLE_MIN_ODDS
+            or odds > SINGLE_MAX_ODDS
+            or int(event.get("market_rank") or 99) != 1
+            or not event.get("quality_complete")
+            or not event.get("ai_verified")
+            or not event.get("official_actionable")
+            or str(event.get("official_selection") or "")
+            != str(event.get("selection") or "")
+            or float(event.get("probability") or 0) * 100
+            < minimum_probability
+            or float(event.get("model_market_gap_pp") or 0)
+            < minimum_gap_pp
+        ):
+            continue
+        grouped[str(event.get("owner_date") or "")].append(event)
+    selected = []
+    for rows in grouped.values():
+        selected.extend(sorted(
+            rows,
+            key=lambda row: (
+                float(row.get("ranking_probability") or 0),
+                float(row.get("model_market_gap_pp") or 0),
+                float(row.get("value_edge") or -999),
+            ),
+            reverse=True,
+        )[:max(1, int(daily_limit))])
+    return selected
+
+
+def _wilson_lower(hits: int, sample: int, z: float = 1.96) -> float:
+    if sample <= 0:
+        return 0.0
+    probability = hits / sample
+    denominator = 1 + z * z / sample
+    center = probability + z * z / (2 * sample)
+    margin = z * math.sqrt(
+        probability * (1 - probability) / sample
+        + z * z / (4 * sample * sample)
+    )
+    return max(0.0, (center - margin) / denominator)
+
+
+def _single_policy_report(
+    events: List[Dict[str, Any]], tested_dates: Sequence[str]
+) -> Dict[str, Any]:
+    """Choose thresholds on early OOS days, validate on later days only."""
+    dates = sorted({str(value)[:10] for value in tested_dates if value})
+    split_index = max(1, min(len(dates) - 1, int(len(dates) * 0.70)))
+    discovery_dates = set(dates[:split_index])
+    validation_dates = set(dates[split_index:])
+    discovery_events = [
+        row for row in events
+        if str(row.get("owner_date") or "")[:10] in discovery_dates
+    ]
+    validation_events = [
+        row for row in events
+        if str(row.get("owner_date") or "")[:10] in validation_dates
+    ]
+    candidates = []
+    for minimum_probability in SINGLE_POLICY_PROBABILITIES:
+        for minimum_gap in SINGLE_POLICY_GAPS:
+            selected = _select_high_confidence_single_events(
+                discovery_events,
+                minimum_probability=minimum_probability,
+                minimum_gap_pp=minimum_gap,
+            )
+            metric = _metric(selected)
+            hits = int(metric.get("hits") or 0)
+            sample = int(metric.get("settled") or 0)
+            candidates.append({
+                "minimum_probability": minimum_probability,
+                "minimum_gap_pp": minimum_gap,
+                "metric": metric,
+                "confidence_lower": round(
+                    _wilson_lower(hits, sample) * 100, 2
+                ),
+            })
+    supported = [
+        row for row in candidates
+        if int((row.get("metric") or {}).get("settled") or 0) >= 30
+    ]
+    chosen = max(
+        supported or candidates,
+        key=lambda row: (
+            float(row.get("confidence_lower") or 0),
+            float((row.get("metric") or {}).get("roi") or -999),
+            float((row.get("metric") or {}).get("hit_rate") or 0),
+            int((row.get("metric") or {}).get("settled") or 0),
+        ),
+        default={
+            "minimum_probability": 58.0,
+            "minimum_gap_pp": 6.0,
+            "metric": _metric([]),
+            "confidence_lower": 0.0,
+        },
+    )
+    validation_selected = _select_high_confidence_single_events(
+        validation_events,
+        minimum_probability=float(chosen["minimum_probability"]),
+        minimum_gap_pp=float(chosen["minimum_gap_pp"]),
+    )
+    all_selected = _select_high_confidence_single_events(
+        events,
+        minimum_probability=float(chosen["minimum_probability"]),
+        minimum_gap_pp=float(chosen["minimum_gap_pp"]),
+    )
+    validation_metric = _metric(validation_selected)
+    all_metric = _metric(all_selected)
+    validation_lower = _wilson_lower(
+        int(validation_metric.get("hits") or 0),
+        int(validation_metric.get("settled") or 0),
+    ) * 100
+    reasons = []
+    if len(dates) < 30:
+        reasons.append(f"滚动样本外仅{len(dates)}个比赛日，少于30日")
+    if int((chosen.get("metric") or {}).get("settled") or 0) < 30:
+        reasons.append("阈值发现集可投注样本少于30场")
+    if float((chosen.get("metric") or {}).get("hit_rate") or 0) < 55:
+        reasons.append("阈值发现集命中率低于55%")
+    if float((chosen.get("metric") or {}).get("roi") or 0) < 0:
+        reasons.append("阈值发现集ROI为负")
+    if int(validation_metric.get("settled") or 0) < 20:
+        reasons.append("独立验证集可投注样本少于20场")
+    if float(validation_metric.get("hit_rate") or 0) < 60:
+        reasons.append("独立验证集命中率低于60%")
+    if float(validation_metric.get("roi") or 0) < 0:
+        reasons.append("独立验证集ROI为负")
+    if validation_lower < 45:
+        reasons.append("独立验证集95%置信下限低于45%")
+    if int(all_metric.get("settled") or 0) < 50:
+        reasons.append("全部滚动样本外可投注样本少于50场")
+    if float(all_metric.get("hit_rate") or 0) < 55:
+        reasons.append("全部滚动样本外命中率低于55%")
+    if float(all_metric.get("roi") or 0) < 0:
+        reasons.append("全部滚动样本外ROI为负")
+    active = not reasons
+    policy = {
+        "version": "high-confidence-single-v1",
+        "status": "active" if active else "shadow_only",
+        "active": active,
+        "minimum_probability": chosen["minimum_probability"],
+        "minimum_gap_pp": chosen["minimum_gap_pp"],
+        "minimum_odds": SINGLE_MIN_ODDS,
+        "maximum_odds": SINGLE_MAX_ODDS,
+        "daily_limit": SINGLE_DAILY_LIMIT,
+        "requires_market_favorite": True,
+        "requires_ark_single_alignment": True,
+        "requires_existing_official_gate": True,
+        "requires_complete_four_markets": True,
+        "selection_method": (
+            "前70%滚动样本外日期选阈值，后30%日期独立验证"
+        ),
+        "reasons": reasons or [
+            "通过跨日样本、60%命中率、非负ROI和置信下限门禁"
+        ],
+    }
+    return {
+        "policy": policy,
+        "tested_days": len(dates),
+        "discovery_dates": sorted(discovery_dates),
+        "validation_dates": sorted(validation_dates),
+        "discovery": chosen.get("metric") or {},
+        "discovery_confidence_lower": chosen.get("confidence_lower"),
+        "validation": validation_metric,
+        "validation_confidence_lower": round(validation_lower, 2),
+        "all_out_of_sample": all_metric,
+        "candidate_policy_count": len(candidates),
+        "evaluated_policies": sorted(
+            candidates,
+            key=lambda row: (
+                float(row.get("confidence_lower") or 0),
+                float((row.get("metric") or {}).get("roi") or -999),
+            ),
+            reverse=True,
+        ),
+    }
+
+
 class FAESupervisedBacktestEngine:
     """Expanding-window out-of-sample evaluation and release governance."""
 
@@ -1711,6 +2310,7 @@ class FAESupervisedBacktestEngine:
         history = []
         draw_events = []
         handicap_events = []
+        single_events = []
         tested_dates = []
         training_cutoffs = []
         predictor = None
@@ -1809,6 +2409,75 @@ class FAESupervisedBacktestEngine:
                         "label": bool(example["label"]["handicap_draw"]),
                         "weekend": bool(example["features"].get("weekend")),
                     })
+                single_profile = (
+                    prediction.get("high_confidence_single") or {}
+                )
+                official_selection = str(
+                    (example.get("prematch_ai") or {}).get(
+                        "official_selection"
+                    ) or ""
+                )
+                single = next((
+                    candidate
+                    for candidate in single_profile.get("candidates") or []
+                    if candidate.get("selection") == official_selection
+                ), {})
+                selection = single.get("selection")
+                if selection in SINGLE_SELECTIONS:
+                    single_events.append({
+                        "owner_date": day.get("owner_date"),
+                        "match_id": example.get("match_id"),
+                        "league": example.get("league"),
+                        "selection": selection,
+                        "market": single.get("market"),
+                        "probability": (
+                            float(single.get("probability") or 0) / 100.0
+                        ),
+                        "ranking_probability": (
+                            float(
+                                single.get("ranking_probability") or 0
+                            ) / 100.0
+                        ),
+                        "market_probability": (
+                            float(single.get("market_probability")) / 100.0
+                            if single.get("market_probability") is not None
+                            else None
+                        ),
+                        "model_market_gap_pp": float(
+                            single.get("model_market_gap_pp") or 0
+                        ),
+                        "market_direction_agreement": bool(
+                            single.get("market_direction_agreement")
+                        ),
+                        "market_rank": int(
+                            single.get("market_rank") or 99
+                        ),
+                        "quality_complete": bool(
+                            prediction.get("quality", {}).get("complete")
+                        ),
+                        "ai_selection": str(
+                            (example.get("prematch_ai") or {}).get(
+                                "selection"
+                            ) or ""
+                        ),
+                        "ai_verified": bool(
+                            (example.get("prematch_ai") or {}).get(
+                                "ai_verified"
+                            )
+                        ),
+                        "official_actionable": bool(
+                            (example.get("prematch_ai") or {}).get(
+                                "official_actionable"
+                            )
+                        ),
+                        "official_selection": official_selection,
+                        "value_edge": single.get("value_edge"),
+                        "odds": single.get("odds"),
+                        "label": _single_event_hit(example, selection),
+                        "weekend": bool(
+                            example["features"].get("weekend")
+                        ),
+                    })
             tested_dates.append(day.get("owner_date"))
             history.extend(current)
         if len(history) < 20:
@@ -1831,6 +2500,12 @@ class FAESupervisedBacktestEngine:
         }
         final_artifact["feature_pattern_activation_guard"] = (
             feature_pattern_activation_guard
+        )
+        high_confidence_single = _single_policy_report(
+            single_events, tested_dates
+        )
+        final_artifact["high_confidence_single_policy"] = (
+            high_confidence_single["policy"]
         )
         release_guard = self._release_guard(
             draw_metric,
@@ -1897,6 +2572,7 @@ class FAESupervisedBacktestEngine:
             "two_draw_one_handicap_combo": _combo_metric(
                 draw_events, handicap_events
             ),
+            "high_confidence_single": high_confidence_single,
             "weekend": {
                 "ordinary_draw": _metric([row for row in draw_events if row["weekend"]]),
                 "handicap_draw": _metric([row for row in handicap_events if row["weekend"]]),

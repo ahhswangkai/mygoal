@@ -2783,6 +2783,152 @@ class DailyAnalysisTests(unittest.TestCase):
         self.assertEqual(profile["selection"], "让胜")
         self.assertFalse(profile["short_favorite_guard"]["triggered"])
 
+    def test_probability_single_is_cancelled_when_it_opposes_two_option_lead(self):
+        source = {
+            "euro": {"current": [1.98, 3.65, 2.85]},
+            "sporttery_handicap": {
+                "value": -1,
+                "current": [3.85, 3.85, 1.64],
+            },
+            "fae_core": {
+                "risk": {"dangerous": False},
+                "probabilities": {
+                    "home_win": 46,
+                    "draw": 22,
+                    "away_win": 32,
+                    "hhad": {"win": 23, "draw": 24, "lose": 53},
+                },
+                "recommendation": {
+                    "category_scores": [
+                        {
+                            "label": "主胜",
+                            "odds": 1.98,
+                            "probability": 46,
+                            "market_implied_probability": 44.7,
+                        },
+                        {
+                            "label": "平局",
+                            "odds": 3.65,
+                            "probability": 22,
+                            "market_implied_probability": 24.25,
+                        },
+                        {
+                            "label": "客胜",
+                            "odds": 2.85,
+                            "probability": 32,
+                            "market_implied_probability": 31.05,
+                        },
+                        {
+                            "label": "让胜",
+                            "odds": 3.85,
+                            "probability": 23,
+                            "market_implied_probability": 23,
+                        },
+                        {
+                            "label": "让平",
+                            "odds": 3.85,
+                            "probability": 24,
+                            "market_implied_probability": 23,
+                        },
+                        {
+                            "label": "让负",
+                            "odds": 1.64,
+                            "probability": 53,
+                            "market_implied_probability": 54,
+                        },
+                    ],
+                },
+            },
+        }
+        secondary = FAEDailyAIAnalyzer._secondary_play_decision(
+            source, "主胜", "客胜"
+        )
+        single = FAEDailyAIAnalyzer._probability_single_profile(source)
+        self.assertEqual(single["selection"], "让负")
+
+        row = FAEDailyAIAnalyzer.apply_two_option_recommendations([{
+            "match_id": "001",
+            "analysis_source": "volcengine-ark",
+            "analysis": {
+                "primary_play": "主胜",
+                "secondary_play": secondary["selection"],
+                "secondary_selection_guard": secondary,
+                "single_play": single["selection"],
+                "single_probability_profile": single,
+                "market_confidence": {"score": 80},
+            },
+            "input_snapshot": source,
+        }])[0]
+        analysis = row["analysis"]
+
+        self.assertEqual(
+            analysis["two_option_recommendation"]["selection_text"],
+            "主胜 / 客胜",
+        )
+        self.assertEqual(analysis["single_play"], "观望")
+        self.assertIsNone(analysis["single_odds"])
+        alignment = (
+            analysis["single_probability_profile"]["direction_alignment"]
+        )
+        self.assertTrue(alignment["changed"])
+        self.assertTrue(alignment["cancelled"])
+        self.assertEqual(alignment["policy"], "conflict-veto")
+        self.assertEqual(alignment["independent_selection"], "让负")
+        self.assertEqual(alignment["anchor_selection"], "主胜")
+        self.assertEqual(alignment["effective_selection"], "观望")
+        self.assertNotIn("让负", alignment["compatible_selections"])
+
+    def test_probability_single_is_kept_when_two_option_direction_matches(self):
+        source = {
+            "euro": {"current": [1.80, 3.40, 4.50]},
+            "fae_core": {
+                "risk": {"dangerous": False},
+                "probabilities": {
+                    "home_win": 55,
+                    "draw": 27,
+                    "away_win": 18,
+                },
+            },
+        }
+        secondary = FAEDailyAIAnalyzer._secondary_play_decision(
+            source, "主胜", "平局"
+        )
+        row = FAEDailyAIAnalyzer.apply_two_option_recommendations([{
+            "match_id": "aligned",
+            "analysis_source": "volcengine-ark",
+            "analysis": {
+                "primary_play": "主胜",
+                "secondary_play": secondary["selection"],
+                "secondary_selection_guard": secondary,
+                "single_play": "主胜",
+                "single_odds": 1.80,
+                "single_probability": 55,
+                "single_probability_profile": {
+                    "selection": "主胜",
+                    "market": "胜平负",
+                    "odds": 1.80,
+                    "probability": 55,
+                    "candidates": [{
+                        "selection": "主胜",
+                        "market": "胜平负",
+                        "odds": 1.80,
+                        "probability": 55,
+                    }],
+                },
+                "market_confidence": {"score": 80},
+            },
+            "input_snapshot": source,
+        }])[0]
+        analysis = row["analysis"]
+
+        self.assertEqual(analysis["single_play"], "主胜")
+        self.assertEqual(analysis["single_odds"], 1.80)
+        alignment = (
+            analysis["single_probability_profile"]["direction_alignment"]
+        )
+        self.assertFalse(alignment["changed"])
+        self.assertFalse(alignment["cancelled"])
+
     def test_official_bet_pool_is_independent_and_limited_to_five(self):
         rows = []
         for index, probability in enumerate((58, 57, 56, 55, 54, 53)):

@@ -183,6 +183,33 @@ class FAESupervisedTests(unittest.TestCase):
             result["handicap_draw"]["conditional_exact_margin_probability"]
         )
         self.assertEqual(result["status"], "shadow")
+        single = result["high_confidence_single"]
+        self.assertEqual(len(single["candidates"]), 6)
+        self.assertIn(single["selection"], {
+            "主胜", "平局", "客胜", "让胜", "让平", "让负",
+        })
+        self.assertFalse(single["policy_active"])
+        self.assertFalse(single["actionable_before_daily_limit"])
+
+    def test_high_confidence_single_only_activates_released_policy(self):
+        artifact = FAESupervisedTrainer().fit(examples(), fast=True)
+        artifact["high_confidence_single_policy"] = {
+            "status": "active",
+            "active": True,
+            "minimum_probability": 0,
+            "minimum_gap_pp": 0,
+        }
+
+        single = FAESupervisedPredictor(artifact).predict(
+            prematch(101, "2026-08-22"),
+            owner_date="2026-08-22",
+            daily_match_count=8,
+        )["high_confidence_single"]
+
+        self.assertTrue(single["qualified_before_daily_limit"])
+        self.assertTrue(single["actionable_before_daily_limit"])
+        self.assertTrue(single["market_direction_agreement"])
+        self.assertGreaterEqual(single["odds"], 1.5)
 
     def test_weekend_large_pool_only_shrinks_ranking_probability(self):
         artifact = FAESupervisedTrainer().fit(examples(), fast=True)
@@ -236,6 +263,15 @@ class FAESupervisedTests(unittest.TestCase):
             )
         self.assertEqual(report["release_guard"]["status"], "shadow_only")
         self.assertIn("feature_pattern_shadow_comparison", report)
+        self.assertIn("high_confidence_single", report)
+        self.assertIn(
+            "high_confidence_single_policy", result["model"]
+        )
+        single_report = report["high_confidence_single"]
+        self.assertLess(
+            max(single_report["discovery_dates"]),
+            min(single_report["validation_dates"]),
+        )
         self.assertFalse(
             result["model"]["governance"]["may_override_official_recommendations"]
         )
@@ -281,6 +317,55 @@ class FAESupervisedTests(unittest.TestCase):
         self.assertEqual(summary["ordinary_draw"][0]["match_id"], "1")
         self.assertTrue(summary["combinations"])
         self.assertFalse(summary["combinations"][0]["actionable"])
+
+    def test_summary_exposes_only_active_high_confidence_daily_limit(self):
+        matches = []
+        for index, probability in enumerate((64, 62, 60), start=1):
+            matches.append({
+                "match_id": str(index),
+                "match_number": f"周六{index:03d}",
+                "home_team": f"主{index}",
+                "away_team": f"客{index}",
+                "league": "测试联赛",
+                "input_snapshot": {
+                    "supervised_shadow": {
+                        "model_id": "single-1",
+                        "model_version": "test",
+                        "status": "shadow",
+                        "sample_count": 300,
+                        "training_end_date": "2026-08-21",
+                        "ordinary_draw": {},
+                        "handicap_draw": {},
+                        "high_confidence_single": {
+                            "selection": "主胜",
+                            "market": "胜平负",
+                            "odds": 1.8,
+                            "probability": probability,
+                            "ranking_probability": probability - 1,
+                            "model_market_gap_pp": 10,
+                            "market_direction_agreement": True,
+                            "qualified_before_daily_limit": True,
+                            "actionable_before_daily_limit": True,
+                            "policy_active": True,
+                            "policy_status": "active",
+                            "reason": "通过门禁",
+                        },
+                    },
+                },
+            })
+
+        summary = FAEDailyAIAnalyzer.attach_supervised_shadow_summary(
+            {}, matches
+        )["supervised_shadow"]
+
+        self.assertEqual(
+            [row["match_id"] for row in summary["high_confidence_single"]],
+            ["1", "2"],
+        )
+        self.assertEqual(
+            [row["daily_rank"] for row in summary["high_confidence_single"]],
+            [1, 2],
+        )
 
     def test_mines_time_stable_feature_combinations(self):
         rows = stable_pattern_examples()

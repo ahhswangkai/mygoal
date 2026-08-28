@@ -43,6 +43,7 @@ OFFICIAL_SINGLE_MIN_MODEL_MARKET_EDGE = -3.0
 OFFICIAL_SINGLE_MIN_VALUE_SCORE = 50.0
 OFFICIAL_SINGLE_MIN_BET_SCORE = 50.0
 OFFICIAL_SINGLE_MIN_MODEL_RATING = 2.5
+HIGH_CONFIDENCE_SINGLE_DAILY_LIMIT = 2
 
 TWO_OPTION_MIN_COVERAGE = 64.0
 TWO_OPTION_MIN_MARKET_CONFIDENCE = 65.0
@@ -118,6 +119,7 @@ DAILY_AI_COMPACT_ANALYSIS_FIELDS = (
     "historical_calibration",
     "two_option_recommendation",
     "official_bet_recommendation",
+    "high_confidence_single_recommendation",
     "draw_radar",
     "market_analysis",
     "evidence",
@@ -2308,8 +2310,11 @@ class FAEDailyAIAnalyzer:
         ))
         # Re-rank the complete retained + fresh slate so a one-match T-30 run
         # cannot make every previously analysed match look actionable.
-        combined = cls.apply_official_bet_recommendations(combined)
         combined = cls.apply_two_option_recommendations(combined)
+        combined = cls.apply_official_bet_recommendations(combined)
+        combined = cls.apply_high_confidence_single_recommendations(
+            combined
+        )
         result["matches"] = combined
         result["analyzed_match_count"] = len(fresh)
         result["retained_match_count"] = len(retained)
@@ -2705,10 +2710,13 @@ class FAEDailyAIAnalyzer:
         stored_matches = self.apply_draw_radar_recommendation_overrides(
             stored_matches
         )
+        stored_matches = self.apply_two_option_recommendations(stored_matches)
         stored_matches = self.apply_official_bet_recommendations(
             stored_matches
         )
-        stored_matches = self.apply_two_option_recommendations(stored_matches)
+        stored_matches = self.apply_high_confidence_single_recommendations(
+            stored_matches
+        )
         stored_matches = self.normalize_match_memory_governance(
             stored_matches, memory
         )
@@ -4539,7 +4547,161 @@ class FAEDailyAIAnalyzer:
             )
             analysis["two_option_recommendation"] = profile
             row["analysis"] = analysis
-        return rows
+        return [cls._align_single_with_two_option(row) for row in rows]
+
+    @classmethod
+    def _selection_margin_support(
+        cls,
+        source: Dict[str, Any],
+        selection: str,
+    ) -> set[int]:
+        """Return representative goal margins covered by a result option."""
+        margins = set(range(-20, 21))
+        if selection == "主胜":
+            return {value for value in margins if value > 0}
+        if selection == "平局":
+            return {0}
+        if selection == "客胜":
+            return {value for value in margins if value < 0}
+        if selection not in {"让胜", "让平", "让负"}:
+            return set()
+        handicap = _number(
+            (source.get("sporttery_handicap") or {}).get("value")
+        )
+        if handicap is None:
+            return set()
+        if selection == "让胜":
+            return {
+                value for value in margins if value + handicap > 0
+            }
+        if selection == "让平":
+            return {
+                value for value in margins if value + handicap == 0
+            }
+        return {value for value in margins if value + handicap < 0}
+
+    @classmethod
+    def _single_direction_matches_anchor(
+        cls,
+        source: Dict[str, Any],
+        anchor: str,
+        candidate: str,
+    ) -> bool:
+        """Whether two options express nested, rather than opposing, paths."""
+        anchor_support = cls._selection_margin_support(source, anchor)
+        candidate_support = cls._selection_margin_support(source, candidate)
+        if not anchor_support or not candidate_support:
+            return anchor == candidate
+        return bool(
+            anchor_support.issubset(candidate_support)
+            or candidate_support.issubset(anchor_support)
+        )
+
+    @classmethod
+    def _align_single_with_two_option(
+        cls,
+        item: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Cancel an independent single that opposes the pair's lead leg.
+
+        The pair still maximises same-market coverage.  Only the single is
+        constrained: a nested result in either market may remain, while an
+        opposing result is removed instead of being replaced by a weaker pick.
+        """
+        row = dict(item or {})
+        analysis = dict(row.get("analysis") or {})
+        profile = dict(analysis.get("single_probability_profile") or {})
+        pair = dict(analysis.get("two_option_recommendation") or {})
+        selections = [
+            str(value) for value in pair.get("selections") or []
+            if str(value) in TWO_OPTION_PLAY_SELECTIONS
+        ]
+        if not pair.get("actionable") or not selections or not profile:
+            row["analysis"] = analysis
+            return row
+
+        source = row.get("input_snapshot") or {}
+        anchor = selections[0]
+        current = str(
+            profile.get("selection") or analysis.get("single_play") or "观望"
+        )
+        independent = str(
+            profile.get("independent_selection") or current
+        )
+        candidates = [
+            dict(candidate) for candidate in profile.get("candidates") or []
+            if (
+                str(candidate.get("selection") or "")
+                in TWO_OPTION_PLAY_SELECTIONS
+                and float(candidate.get("odds") or 0) >= SINGLE_MIN_ODDS
+                and cls._single_direction_matches_anchor(
+                    source,
+                    anchor,
+                    str(candidate.get("selection") or ""),
+                )
+            )
+        ]
+        candidates.sort(
+            key=lambda candidate: (
+                float(candidate.get("probability") or 0),
+                float(candidate.get("market_probability") or 0),
+                -float(candidate.get("odds") or 99),
+            ),
+            reverse=True,
+        )
+        conflict = bool(
+            independent in TWO_OPTION_PLAY_SELECTIONS
+            and not cls._single_direction_matches_anchor(
+                source, anchor, independent
+            )
+        )
+        effective = "观望" if conflict else current
+        reason = (
+            f"双选保持{' / '.join(selections)}；原单选{independent}与"
+            f"双选主方向{anchor}冲突，取消该场单选且不强行替换"
+            if conflict else
+            f"双选保持{' / '.join(selections)}；单选{effective}与"
+            f"双选主方向{anchor}一致，继续保留"
+        )
+        profile.setdefault("independent_selection", independent)
+        profile["direction_alignment"] = {
+            "applied": True,
+            "changed": conflict,
+            "cancelled": conflict,
+            "policy": "conflict-veto",
+            "pair_selections": selections,
+            "anchor_selection": anchor,
+            "independent_selection": independent,
+            "effective_selection": effective,
+            "compatible_selections": [
+                candidate.get("selection") for candidate in candidates
+            ],
+            "reason": reason,
+        }
+        profile["reason"] = reason
+        if conflict:
+            profile.update({
+                "selection": "观望",
+                "secondary_selection": "观望",
+                "market": None,
+                "odds": None,
+                "secondary_odds": None,
+                "probability": None,
+                "secondary_probability": None,
+                "model_probability": None,
+                "market_probability": None,
+            })
+            analysis.update({
+                "single_play": "观望",
+                "single_secondary_play": "观望",
+                "single_odds": None,
+                "single_secondary_odds": None,
+                "single_probability": None,
+                "single_secondary_probability": None,
+            })
+        analysis["single_probability_profile"] = profile
+        row["analysis"] = analysis
+        return row
 
     @classmethod
     def _official_bet_profile(
@@ -4789,6 +4951,152 @@ class FAEDailyAIAnalyzer:
                     + f"；全日正式投注池仅保留前{OFFICIAL_SINGLE_DAILY_LIMIT}场"
                 ).strip("；")
             analysis["official_bet_recommendation"] = profile
+            row["analysis"] = analysis
+        return rows
+
+    @classmethod
+    def apply_high_confidence_single_recommendations(
+        cls,
+        matches: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """Publish only OOS-validated singles aligned with the Ark decision."""
+        rows = []
+        eligible = []
+        for index, item in enumerate(matches):
+            row = dict(item or {})
+            analysis = dict(row.get("analysis") or {})
+            shadow = (
+                (row.get("input_snapshot") or {}).get(
+                    "supervised_shadow"
+                ) or {}
+            )
+            shadow_profile = dict(
+                shadow.get("high_confidence_single") or {}
+            )
+            official = analysis.get("official_bet_recommendation") or {}
+            selection = str(official.get("selection") or "")
+            candidate = next((
+                dict(value)
+                for value in shadow_profile.get("candidates") or []
+                if str(value.get("selection") or "") == selection
+            ), {})
+            source_profile = {
+                **candidate,
+                "policy_active": shadow_profile.get("policy_active"),
+                "policy_status": shadow_profile.get("policy_status"),
+                "minimum_probability": shadow_profile.get(
+                    "minimum_probability"
+                ),
+                "minimum_gap_pp": shadow_profile.get("minimum_gap_pp"),
+                "minimum_odds": shadow_profile.get("minimum_odds"),
+                "maximum_odds": shadow_profile.get("maximum_odds"),
+            }
+            ai_selection = str(analysis.get("single_play") or "")
+            analysis_source = str(row.get("analysis_source") or "")
+            reasons = []
+            if not source_profile.get("policy_active"):
+                reasons.append("高命中单选仍在独立样本外验证")
+            probability = _number(source_profile.get("probability"))
+            minimum_probability = _number(
+                source_profile.get("minimum_probability")
+            ) or 58.0
+            gap = _number(source_profile.get("model_market_gap_pp"))
+            minimum_gap = _number(
+                source_profile.get("minimum_gap_pp")
+            )
+            if minimum_gap is None:
+                minimum_gap = 6.0
+            odds = _number(source_profile.get("odds"))
+            minimum_odds = _number(source_profile.get("minimum_odds")) or 1.5
+            maximum_odds = _number(source_profile.get("maximum_odds")) or 2.2
+            if probability is None or probability < minimum_probability:
+                reasons.append(
+                    f"候选命中概率低于{minimum_probability:g}%"
+                )
+            if gap is None or gap < minimum_gap:
+                reasons.append(
+                    f"候选领先优势低于{minimum_gap:g}个百分点"
+                )
+            if odds is None or not minimum_odds <= odds <= maximum_odds:
+                reasons.append(
+                    f"赔率不在{minimum_odds:g}-{maximum_odds:g}区间"
+                )
+            if int(source_profile.get("market_rank") or 99) != 1:
+                reasons.append("不是同市场赔率第一方向")
+            if not (shadow.get("quality") or {}).get("complete"):
+                reasons.append("欧赔、亚盘、竞彩让球或大小球数据不完整")
+            if analysis_source != "volcengine-ark":
+                reasons.append("本场不是火山大模型研判")
+            if selection not in TWO_OPTION_PLAY_SELECTIONS:
+                reasons.append("正式池没有形成可结算单选")
+            elif ai_selection != selection:
+                reasons.append(
+                    f"正式池{selection}与火山单选"
+                    f"{ai_selection or '观望'}不一致"
+                )
+            if not official.get("actionable"):
+                reasons.append("未通过现有正式池的价值与盘口可信度门槛")
+            direction = (
+                (analysis.get("single_probability_profile") or {}).get(
+                    "direction_alignment"
+                ) or {}
+            )
+            if direction.get("cancelled"):
+                reasons.append("单选与双选主方向冲突，已执行取消策略")
+            actionable = not reasons
+            profile = {
+                **source_profile,
+                "actionable": actionable,
+                "qualified_before_daily_limit": actionable,
+                "ai_selection": ai_selection or "观望",
+                "ai_verified": analysis_source == "volcengine-ark",
+                "analysis_source": analysis_source or "legacy",
+                "rank_score": round(
+                    float(source_profile.get("ranking_probability") or 0)
+                    + float(source_profile.get("model_market_gap_pp") or 0)
+                    * 0.25
+                    + max(
+                        -10.0,
+                        min(
+                            10.0,
+                            float(source_profile.get("value_edge") or 0),
+                        ),
+                    ) * 0.1,
+                    2,
+                ),
+                "reason": (
+                    "候选命中模型、市场方向与火山正式单选一致，且历史发布门禁已通过"
+                    if actionable else "；".join(dict.fromkeys(reasons))
+                ),
+            }
+            analysis["high_confidence_single_recommendation"] = profile
+            row["analysis"] = analysis
+            rows.append(row)
+            if actionable:
+                eligible.append((float(profile["rank_score"]), index))
+
+        selected_order = [
+            index for _, index in sorted(eligible, reverse=True)
+        ][:HIGH_CONFIDENCE_SINGLE_DAILY_LIMIT]
+        selected = set(selected_order)
+        rank_by_index = {
+            index: rank
+            for rank, index in enumerate(selected_order, start=1)
+        }
+        for index, row in enumerate(rows):
+            analysis = row["analysis"]
+            profile = dict(
+                analysis.get("high_confidence_single_recommendation") or {}
+            )
+            was_eligible = bool(profile.get("actionable"))
+            profile["actionable"] = index in selected
+            profile["daily_rank"] = rank_by_index.get(index)
+            if was_eligible and index not in selected:
+                profile["reason"] = (
+                    str(profile.get("reason") or "")
+                    + "；全日高命中单选只保留前2场"
+                ).strip("；")
+            analysis["high_confidence_single_recommendation"] = profile
             row["analysis"] = analysis
         return rows
 
@@ -7397,6 +7705,7 @@ class FAEDailyAIAnalyzer:
         """Expose supervised rankings without changing official selections."""
         result = dict(summary or {})
         groups = {"ordinary_draw": [], "handicap_draw": []}
+        high_confidence_candidates = []
         model_meta = {}
         for match in matches or []:
             shadow = (match.get("input_snapshot") or {}).get(
@@ -7473,6 +7782,52 @@ class FAEDailyAIAnalyzer:
                     "quality": shadow.get("quality") or {},
                     "actionable": False,
                 })
+            single = (
+                (match.get("analysis") or {}).get(
+                    "high_confidence_single_recommendation"
+                )
+                or shadow.get("high_confidence_single")
+                or {}
+            )
+            if single.get("selection") in TWO_OPTION_PLAY_SELECTIONS:
+                high_confidence_candidates.append({
+                    "match_id": str(match.get("match_id") or ""),
+                    "match_number": match.get("match_number"),
+                    "home_team": match.get("home_team"),
+                    "away_team": match.get("away_team"),
+                    "league": match.get("league"),
+                    "selection": single.get("selection"),
+                    "market": single.get("market"),
+                    "odds": single.get("odds"),
+                    "probability": single.get("probability"),
+                    "ranking_probability": single.get(
+                        "ranking_probability"
+                    ),
+                    "model_probability": single.get(
+                        "model_probability"
+                    ),
+                    "market_probability": single.get(
+                        "market_probability"
+                    ),
+                    "value_edge": single.get("value_edge"),
+                    "model_market_gap_pp": single.get(
+                        "model_market_gap_pp"
+                    ),
+                    "market_direction_agreement": single.get(
+                        "market_direction_agreement"
+                    ),
+                    "qualified_before_daily_limit": bool(
+                        single.get("qualified_before_daily_limit")
+                    ),
+                    "actionable_before_daily_limit": bool(
+                        single.get("actionable")
+                        or single.get("actionable_before_daily_limit")
+                    ),
+                    "policy_active": bool(single.get("policy_active")),
+                    "policy_status": single.get("policy_status"),
+                    "reason": single.get("reason"),
+                    "quality": shadow.get("quality") or {},
+                })
         for key in groups:
             groups[key] = sorted(
                 groups[key],
@@ -7482,6 +7837,26 @@ class FAEDailyAIAnalyzer:
                 ),
                 reverse=True,
             )[:3]
+
+        high_confidence_candidates.sort(
+            key=lambda item: (
+                bool(item.get("actionable_before_daily_limit")),
+                float(item.get("ranking_probability") or 0),
+                float(item.get("model_market_gap_pp") or 0),
+                float(item.get("value_edge") or -999),
+            ),
+            reverse=True,
+        )
+        high_confidence_single = []
+        for item in high_confidence_candidates:
+            if not item.get("actionable_before_daily_limit"):
+                continue
+            row = dict(item)
+            row["actionable"] = True
+            row["daily_rank"] = len(high_confidence_single) + 1
+            high_confidence_single.append(row)
+            if len(high_confidence_single) >= 2:
+                break
 
         combinations = []
         draw = groups["ordinary_draw"]
@@ -7521,10 +7896,19 @@ class FAEDailyAIAnalyzer:
             **model_meta,
             "ordinary_draw": groups["ordinary_draw"],
             "handicap_draw": groups["handicap_draw"],
+            "high_confidence_single": high_confidence_single,
+            "high_confidence_single_candidates": (
+                high_confidence_candidates[:5]
+            ),
+            "high_confidence_single_policy_status": (
+                high_confidence_candidates[0].get("policy_status")
+                if high_confidence_candidates else "shadow_only"
+            ),
             "combinations": combinations,
             "policy": (
-                "按不可变赛前快照训练并进行候选池概率收缩；当前仅影子"
-                "验证，不覆盖正式平/让平排行榜和投注组合。"
+                "按不可变赛前快照训练并进行候选池概率收缩；平/让平"
+                "继续影子验证，高命中单选只有通过独立验证集60%命中率"
+                "与非负ROI门禁后才展示。"
             ),
         }
         return result

@@ -1884,6 +1884,22 @@ def get_fae_daily_ai():
                 data.get('matches') or []
             )
         )
+        data['matches'] = (
+            fae_daily_ai_analyzer.apply_two_option_recommendations(
+                data.get('matches') or []
+            )
+        )
+        data['matches'] = (
+            fae_daily_ai_analyzer.apply_official_bet_recommendations(
+                data.get('matches') or []
+            )
+        )
+        data['matches'] = (
+            fae_daily_ai_analyzer
+            .apply_high_confidence_single_recommendations(
+                data.get('matches') or []
+            )
+        )
         data['daily_summary'] = (
             fae_daily_ai_analyzer.normalize_summary_pool_semantics(
                 data.get('daily_summary') or {},
@@ -2083,6 +2099,12 @@ def get_fae_daily_ai_match(match_id):
         rows = fae_daily_ai_analyzer.apply_draw_radar_recommendation_overrides(
             rows
         )
+        rows = fae_daily_ai_analyzer.apply_two_option_recommendations(rows)
+        rows = fae_daily_ai_analyzer.apply_official_bet_recommendations(rows)
+        rows = (
+            fae_daily_ai_analyzer
+            .apply_high_confidence_single_recommendations(rows)
+        )
         data = rows[0] if rows else data
     return jsonify({'success': True, 'data': data})
 
@@ -2176,7 +2198,8 @@ def _public_supervised_model(model):
         return None
     hidden = {
         'draw_weights', 'margin_weights', 'feature_means',
-        'feature_scales', 'league_priors',
+        'feature_scales', 'league_priors', 'single_meta_weights',
+        'single_meta_feature_means', 'single_meta_feature_scales',
     }
     return {
         key: value for key, value in dict(model).items()

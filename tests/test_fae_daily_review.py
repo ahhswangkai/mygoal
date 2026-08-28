@@ -399,6 +399,44 @@ class DailyAIReviewTests(unittest.TestCase):
         self.assertEqual(review["summary"]["official_bets"]["hits"], 1)
         self.assertEqual(review["summary"]["official_bets"]["roi"], 80.0)
 
+    def test_settles_published_high_confidence_single_pool(self):
+        pick = source("205", "平局", euro=(1.80, 3.50, 4.20))
+        snapshot = {
+            **self.snapshot,
+            "matches": [pick],
+            "daily_summary": {
+                "recommended_combinations": [],
+                "supervised_shadow": {
+                    "high_confidence_single": [{
+                        "match_id": "205",
+                        "selection": "主胜",
+                        "daily_rank": 1,
+                        "probability": 62,
+                        "model_probability": 64,
+                        "market_probability": 58,
+                        "model_market_gap_pp": 12,
+                        "value_edge": 11.6,
+                        "policy_status": "active",
+                        "reason": "通过独立验证门禁",
+                    }],
+                },
+            },
+        }
+        results = {
+            "205": {"status": 2, "home_score": 2, "away_score": 1},
+        }
+
+        review = FAEDailyAIReviewEngine().review(snapshot, results)
+
+        self.assertEqual(len(review["high_confidence_single_results"]), 1)
+        self.assertEqual(
+            review["high_confidence_single_results"][0]["status"], "hit"
+        )
+        self.assertEqual(
+            review["summary"]["high_confidence_singles"]["hit_rate"],
+            100.0,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

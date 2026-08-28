@@ -114,55 +114,6 @@
             </div>
           </div>
 
-          <section v-if="drawRadarGroups.length" class="draw-radar-panel">
-            <header>
-              <div>
-                <strong>平 / 让平概率排行榜</strong>
-                <small>只展示最关键候选，完整依据进详情页看</small>
-              </div>
-              <span>核心 / 小试</span>
-            </header>
-            <div class="draw-radar-groups">
-              <article v-for="group in drawRadarGroups" :key="group.key">
-                <div class="draw-radar-title">
-                  <strong>{{ group.title }}</strong>
-                  <small>Top {{ group.items.length }}</small>
-                </div>
-                <button
-                  v-for="(item, index) in group.items"
-                  :key="`${group.key}-${item.match_id}`"
-                  type="button"
-                  @click="goToDetail(item.match_id)"
-                >
-                  <i class="draw-radar-rank">{{ index + 1 }}</i>
-                  <span class="draw-radar-match">
-                    <b>{{ dailyMatch(item.match_id).match_number }}</b>
-                    <span>
-                      {{ dailyMatch(item.match_id).home_team }}
-                      vs
-                      {{ dailyMatch(item.match_id).away_team }}
-                    </span>
-                    <small>{{ shortRadarReason(item) }}</small>
-                  </span>
-                  <span class="draw-radar-decision">
-                    <i :class="item.tier">{{ radarTierLabel(item.tier) }}</i>
-                    <b>{{ starText(item.rating) }}</b>
-                  </span>
-                  <span class="draw-radar-metrics">
-                    <i>概率 {{ radarPercent(item.probability) }}</i>
-                    <i v-if="supervisedProbability(item.match_id, group.key) !== null" class="supervised-probability">
-                      影子 {{ radarPercent(supervisedProbability(item.match_id, group.key)) }}
-                    </i>
-                    <i>赔率 {{ item.odds ?? '--' }}</i>
-                    <i :class="metricClass(item.odds_value)">
-                      价值 {{ signedMetric(item.odds_value) }}%
-                    </i>
-                  </span>
-                </button>
-              </article>
-            </div>
-          </section>
-
           <section v-if="showModelPanels && upsetWarningItems.length" class="draw-radar-panel upset-warning-panel">
             <header>
               <div>
@@ -320,7 +271,7 @@
               :key="group.key"
               :class="{
                 'two-option-pool': group.key === 'two_option_core',
-                'official-single-pool': group.key === 'official_single'
+                'official-single-pool': ['official_single', 'high_confidence_single'].includes(group.key)
               }"
             >
               <h2>{{ group.title }}</h2>
@@ -338,6 +289,9 @@
                   <i v-if="item.role">{{ item.role }}</i>
                   <strong v-if="group.key === 'two_option_core'">{{ item.selection_text }}</strong>
                   <strong v-else-if="group.key === 'official_single'">
+                    {{ item.selection }}<template v-if="item.odds"> @{{ formatPickOdds(item.odds) }}</template>
+                  </strong>
+                  <strong v-else-if="group.key === 'high_confidence_single'">
                     {{ item.selection }}<template v-if="item.odds"> @{{ formatPickOdds(item.odds) }}</template>
                   </strong>
                   <strong v-else-if="item.rating">{{ starText(item.rating) }}</strong>
@@ -1280,6 +1234,7 @@ const supervisedShadow = computed(() => (
   faeDailyAi.value?.daily_summary?.supervised_shadow || {}
 ))
 const dailyPoolLabels = {
+  high_confidence_single: '高命中单选',
   official_single: '正式投注池',
   two_option_core: '双选核心',
   draw: '平局精选',
@@ -1287,6 +1242,7 @@ const dailyPoolLabels = {
 }
 const dailyPoolGroups = computed(() => {
   const source = faeDailyAi.value?.daily_summary?.pools || {}
+  const highConfidenceSingles = supervisedShadow.value?.high_confidence_single || []
   const pools = Object.fromEntries(
     Object.entries(source).map(([key, items]) => [
       key,
@@ -1295,6 +1251,9 @@ const dailyPoolGroups = computed(() => {
       ))
     ])
   )
+  pools.high_confidence_single = highConfidenceSingles.filter(item => (
+    isVisibleDailyMatch(dailyMatch(item.match_id))
+  ))
   return Object.entries(dailyPoolLabels)
     .map(([key, title]) => ({ key, title, items: pools[key] || [] }))
     .filter(group => group.items.length)
@@ -1310,69 +1269,6 @@ const shouldShowDailyMatchList = computed(() => (
 const dailyMatchMap = computed(() => Object.fromEntries(
   (faeDailyAi.value?.matches || []).map(item => [String(item.match_id), item])
 ))
-function radarCandidateStrength(item) {
-  return [
-    item?.tier === 'core' ? 1 : 0,
-    Number(item?.probability || 0),
-    Number(item?.score || 0),
-    Number(item?.odds_value ?? -999),
-    Number(item?.effective_sample || 0)
-  ]
-}
-function isStrongerRadarCandidate(left, right) {
-  const leftStrength = radarCandidateStrength(left)
-  const rightStrength = radarCandidateStrength(right)
-  for (let index = 0; index < leftStrength.length; index += 1) {
-    if (leftStrength[index] !== rightStrength[index]) {
-      return leftStrength[index] > rightStrength[index]
-    }
-  }
-  return false
-}
-const drawRadarGroups = computed(() => {
-  const radar = faeDailyAi.value?.daily_summary?.draw_radar || {}
-  const groups = [
-    {
-      key: 'ordinary_draw',
-      title: '最可能平局',
-      excluded: radar.excluded_count?.ordinary_draw || 0,
-      items: radar.ordinary_draw || []
-    },
-    {
-      key: 'handicap_draw',
-      title: '最可能让平',
-      excluded: radar.excluded_count?.handicap_draw || 0,
-      items: radar.handicap_draw || []
-    }
-  ]
-  const winnerByMatch = new Map()
-  groups.forEach(group => {
-    group.items.forEach(item => {
-      if (!isVisibleDailyMatch(dailyMatch(item.match_id))) return
-      const matchId = String(item.match_id)
-      const current = winnerByMatch.get(matchId)
-      if (!current || isStrongerRadarCandidate(item, current.item)) {
-        winnerByMatch.set(matchId, { key: group.key, item })
-      }
-    })
-  })
-  return groups.map(group => ({
-    ...group,
-    items: group.items.filter(item => (
-      isVisibleDailyMatch(dailyMatch(item.match_id)) &&
-      winnerByMatch.get(String(item.match_id))?.key === group.key
-    )).sort((left, right) => (
-      Number(right.probability || 0) - Number(left.probability || 0)
-    )).slice(0, 3)
-  })).filter(group => group.items.length)
-})
-
-function supervisedProbability(matchId, key) {
-  const rows = supervisedShadow.value?.[key] || []
-  const item = rows.find(row => String(row.match_id) === String(matchId))
-  const value = Number(item?.ranking_probability)
-  return Number.isFinite(value) ? value : null
-}
 const leagueModelGroups = computed(() => {
   const source = faeDailyAi.value?.daily_summary?.league_model_rankings || {}
   return [
