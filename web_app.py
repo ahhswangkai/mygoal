@@ -1570,6 +1570,31 @@ def _run_fae_supervised_training(requested_days=120, save=True):
         snapshot = mongo_storage.get_fae_daily_ai_snapshot(owner_date)
         if not snapshot:
             continue
+        # Older immutable runs predate the formal-single field. Reconstruct
+        # that decision exclusively from their frozen pre-match inputs before
+        # building labels, so the candidate meta-model can use the full
+        # history without copying any final-score information into features.
+        replay_matches = fae_daily_ai_analyzer.calibrate_daily_matches(
+            snapshot.get('matches') or []
+        )
+        replay_matches = fae_daily_ai_analyzer.apply_draw_radar(
+            replay_matches
+        )
+        replay_matches = (
+            fae_daily_ai_analyzer
+            .apply_draw_radar_recommendation_overrides(replay_matches)
+        )
+        replay_matches = (
+            fae_daily_ai_analyzer.apply_two_option_recommendations(
+                replay_matches
+            )
+        )
+        replay_matches = (
+            fae_daily_ai_analyzer.apply_official_bet_recommendations(
+                replay_matches
+            )
+        )
+        snapshot = {**snapshot, 'matches': replay_matches}
         match_ids = [
             str(item.get('match_id') or '')
             for item in snapshot.get('matches') or []
