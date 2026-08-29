@@ -637,6 +637,31 @@ class DailyAnalysisTests(unittest.TestCase):
         self.assertEqual(signal["sample"], 102)
         self.assertEqual(signal["hit_rate"], 38.2)
 
+    def test_minus_one_draw_band_does_not_require_small_rise(self):
+        source_match = match("204")
+        source_match.update({
+            "league": "测试联赛",
+            "hi_initial_home_odds": "2.20",
+            "hi_initial_draw_odds": "3.60",
+            "hi_initial_away_odds": "2.70",
+            "hi_current_home_odds": "2.15",
+            "hi_current_draw_odds": "3.53",
+            "hi_current_away_odds": "2.75",
+            "asian_initial_handicap": "半/一",
+            "asian_current_handicap": "半/一",
+        })
+        source = build_daily_match_input(source_match)
+
+        signal = FAEDailyAIAnalyzer._draw_odds_band_signal(
+            source, "让平", []
+        )
+
+        self.assertEqual(
+            signal["kind"], "backtested_hhad_minus1_draw_band"
+        )
+        self.assertEqual(signal["official_score_min"], 88.0)
+        self.assertIn("不再作为硬性", signal["note"])
+
     def test_unified_formula_kind_can_enter_formal_core(self):
         candidate = {
             "match_id": "205",
@@ -663,6 +688,34 @@ class DailyAnalysisTests(unittest.TestCase):
         self.assertEqual(
             FAEDailyAIAnalyzer._radar_official_level(candidate, row),
             "core",
+        )
+
+    def test_minus_one_draw_band_can_enter_formal_small_pool(self):
+        candidate = {
+            "match_id": "205",
+            "selection": "让平",
+            "tier": "core",
+            "rating": 4.0,
+            "score": 89,
+            "probability": 30,
+            "odds": 3.55,
+            "odds_value": 3.0,
+            "effective_sample": 1915,
+            "risk_pattern_ids": [],
+            "draw_odds_band_signal": {
+                "kind": "backtested_hhad_minus1_draw_band",
+                "official_score_min": 88,
+            },
+        }
+        row = {
+            "match_id": "205",
+            "analysis": {"market_confidence": {"score": 76}},
+            "input_snapshot": {},
+        }
+
+        self.assertEqual(
+            FAEDailyAIAnalyzer._radar_official_level(candidate, row),
+            "small",
         )
 
     def test_observation_radar_cannot_override_existing_formal_pick(self):

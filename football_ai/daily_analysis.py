@@ -356,7 +356,7 @@ LOW_ODDS_ASIAN_MODEL_VERSION = "low-odds-asian-hhad-v1"
 
 # 历史回测：让平不能靠“升盘高水/欧亚背离”单独升级。
 # 正向信号主要来自：联赛画像 + 竞彩让1球 + 热门胜赔区间 + 让平赔率区间。
-HANDICAP_DRAW_BACKTEST_VERSION = "handicap-draw-backtest-v3-unified-formula"
+HANDICAP_DRAW_BACKTEST_VERSION = "handicap-draw-backtest-v4-movement-soft-signal"
 HANDICAP_DRAW_PATH_MODEL_VERSION = "handicap-draw-path-v1"
 ORDINARY_DRAW_BACKTEST_VERSION = "ordinary-draw-backtest-v1"
 ORDINARY_DRAW_POSITIVE_LEAGUES = {
@@ -406,7 +406,9 @@ HANDICAP_DRAW_FORMAL_CORE_KINDS = {
     "backtested_hhad_plus1_low_odds_value",
     "backtested_hhad_small_rise_value",
 }
-HANDICAP_DRAW_FORMAL_SECONDARY_KINDS = set()
+HANDICAP_DRAW_FORMAL_SECONDARY_KINDS = {
+    "backtested_hhad_minus1_draw_band",
+}
 HANDICAP_DRAW_FORMAL_KINDS = (
     HANDICAP_DRAW_FORMAL_CORE_KINDS
     | HANDICAP_DRAW_FORMAL_SECONDARY_KINDS
@@ -6789,6 +6791,35 @@ class FAEDailyAIAnalyzer:
                         + (f"；{path_note}" if path_note else "")
                     ),
                 }
+            if (
+                favorite_matches_one_goal
+                and handicap == -1
+                and handicap_draw_odds is not None
+                and 3.20 <= handicap_draw_odds < 3.80
+            ):
+                movement_text = (
+                    f"{handicap_draw_change:+.2f}"
+                    if handicap_draw_change is not None else "缺失"
+                )
+                return {
+                    "kind": "backtested_hhad_minus1_draw_band",
+                    "role": "主让1球一球差区间",
+                    "score_bonus": 12.0,
+                    "official_score_min": 88.0,
+                    "backtest_version": HANDICAP_DRAW_BACKTEST_VERSION,
+                    "sample": 1915,
+                    "hit_rate": 26.7,
+                    "market_probability": 24.9,
+                    "roi": -5.5,
+                    "note": (
+                        f"竞彩主队-1且让平即时赔率{handicap_draw_odds:g}，"
+                        f"初即时变化{movement_text}；赔率变化不再作为硬性"
+                        "准入条件，持平或下降也可继续由模型概率、赔率价值、"
+                        "亚盘水位与风险门槛综合判断。小升0.03-0.09仍作为"
+                        "额外正向加分"
+                        + (f"；{path_note}" if path_note else "")
+                    ),
+                }
             return {}
 
         if selection == "平局":
@@ -8133,6 +8164,7 @@ class FAEDailyAIAnalyzer:
             "backtested_league_handicap_draw_secondary": 4.0,
             "backtested_hhad_plus1_low_odds_value": 10.0,
             "backtested_hhad_small_rise_value": 10.0,
+            "backtested_hhad_minus1_draw_band": 4.0,
         }.get(str(draw_band.get("kind") or ""), 0.0)
         return round(
             score + probability * 0.5 + value_component + core_bonus
@@ -8205,6 +8237,7 @@ class FAEDailyAIAnalyzer:
                 draw_band.get("kind") == "backtested_league_handicap_draw_value",
                 draw_band.get("kind") == "backtested_hhad_plus1_low_odds_value",
                 draw_band.get("kind") == "backtested_hhad_small_rise_value",
+                draw_band.get("kind") == "backtested_hhad_minus1_draw_band",
                 draw_band.get("kind") == "backtested_league_one_goal_secondary",
                 draw_band.get("kind") == "backtested_league_handicap_draw_secondary",
                 candidate.get("radar_official_level") == "core",
