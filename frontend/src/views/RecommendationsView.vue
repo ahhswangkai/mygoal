@@ -301,6 +301,54 @@
             <p>观察首选只表示同类候选中排名第一；未通过正式门槛时不自动进入串关。</p>
           </section>
 
+          <section v-if="drawRadarParlay" class="draw-radar-parlay">
+            <header>
+              <div>
+                <strong>今日平 / 让平 2、3关</strong>
+                <small>平局榜首 + 两场不重复的让平榜首</small>
+              </div>
+              <span>雷达观察组合</span>
+            </header>
+            <div class="draw-radar-parlay-picks">
+              <button
+                v-for="(pick, index) in drawRadarParlay.picks"
+                :key="`draw-radar-parlay-${pick.market}-${pick.match_id}`"
+                type="button"
+                @click="goToDetail(pick.match_id)"
+              >
+                <i>{{ index + 1 }}</i>
+                <span>
+                  <b>{{ dailyMatch(pick.match_id).match_number }}</b>
+                  <small>
+                    {{ dailyMatch(pick.match_id).home_team }} vs
+                    {{ dailyMatch(pick.match_id).away_team }}
+                  </small>
+                </span>
+                <strong>
+                  {{ pick.selection }}
+                  <em>@{{ formatPickOdds(pick.odds) }}</em>
+                </strong>
+              </button>
+            </div>
+            <div class="draw-radar-parlay-lines">
+              <span v-for="line in drawRadarParlay.lines" :key="line.key">
+                {{ line.label }}
+                <b>{{ line.odds }}倍</b>
+              </span>
+            </div>
+            <footer>
+              <span>
+                <strong>3场2、3关 · 共4注</strong>
+                <small>1倍8元 · 20倍160元</small>
+              </span>
+              <span>
+                <strong>至少2中约 {{ drawRadarParlay.coverageProbability }}%</strong>
+                <small>按当前未校准模型概率独立估算</small>
+              </span>
+            </footer>
+            <p>该卡仅组合当日雷达首选，不等同于正式核心，也不代表保证盈利。</p>
+          </section>
+
           <div v-if="dailyPoolGroups.length" class="daily-pools">
             <section
               v-for="group in dailyPoolGroups"
@@ -1317,6 +1365,72 @@ const drawRadarSpotlights = computed(() => {
     ))
     return item ? { ...item, ...group } : null
   }).filter(Boolean)
+})
+const drawRadarParlay = computed(() => {
+  const radar = faeDailyAi.value?.daily_summary?.draw_radar || {}
+  const visibleCandidates = key => (radar[key] || []).filter(candidate => (
+    candidate?.match_id
+    && Number.isFinite(Number(candidate.odds))
+    && isVisibleDailyMatch(dailyMatch(candidate.match_id))
+  ))
+  const ordinaryCandidates = visibleCandidates('ordinary_draw')
+  const handicapCandidates = visibleCandidates('handicap_draw')
+  const picks = []
+  const matchIds = new Set()
+  const addPick = (candidate, market) => {
+    const matchId = String(candidate?.match_id || '')
+    if (!matchId || matchIds.has(matchId)) return false
+    picks.push({ ...candidate, market })
+    matchIds.add(matchId)
+    return true
+  }
+
+  addPick(ordinaryCandidates[0], 'ordinary_draw')
+  for (const candidate of handicapCandidates) {
+    if (picks.length >= 3) break
+    addPick(candidate, 'handicap_draw')
+  }
+  if (picks.length < 3) return null
+
+  picks.sort((left, right) => String(
+    dailyMatch(left.match_id).match_time || ''
+  ).localeCompare(String(
+    dailyMatch(right.match_id).match_time || ''
+  )))
+
+  const pairIndexes = [[0, 1], [0, 2], [1, 2]]
+  const lines = pairIndexes.map(([leftIndex, rightIndex]) => {
+    const left = picks[leftIndex]
+    const right = picks[rightIndex]
+    return {
+      key: `${left.match_id}-${right.match_id}`,
+      label: `${dailyMatch(left.match_id).match_number} × ${dailyMatch(right.match_id).match_number}`,
+      odds: (Number(left.odds) * Number(right.odds)).toFixed(2)
+    }
+  })
+  const tripleOdds = picks.reduce((total, pick) => total * Number(pick.odds), 1)
+  lines.push({
+    key: picks.map(pick => pick.match_id).join('-'),
+    label: '三串一',
+    odds: tripleOdds.toFixed(2)
+  })
+
+  const probabilities = picks.map(pick => Number(pick.probability || 0) / 100)
+  const tripleProbability = probabilities.reduce((total, probability) => (
+    total * probability
+  ), 1)
+  const pairProbability = pairIndexes.reduce((total, [leftIndex, rightIndex]) => (
+    total + probabilities[leftIndex] * probabilities[rightIndex]
+  ), 0)
+
+  return {
+    picks,
+    lines,
+    coverageProbability: Math.max(
+      0,
+      (pairProbability - 2 * tripleProbability) * 100
+    ).toFixed(1)
+  }
 })
 const leagueModelGroups = computed(() => {
   const source = faeDailyAi.value?.daily_summary?.league_model_rankings || {}
@@ -2779,6 +2893,184 @@ onBeforeUnmount(() => {
   padding: 0 10px 9px;
   color: #a09aa0;
   font-size: 9px;
+  line-height: 1.4;
+}
+
+.draw-radar-parlay {
+  margin: 0 10px 10px;
+  overflow: hidden;
+  background: #fff;
+  border: 1px solid #f0d9df;
+  border-radius: 10px;
+  box-shadow: 0 5px 16px rgb(212 70 96 / 6%);
+}
+
+.draw-radar-parlay > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px;
+  background: linear-gradient(135deg, #fff4f7, #fffafa);
+  border-bottom: 1px solid #f3e3e7;
+}
+
+.draw-radar-parlay > header strong,
+.draw-radar-parlay > header small {
+  display: block;
+}
+
+.draw-radar-parlay > header strong {
+  color: #30343b;
+  font-size: 13px;
+}
+
+.draw-radar-parlay > header small {
+  margin-top: 2px;
+  color: #938d94;
+  font-size: 9px;
+}
+
+.draw-radar-parlay > header > span {
+  flex: 0 0 auto;
+  padding: 3px 6px;
+  color: #c12d4b;
+  font-size: 9px;
+  background: #ffe8ee;
+  border-radius: 10px;
+}
+
+.draw-radar-parlay-picks {
+  padding: 2px 10px;
+}
+
+.draw-radar-parlay-picks button {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  width: 100%;
+  padding: 9px 0;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px dashed #eee2e5;
+}
+
+.draw-radar-parlay-picks button:last-child {
+  border-bottom: 0;
+}
+
+.draw-radar-parlay-picks button > i {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  color: #e53955;
+  font-size: 10px;
+  font-style: normal;
+  background: #fff0f3;
+  border: 1px solid #ffd8e0;
+  border-radius: 50%;
+}
+
+.draw-radar-parlay-picks button > span {
+  min-width: 0;
+}
+
+.draw-radar-parlay-picks button b,
+.draw-radar-parlay-picks button small {
+  display: block;
+}
+
+.draw-radar-parlay-picks button b {
+  color: #343841;
+  font-size: 11px;
+}
+
+.draw-radar-parlay-picks button small {
+  margin-top: 2px;
+  overflow: hidden;
+  color: #88838a;
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.draw-radar-parlay-picks button > strong {
+  color: #e53955;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.draw-radar-parlay-picks button > strong em {
+  color: #a17a82;
+  font-size: 9px;
+  font-style: normal;
+}
+
+.draw-radar-parlay-lines {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 5px;
+  padding: 8px 10px;
+  background: #fbf8f9;
+  border-top: 1px solid #f1e8ea;
+}
+
+.draw-radar-parlay-lines span {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  min-width: 0;
+  padding: 5px 6px;
+  color: #777179;
+  font-size: 9px;
+  background: #fff;
+  border: 1px solid #eee4e7;
+  border-radius: 6px;
+}
+
+.draw-radar-parlay-lines b {
+  color: #d93051;
+  white-space: nowrap;
+}
+
+.draw-radar-parlay > footer {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  padding: 9px 10px;
+  border-top: 1px solid #f1e8ea;
+}
+
+.draw-radar-parlay > footer span {
+  min-width: 0;
+}
+
+.draw-radar-parlay > footer strong,
+.draw-radar-parlay > footer small {
+  display: block;
+}
+
+.draw-radar-parlay > footer strong {
+  color: #3a3d44;
+  font-size: 10px;
+}
+
+.draw-radar-parlay > footer small {
+  margin-top: 2px;
+  color: #999299;
+  font-size: 8px;
+  line-height: 1.35;
+}
+
+.draw-radar-parlay > p {
+  margin: 0;
+  padding: 0 10px 9px;
+  color: #a09aa0;
+  font-size: 8px;
   line-height: 1.4;
 }
 
