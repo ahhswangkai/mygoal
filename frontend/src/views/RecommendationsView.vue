@@ -265,6 +265,42 @@
             <p>{{ faeDailyAi.daily_summary?.league_model_rankings?.policy }}</p>
           </section>
 
+          <section v-if="drawRadarSpotlights.length" class="draw-radar-spotlights">
+            <header>
+              <div>
+                <strong>今日平 / 让平首选</strong>
+                <small>每天各取雷达排名最高且尚未开赛的一场</small>
+              </div>
+              <span>观察与正式分层展示</span>
+            </header>
+            <div>
+              <button
+                v-for="item in drawRadarSpotlights"
+                :key="`radar-spotlight-${item.key}-${item.match_id}`"
+                type="button"
+                @click="goToDetail(item.match_id)"
+              >
+                <span class="radar-spotlight-heading">
+                  <i :class="item.tier">{{ item.title }}</i>
+                  <em>{{ item.formal_eligible ? radarTierLabel(item.tier) : '观察首选' }}</em>
+                </span>
+                <strong>
+                  {{ dailyMatch(item.match_id).match_number }}
+                  {{ dailyMatch(item.match_id).home_team }} vs
+                  {{ dailyMatch(item.match_id).away_team }}
+                </strong>
+                <span class="radar-spotlight-metrics">
+                  <b>{{ item.selection }}</b>
+                  <i>概率 {{ radarPercent(item.probability) }}</i>
+                  <i>赔率 {{ formatPickOdds(item.odds) || '--' }}</i>
+                  <i>雷达 {{ item.score ?? '--' }}分</i>
+                </span>
+                <small>{{ shortRadarReason(item) }}</small>
+              </button>
+            </div>
+            <p>观察首选只表示同类候选中排名第一；未通过正式门槛时不自动进入串关。</p>
+          </section>
+
           <div v-if="dailyPoolGroups.length" class="daily-pools">
             <section
               v-for="group in dailyPoolGroups"
@@ -1269,6 +1305,19 @@ const shouldShowDailyMatchList = computed(() => (
 const dailyMatchMap = computed(() => Object.fromEntries(
   (faeDailyAi.value?.matches || []).map(item => [String(item.match_id), item])
 ))
+const drawRadarSpotlights = computed(() => {
+  const radar = faeDailyAi.value?.daily_summary?.draw_radar || {}
+  return [
+    { key: 'ordinary_draw', title: '平局首选' },
+    { key: 'handicap_draw', title: '让平首选' }
+  ].map(group => {
+    const item = (radar[group.key] || []).find(candidate => (
+      candidate?.match_id
+      && isVisibleDailyMatch(dailyMatch(candidate.match_id))
+    ))
+    return item ? { ...item, ...group } : null
+  }).filter(Boolean)
+})
 const leagueModelGroups = computed(() => {
   const source = faeDailyAi.value?.daily_summary?.league_model_rankings || {}
   return [
@@ -2590,6 +2639,142 @@ onBeforeUnmount(() => {
 }
 
 .draw-radar-panel > p {
+  margin: 0;
+  padding: 0 10px 9px;
+  color: #a09aa0;
+  font-size: 9px;
+  line-height: 1.4;
+}
+
+.draw-radar-spotlights {
+  margin: 0 10px 10px;
+  overflow: hidden;
+  background: linear-gradient(145deg, #fff8fa, #fff);
+  border: 1px solid #efdce1;
+  border-radius: 10px;
+}
+
+.draw-radar-spotlights > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 9px 10px;
+  border-bottom: 1px solid #f2e6e9;
+}
+
+.draw-radar-spotlights > header strong,
+.draw-radar-spotlights > header small {
+  display: block;
+}
+
+.draw-radar-spotlights > header strong {
+  color: #30343b;
+  font-size: 13px;
+}
+
+.draw-radar-spotlights > header small,
+.draw-radar-spotlights > header > span {
+  margin-top: 2px;
+  color: #9992a1;
+  font-size: 9px;
+}
+
+.draw-radar-spotlights > header > span {
+  flex: 0 0 auto;
+  color: #a16b22;
+}
+
+.draw-radar-spotlights > div {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  padding: 9px;
+}
+
+.draw-radar-spotlights button {
+  min-width: 0;
+  padding: 9px;
+  text-align: left;
+  background: #fff;
+  border: 1px solid #eee4e7;
+  border-radius: 8px;
+}
+
+.radar-spotlight-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.radar-spotlight-heading i,
+.radar-spotlight-heading em {
+  padding: 2px 5px;
+  font-size: 9px;
+  font-style: normal;
+  border-radius: 5px;
+}
+
+.radar-spotlight-heading i {
+  color: #e53955;
+  background: #fff0f3;
+}
+
+.radar-spotlight-heading i.core {
+  color: #fff;
+  background: #e53955;
+}
+
+.radar-spotlight-heading em {
+  color: #9d6a20;
+  background: #fff4db;
+}
+
+.draw-radar-spotlights button > strong {
+  display: block;
+  margin-top: 7px;
+  overflow: hidden;
+  color: #343841;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.radar-spotlight-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px 7px;
+  margin-top: 6px;
+}
+
+.radar-spotlight-metrics b,
+.radar-spotlight-metrics i {
+  font-size: 9px;
+  font-style: normal;
+}
+
+.radar-spotlight-metrics b {
+  color: #e53955;
+}
+
+.radar-spotlight-metrics i {
+  color: #777;
+}
+
+.draw-radar-spotlights button > small {
+  display: -webkit-box;
+  min-height: 26px;
+  margin-top: 6px;
+  overflow: hidden;
+  color: #918990;
+  font-size: 9px;
+  line-height: 1.45;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.draw-radar-spotlights > p {
   margin: 0;
   padding: 0 10px 9px;
   color: #a09aa0;
