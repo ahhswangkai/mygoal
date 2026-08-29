@@ -301,6 +301,45 @@
             <p>观察首选只表示同类候选中排名第一；未通过正式门槛时不自动进入串关。</p>
           </section>
 
+          <section v-if="targetOddsParlay" class="target-odds-parlay">
+            <header>
+              <div>
+                <strong>3.0赔率二串一</strong>
+                <small>从全部正式单选中选择，不限定平局或让平</small>
+              </div>
+              <span>总赔率 {{ targetOddsParlay.combinedOdds }}倍</span>
+            </header>
+            <div>
+              <button
+                v-for="(pick, index) in targetOddsParlay.picks"
+                :key="`target-odds-parlay-${pick.match_id}`"
+                type="button"
+                @click="goToDetail(pick.match_id)"
+              >
+                <i>{{ index + 1 }}</i>
+                <span>
+                  <b>{{ dailyMatch(pick.match_id).match_number }} {{ pick.selection }}</b>
+                  <small>
+                    {{ dailyMatch(pick.match_id).home_team }} vs
+                    {{ dailyMatch(pick.match_id).away_team }}
+                  </small>
+                </span>
+                <strong>@{{ formatPickOdds(pick.odds) }}</strong>
+              </button>
+            </div>
+            <footer>
+              <span>
+                <strong>二串一 · 共1注</strong>
+                <small>1倍2元 · 20倍40元</small>
+              </span>
+              <span>
+                <strong>估算双中 {{ targetOddsParlay.probability }}%</strong>
+                <small>两项盘口可信度均不低于70分</small>
+              </span>
+            </footer>
+            <p>仅在两项单选赔率均≥1.50且组合赔率位于2.70–3.30时展示，并优先选择联合概率较高的组合。</p>
+          </section>
+
           <section v-if="drawRadarParlay" class="draw-radar-parlay">
             <header>
               <div>
@@ -1353,6 +1392,48 @@ const shouldShowDailyMatchList = computed(() => (
 const dailyMatchMap = computed(() => Object.fromEntries(
   (faeDailyAi.value?.matches || []).map(item => [String(item.match_id), item])
 ))
+const targetOddsParlay = computed(() => {
+  const candidates = (
+    faeDailyAi.value?.daily_summary?.pools?.official_single || []
+  ).filter(item => (
+    item?.match_id
+    && Number(item.odds) >= 1.5
+    && Number(item.probability) > 0
+    && Number(item.market_confidence) >= 70
+    && isVisibleDailyMatch(dailyMatch(item.match_id))
+  ))
+  const pairs = []
+  for (let leftIndex = 0; leftIndex < candidates.length; leftIndex += 1) {
+    for (let rightIndex = leftIndex + 1; rightIndex < candidates.length; rightIndex += 1) {
+      const picks = [candidates[leftIndex], candidates[rightIndex]]
+      const combinedOdds = Number(picks[0].odds) * Number(picks[1].odds)
+      if (combinedOdds < 2.7 || combinedOdds > 3.3) continue
+      pairs.push({
+        picks,
+        combinedOdds,
+        probability: (
+          Number(picks[0].probability) * Number(picks[1].probability) / 100
+        ),
+        distance: Math.abs(combinedOdds - 3)
+      })
+    }
+  }
+  pairs.sort((left, right) => (
+    right.probability - left.probability
+    || left.distance - right.distance
+  ))
+  const selected = pairs[0]
+  if (!selected) return null
+  return {
+    picks: [...selected.picks].sort((left, right) => String(
+      dailyMatch(left.match_id).match_time || ''
+    ).localeCompare(String(
+      dailyMatch(right.match_id).match_time || ''
+    ))),
+    combinedOdds: selected.combinedOdds.toFixed(2),
+    probability: selected.probability.toFixed(1)
+  }
+})
 const drawRadarSpotlights = computed(() => {
   const radar = faeDailyAi.value?.daily_summary?.draw_radar || {}
   return [
@@ -2893,6 +2974,153 @@ onBeforeUnmount(() => {
   padding: 0 10px 9px;
   color: #a09aa0;
   font-size: 9px;
+  line-height: 1.4;
+}
+
+.target-odds-parlay {
+  margin: 0 10px 10px;
+  overflow: hidden;
+  background: linear-gradient(145deg, #fffaf0, #fff);
+  border: 1px solid #efdfbf;
+  border-radius: 10px;
+  box-shadow: 0 5px 16px rgb(163 115 42 / 7%);
+}
+
+.target-odds-parlay > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px;
+  background: linear-gradient(135deg, #fff4d9, #fffaf0);
+  border-bottom: 1px solid #f0dfbd;
+}
+
+.target-odds-parlay > header strong,
+.target-odds-parlay > header small {
+  display: block;
+}
+
+.target-odds-parlay > header strong {
+  color: #3c3933;
+  font-size: 13px;
+}
+
+.target-odds-parlay > header small {
+  margin-top: 2px;
+  color: #95866d;
+  font-size: 9px;
+}
+
+.target-odds-parlay > header > span {
+  flex: 0 0 auto;
+  padding: 4px 7px;
+  color: #b36c19;
+  font-size: 9px;
+  font-weight: 700;
+  background: #fff;
+  border: 1px solid #ead5aa;
+  border-radius: 12px;
+}
+
+.target-odds-parlay > div {
+  padding: 2px 10px;
+}
+
+.target-odds-parlay button {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  width: 100%;
+  padding: 10px 0;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px dashed #eee1c9;
+}
+
+.target-odds-parlay button:last-child {
+  border-bottom: 0;
+}
+
+.target-odds-parlay button > i {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  color: #a76a23;
+  font-size: 10px;
+  font-style: normal;
+  background: #fff5df;
+  border: 1px solid #ead3a7;
+  border-radius: 50%;
+}
+
+.target-odds-parlay button > span {
+  min-width: 0;
+}
+
+.target-odds-parlay button b,
+.target-odds-parlay button small {
+  display: block;
+}
+
+.target-odds-parlay button b {
+  color: #33373e;
+  font-size: 11px;
+}
+
+.target-odds-parlay button small {
+  margin-top: 2px;
+  overflow: hidden;
+  color: #8c8780;
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.target-odds-parlay button > strong {
+  color: #df3c59;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.target-odds-parlay > footer {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  padding: 9px 10px;
+  background: #fffcf7;
+  border-top: 1px solid #f0e4ce;
+}
+
+.target-odds-parlay > footer span {
+  min-width: 0;
+}
+
+.target-odds-parlay > footer strong,
+.target-odds-parlay > footer small {
+  display: block;
+}
+
+.target-odds-parlay > footer strong {
+  color: #3d3b37;
+  font-size: 10px;
+}
+
+.target-odds-parlay > footer small {
+  margin-top: 2px;
+  color: #9a9286;
+  font-size: 8px;
+  line-height: 1.35;
+}
+
+.target-odds-parlay > p {
+  margin: 0;
+  padding: 0 10px 9px;
+  color: #a09a91;
+  font-size: 8px;
   line-height: 1.4;
 }
 
