@@ -1040,6 +1040,7 @@ class MongoDBStorage:
                     'analysis.bet_score': 1,
                     'analysis.decision': 1,
                     'analysis.historical_calibration': 1,
+                    'analysis.two_option_recommendation': 1,
                     'analysis.draw_radar': 1,
                     'analysis.market_analysis': 1,
                     'analysis.evidence': 1,

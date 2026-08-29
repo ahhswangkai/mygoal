@@ -308,10 +308,10 @@
           >
             <header>
               <div>
-                <strong>{{ group.title }}3.0赔率二串一</strong>
-                <small>{{ group.description }}，从全部正式单选中选择</small>
+                <strong>{{ group.title }}受让方二串一</strong>
+                <small>{{ group.description }}，从双选覆盖中按模型排名取前二</small>
               </div>
-              <span v-if="group.parlay">总赔率 {{ group.parlay.combinedOdds }}倍</span>
+              <span v-if="group.parlay">合计赔率 {{ group.parlay.combinedOdds }}倍</span>
               <span v-else>暂无组合</span>
             </header>
             <div v-if="group.parlay">
@@ -323,17 +323,20 @@
               >
                 <i>{{ index + 1 }}</i>
                 <span>
-                  <b>{{ dailyMatch(pick.match_id).match_number }} {{ pick.selection }}</b>
+                  <b>{{ dailyMatch(pick.match_id).match_number }} {{ pick.displaySelection }}</b>
                   <small>
                     {{ dailyMatch(pick.match_id).home_team }} vs
                     {{ dailyMatch(pick.match_id).away_team }}
                   </small>
                 </span>
-                <strong>@{{ formatPickOdds(pick.odds) }}</strong>
+                <strong>
+                  @{{ formatPickOdds(pick.odds) }}
+                  <small>模型 {{ pick.rankScore }}分</small>
+                </strong>
               </button>
             </div>
             <div v-else class="target-odds-parlay-empty">
-              该时段正式单选不足两场，或没有总赔率位于2.70–3.30的组合
+              该时段双选覆盖中不足两场受让方候选
             </div>
             <footer v-if="group.parlay">
               <span>
@@ -341,11 +344,11 @@
                 <small>1倍2元 · 20倍40元</small>
               </span>
               <span>
-                <strong>估算双中 {{ group.parlay.probability }}%</strong>
-                <small>两项盘口可信度均不低于70分</small>
+                <strong>模型排名前二</strong>
+                <small>允许让负 + 让负等同类组合</small>
               </span>
             </footer>
-            <p>仅在两项单选赔率均≥1.50且组合赔率位于2.70–3.30时展示，并优先选择联合概率较高的组合。</p>
+            <p>只选双选覆盖中明确包含让负或受让胜的比赛；按双选模型分排序，不再为了凑3.0赔率改变选场。</p>
           </section>
 
           <section v-if="drawRadarParlay" class="draw-radar-parlay">
@@ -1400,37 +1403,55 @@ const shouldShowDailyMatchList = computed(() => (
 const dailyMatchMap = computed(() => Object.fromEntries(
   (faeDailyAi.value?.matches || []).map(item => [String(item.match_id), item])
 ))
-function selectTargetOddsParlay(candidates) {
-  const pairs = []
-  for (let leftIndex = 0; leftIndex < candidates.length; leftIndex += 1) {
-    for (let rightIndex = leftIndex + 1; rightIndex < candidates.length; rightIndex += 1) {
-      const picks = [candidates[leftIndex], candidates[rightIndex]]
-      const combinedOdds = Number(picks[0].odds) * Number(picks[1].odds)
-      if (combinedOdds < 2.7 || combinedOdds > 3.3) continue
-      pairs.push({
-        picks,
-        combinedOdds,
-        probability: (
-          Number(picks[0].probability) * Number(picks[1].probability) / 100
-        ),
-        distance: Math.abs(combinedOdds - 3)
-      })
-    }
-  }
-  pairs.sort((left, right) => (
-    right.probability - left.probability
-    || left.distance - right.distance
-  ))
-  const selected = pairs[0]
-  if (!selected) return null
+function selectTopRankedReceivingParlay(candidates) {
+  const selected = [...candidates]
+    .sort((left, right) => (
+      Number(right.rankScore) - Number(left.rankScore)
+      || Number(right.coverageScore) - Number(left.coverageScore)
+      || String(dailyMatch(left.match_id).match_time || '').localeCompare(
+        String(dailyMatch(right.match_id).match_time || '')
+      )
+    ))
+    .slice(0, 2)
+  if (selected.length < 2) return null
   return {
-    picks: [...selected.picks].sort((left, right) => String(
+    picks: selected.sort((left, right) => String(
       dailyMatch(left.match_id).match_time || ''
     ).localeCompare(String(
       dailyMatch(right.match_id).match_time || ''
     ))),
-    combinedOdds: selected.combinedOdds.toFixed(2),
-    probability: selected.probability.toFixed(1)
+    combinedOdds: (
+      Number(selected[0].odds) * Number(selected[1].odds)
+    ).toFixed(2)
+  }
+}
+
+function receivingTwoOptionCandidate(item) {
+  const profile = item?.analysis?.two_option_recommendation || {}
+  const handicap = Number(item?.input_snapshot?.sporttery_handicap?.value)
+  if (
+    profile.market !== '竞彩让球'
+    || !Number.isFinite(handicap)
+    || handicap === 0
+  ) return null
+  const selection = handicap < 0 ? '让负' : '让胜'
+  if (!(profile.selections || []).includes(selection)) return null
+  const currentOdds = item?.input_snapshot?.sporttery_handicap?.current || []
+  const fallbackOdds = selection === '让负' ? currentOdds[2] : currentOdds[0]
+  const odds = Number(profile.odds?.[selection] ?? fallbackOdds)
+  const rankScore = Number(profile.rank_score)
+  if (
+    !Number.isFinite(odds)
+    || odds <= 1
+    || !Number.isFinite(rankScore)
+  ) return null
+  return {
+    match_id: item.match_id,
+    selection,
+    displaySelection: `${selection}(${handicap > 0 ? '+' : ''}${handicap})`,
+    odds,
+    rankScore,
+    coverageScore: Number(profile.coverage_score || 0)
   }
 }
 
@@ -1478,25 +1499,21 @@ function matchStartOffsetMinutes(matchId) {
 }
 
 const targetOddsParlayGroups = computed(() => {
-  const candidates = (
-    faeDailyAi.value?.daily_summary?.pools?.official_single || []
-  ).filter(item => (
-    item?.match_id
-    && Number(item.odds) >= 1.5
-    && Number(item.probability) > 0
-    && Number(item.market_confidence) >= 70
-    && isVisibleDailyMatch(dailyMatch(item.match_id))
-  ))
+  const candidates = (faeDailyAi.value?.matches || [])
+    .filter(item => (
+      item?.match_id && isVisibleDailyMatch(item)
+    ))
+    .map(receivingTwoOptionCandidate)
+    .filter(Boolean)
   const selectedDay = new Date(`${selectedDate.value}T00:00:00`).getDay()
   const isWeekend = selectedDay === 0 || selectedDay === 6
   if (!isWeekend) {
-    const parlay = selectTargetOddsParlay(candidates)
-    return parlay ? [{
+    return [{
       key: 'all-day',
       title: '',
-      description: '不限定平局或让平',
-      parlay
-    }] : []
+      description: '全日候选统一排序',
+      parlay: selectTopRankedReceivingParlay(candidates)
+    }]
   }
   return [
     {
@@ -1519,7 +1536,7 @@ const targetOddsParlayGroups = computed(() => {
     }
   ].map(group => ({
     ...group,
-    parlay: selectTargetOddsParlay(group.candidates)
+    parlay: selectTopRankedReceivingParlay(group.candidates)
   }))
 })
 const drawRadarSpotlights = computed(() => {
@@ -3177,9 +3194,19 @@ onBeforeUnmount(() => {
 }
 
 .target-odds-parlay button > strong {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
   color: #df3c59;
   font-size: 11px;
   white-space: nowrap;
+}
+
+.target-odds-parlay button > strong small {
+  margin-top: 2px;
+  color: #a08f78;
+  font-size: 8px;
+  font-weight: 500;
 }
 
 .target-odds-parlay > footer {

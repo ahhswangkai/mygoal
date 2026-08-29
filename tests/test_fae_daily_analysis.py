@@ -2697,6 +2697,13 @@ class DailyAnalysisTests(unittest.TestCase):
                     "single_odds": 1.72,
                     "single_probability": 58.4,
                     "verdict": "模型结论",
+                    "two_option_recommendation": {
+                        "market": "竞彩让球",
+                        "selections": ["让负", "让平"],
+                        "odds": {"让负": 1.57, "让平": 3.65},
+                        "rank_score": 77.51,
+                        "actionable": False,
+                    },
                     "historical_odds_rules": ["large-audit-only-field"],
                     "secondary_selection_guard": {
                         "selection": "让负",
@@ -2743,6 +2750,13 @@ class DailyAnalysisTests(unittest.TestCase):
         self.assertEqual(row["analysis"]["primary_play"], "让平")
         self.assertEqual(row["analysis"]["single_play"], "主胜")
         self.assertEqual(row["analysis"]["single_odds"], 1.72)
+        self.assertEqual(
+            row["analysis"]["two_option_recommendation"]["rank_score"],
+            77.51,
+        )
+        self.assertFalse(
+            row["analysis"]["two_option_recommendation"]["actionable"]
+        )
         self.assertNotIn("historical_odds_rules", row["analysis"])
         self.assertFalse(
             row["analysis"]["secondary_selection_guard"]
