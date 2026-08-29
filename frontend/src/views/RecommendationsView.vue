@@ -301,17 +301,22 @@
             <p>观察首选只表示同类候选中排名第一；未通过正式门槛时不自动进入串关。</p>
           </section>
 
-          <section v-if="targetOddsParlay" class="target-odds-parlay">
+          <section
+            v-for="group in targetOddsParlayGroups"
+            :key="`target-odds-parlay-${group.key}`"
+            class="target-odds-parlay"
+          >
             <header>
               <div>
-                <strong>3.0赔率二串一</strong>
-                <small>从全部正式单选中选择，不限定平局或让平</small>
+                <strong>{{ group.title }}3.0赔率二串一</strong>
+                <small>{{ group.description }}，从全部正式单选中选择</small>
               </div>
-              <span>总赔率 {{ targetOddsParlay.combinedOdds }}倍</span>
+              <span v-if="group.parlay">总赔率 {{ group.parlay.combinedOdds }}倍</span>
+              <span v-else>暂无组合</span>
             </header>
-            <div>
+            <div v-if="group.parlay">
               <button
-                v-for="(pick, index) in targetOddsParlay.picks"
+                v-for="(pick, index) in group.parlay.picks"
                 :key="`target-odds-parlay-${pick.match_id}`"
                 type="button"
                 @click="goToDetail(pick.match_id)"
@@ -327,13 +332,16 @@
                 <strong>@{{ formatPickOdds(pick.odds) }}</strong>
               </button>
             </div>
-            <footer>
+            <div v-else class="target-odds-parlay-empty">
+              该时段正式单选不足两场，或没有总赔率位于2.70–3.30的组合
+            </div>
+            <footer v-if="group.parlay">
               <span>
                 <strong>二串一 · 共1注</strong>
                 <small>1倍2元 · 20倍40元</small>
               </span>
               <span>
-                <strong>估算双中 {{ targetOddsParlay.probability }}%</strong>
+                <strong>估算双中 {{ group.parlay.probability }}%</strong>
                 <small>两项盘口可信度均不低于70分</small>
               </span>
             </footer>
@@ -1392,16 +1400,7 @@ const shouldShowDailyMatchList = computed(() => (
 const dailyMatchMap = computed(() => Object.fromEntries(
   (faeDailyAi.value?.matches || []).map(item => [String(item.match_id), item])
 ))
-const targetOddsParlay = computed(() => {
-  const candidates = (
-    faeDailyAi.value?.daily_summary?.pools?.official_single || []
-  ).filter(item => (
-    item?.match_id
-    && Number(item.odds) >= 1.5
-    && Number(item.probability) > 0
-    && Number(item.market_confidence) >= 70
-    && isVisibleDailyMatch(dailyMatch(item.match_id))
-  ))
+function selectTargetOddsParlay(candidates) {
   const pairs = []
   for (let leftIndex = 0; leftIndex < candidates.length; leftIndex += 1) {
     for (let rightIndex = leftIndex + 1; rightIndex < candidates.length; rightIndex += 1) {
@@ -1433,6 +1432,95 @@ const targetOddsParlay = computed(() => {
     combinedOdds: selected.combinedOdds.toFixed(2),
     probability: selected.probability.toFixed(1)
   }
+}
+
+function matchStartOffsetMinutes(matchId) {
+  const value = String(dailyMatch(matchId).match_time || '')
+  const dated = value.match(/(?:^|\s)(\d{1,2})-(\d{1,2})\s+(\d{1,2}):(\d{2})/)
+  if (dated) {
+    const [selectedYear, selectedMonth, selectedDay] = selectedDate.value
+      .split('-')
+      .map(Number)
+    let matchYear = selectedYear
+    let matchTime = new Date(
+      matchYear,
+      Number(dated[1]) - 1,
+      Number(dated[2]),
+      Number(dated[3]),
+      Number(dated[4])
+    )
+    const selectedStart = new Date(selectedYear, selectedMonth - 1, selectedDay)
+    const halfYear = 183 * 24 * 60 * 60 * 1000
+    if (matchTime.getTime() - selectedStart.getTime() < -halfYear) {
+      matchYear += 1
+      matchTime = new Date(
+        matchYear,
+        Number(dated[1]) - 1,
+        Number(dated[2]),
+        Number(dated[3]),
+        Number(dated[4])
+      )
+    } else if (matchTime.getTime() - selectedStart.getTime() > halfYear) {
+      matchYear -= 1
+      matchTime = new Date(
+        matchYear,
+        Number(dated[1]) - 1,
+        Number(dated[2]),
+        Number(dated[3]),
+        Number(dated[4])
+      )
+    }
+    return (matchTime.getTime() - selectedStart.getTime()) / 60000
+  }
+  const timed = value.match(/(?:^|\s|T)(\d{1,2}):(\d{2})/)
+  if (!timed) return null
+  return Number(timed[1]) * 60 + Number(timed[2])
+}
+
+const targetOddsParlayGroups = computed(() => {
+  const candidates = (
+    faeDailyAi.value?.daily_summary?.pools?.official_single || []
+  ).filter(item => (
+    item?.match_id
+    && Number(item.odds) >= 1.5
+    && Number(item.probability) > 0
+    && Number(item.market_confidence) >= 70
+    && isVisibleDailyMatch(dailyMatch(item.match_id))
+  ))
+  const selectedDay = new Date(`${selectedDate.value}T00:00:00`).getDay()
+  const isWeekend = selectedDay === 0 || selectedDay === 6
+  if (!isWeekend) {
+    const parlay = selectTargetOddsParlay(candidates)
+    return parlay ? [{
+      key: 'all-day',
+      title: '',
+      description: '不限定平局或让平',
+      parlay
+    }] : []
+  }
+  return [
+    {
+      key: 'early',
+      title: '早场 · ',
+      description: '21:00前开赛，仅在早场内部组合',
+      candidates: candidates.filter(item => {
+        const minutes = matchStartOffsetMinutes(item.match_id)
+        return minutes !== null && minutes < 21 * 60
+      })
+    },
+    {
+      key: 'late',
+      title: '晚场 · ',
+      description: '21:00及以后开赛，仅在晚场内部组合',
+      candidates: candidates.filter(item => {
+        const minutes = matchStartOffsetMinutes(item.match_id)
+        return minutes !== null && minutes >= 21 * 60
+      })
+    }
+  ].map(group => ({
+    ...group,
+    parlay: selectTargetOddsParlay(group.candidates)
+  }))
 })
 const drawRadarSpotlights = computed(() => {
   const radar = faeDailyAi.value?.daily_summary?.draw_radar || {}
@@ -3025,6 +3113,14 @@ onBeforeUnmount(() => {
 
 .target-odds-parlay > div {
   padding: 2px 10px;
+}
+
+.target-odds-parlay > .target-odds-parlay-empty {
+  padding: 14px 10px;
+  color: #9a9286;
+  font-size: 9px;
+  line-height: 1.5;
+  text-align: center;
 }
 
 .target-odds-parlay button {
