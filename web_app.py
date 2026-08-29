@@ -1891,6 +1891,29 @@ def get_fae_daily_ai():
         '1', 'true', 'yes', 'on'
     )
     data = mongo_storage.get_fae_daily_ai_run(date_str, compact=compact)
+    if data:
+        # Keep immutable pre-match recommendations, but attach the latest
+        # match status and score at read time so completed selections can be
+        # graded without removing them from the recommendation history.
+        daily_matches = data.get('matches') or []
+        live_matches = mongo_storage.get_matches_by_ids(
+            item.get('match_id') for item in daily_matches
+        )
+        for item in daily_matches:
+            live = live_matches.get(str(item.get('match_id') or '')) or {}
+            if not live:
+                continue
+            item['current_status'] = live.get(
+                'status', item.get('current_status')
+            )
+            score = live.get('score')
+            if not score:
+                home_score = live.get('home_score')
+                away_score = live.get('away_score')
+                if home_score not in (None, '') and away_score not in (None, ''):
+                    score = f'{home_score}:{away_score}'
+            if score:
+                item['result_score'] = str(score).replace('-', ':')
     if data and not compact:
         data['matches'] = fae_daily_ai_analyzer.calibrate_daily_matches(
             data.get('matches') or []

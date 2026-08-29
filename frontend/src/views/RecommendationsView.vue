@@ -311,7 +311,12 @@
                 <strong>{{ group.title }}受让方二串一</strong>
                 <small>{{ group.description }}，从双选覆盖中按模型排名取前二</small>
               </div>
-              <span v-if="group.parlay">合计赔率 {{ group.parlay.combinedOdds }}倍</span>
+              <span
+                v-if="group.parlay"
+                :class="`result-${group.parlay.resultStatus}`"
+              >
+                {{ targetParlayResultLabel(group.parlay) }}
+              </span>
               <span v-else>暂无组合</span>
             </header>
             <div v-if="group.parlay">
@@ -332,6 +337,9 @@
                 <strong>
                   @{{ formatPickOdds(pick.odds) }}
                   <small>模型 {{ pick.rankScore }}分</small>
+                  <em :class="`result-${pick.resultStatus}`">
+                    {{ targetPickResultLabel(pick) }}
+                  </em>
                 </strong>
               </button>
             </div>
@@ -1414,6 +1422,11 @@ function selectTopRankedReceivingParlay(candidates) {
     ))
     .slice(0, 2)
   if (selected.length < 2) return null
+  const resultStatus = selected.some(item => item.resultStatus === 'miss')
+    ? 'miss'
+    : selected.every(item => item.resultStatus === 'hit')
+      ? 'hit'
+      : 'pending'
   return {
     picks: selected.sort((left, right) => String(
       dailyMatch(left.match_id).match_time || ''
@@ -1422,8 +1435,32 @@ function selectTopRankedReceivingParlay(candidates) {
     ))),
     combinedOdds: (
       Number(selected[0].odds) * Number(selected[1].odds)
-    ).toFixed(2)
+    ).toFixed(2),
+    resultStatus
   }
+}
+
+function handicapResultSelection(score, handicap) {
+  const matched = String(score || '').match(/(\d+)\s*[:：-]\s*(\d+)/)
+  if (!matched) return ''
+  const adjustedMargin = Number(matched[1]) + Number(handicap) - Number(matched[2])
+  if (adjustedMargin > 0) return '让胜'
+  if (adjustedMargin < 0) return '让负'
+  return '让平'
+}
+
+function targetPickResultLabel(pick) {
+  if (pick.resultStatus === 'hit') return `✓ 命中 · ${pick.resultScore}`
+  if (pick.resultStatus === 'miss') return `× 未中 · ${pick.resultScore}`
+  if (Number(pick.currentStatus) === 1) return '进行中'
+  if (Number(pick.currentStatus) === 2) return '待结算'
+  return '待赛'
+}
+
+function targetParlayResultLabel(parlay) {
+  if (parlay.resultStatus === 'hit') return `✓ 已中 · ${parlay.combinedOdds}倍`
+  if (parlay.resultStatus === 'miss') return `× 未中 · ${parlay.combinedOdds}倍`
+  return `合计赔率 ${parlay.combinedOdds}倍`
 }
 
 function receivingTwoOptionCandidate(item) {
@@ -1445,13 +1482,24 @@ function receivingTwoOptionCandidate(item) {
     || odds <= 1
     || !Number.isFinite(rankScore)
   ) return null
+  const currentStatus = Number(item?.current_status)
+  const resultScore = String(item?.result_score || '')
+  const actualSelection = currentStatus === 2
+    ? handicapResultSelection(resultScore, handicap)
+    : ''
   return {
     match_id: item.match_id,
     selection,
     displaySelection: `${selection}(${handicap > 0 ? '+' : ''}${handicap})`,
     odds,
     rankScore,
-    coverageScore: Number(profile.coverage_score || 0)
+    coverageScore: Number(profile.coverage_score || 0),
+    currentStatus,
+    resultScore,
+    actualSelection,
+    resultStatus: actualSelection
+      ? (actualSelection === selection ? 'hit' : 'miss')
+      : 'pending'
   }
 }
 
@@ -1500,9 +1548,7 @@ function matchStartOffsetMinutes(matchId) {
 
 const targetOddsParlayGroups = computed(() => {
   const candidates = (faeDailyAi.value?.matches || [])
-    .filter(item => (
-      item?.match_id && isVisibleDailyMatch(item)
-    ))
+    .filter(item => item?.match_id)
     .map(receivingTwoOptionCandidate)
     .filter(Boolean)
   const selectedDay = new Date(`${selectedDate.value}T00:00:00`).getDay()
@@ -3128,6 +3174,18 @@ onBeforeUnmount(() => {
   border-radius: 12px;
 }
 
+.target-odds-parlay > header > span.result-hit {
+  color: #16835f;
+  border-color: #bfe5d7;
+  background: #f2fbf7;
+}
+
+.target-odds-parlay > header > span.result-miss {
+  color: #c94b5f;
+  border-color: #f0c9d0;
+  background: #fff6f7;
+}
+
 .target-odds-parlay > div {
   padding: 2px 10px;
 }
@@ -3207,6 +3265,22 @@ onBeforeUnmount(() => {
   color: #a08f78;
   font-size: 8px;
   font-weight: 500;
+}
+
+.target-odds-parlay button > strong em {
+  margin-top: 3px;
+  color: #9a9286;
+  font-size: 8px;
+  font-style: normal;
+  font-weight: 600;
+}
+
+.target-odds-parlay button > strong em.result-hit {
+  color: #16835f;
+}
+
+.target-odds-parlay button > strong em.result-miss {
+  color: #c94b5f;
 }
 
 .target-odds-parlay > footer {

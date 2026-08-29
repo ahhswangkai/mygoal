@@ -2689,6 +2689,8 @@ class DailyAnalysisTests(unittest.TestCase):
                 "match_number": "周六201",
                 "home_team": "主队",
                 "away_team": "客队",
+                "current_status": 2,
+                "result_score": "2:2",
                 "analysis": {
                     "primary_play": "让平",
                     "secondary_play": "让负",
@@ -2750,6 +2752,8 @@ class DailyAnalysisTests(unittest.TestCase):
         self.assertEqual(row["analysis"]["primary_play"], "让平")
         self.assertEqual(row["analysis"]["single_play"], "主胜")
         self.assertEqual(row["analysis"]["single_odds"], 1.72)
+        self.assertEqual(row["current_status"], 2)
+        self.assertEqual(row["result_score"], "2:2")
         self.assertEqual(
             row["analysis"]["two_option_recommendation"]["rank_score"],
             77.51,

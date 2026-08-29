@@ -1020,6 +1020,7 @@ class MongoDBStorage:
                     'match_time': 1,
                     'status_at_prediction': 1,
                     'current_status': 1,
+                    'result_score': 1,
                     'retained_from_pregame': 1,
                     'retained_from_run_id': 1,
                     'generated_at': 1,
