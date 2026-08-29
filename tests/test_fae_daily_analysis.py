@@ -565,7 +565,7 @@ class DailyAnalysisTests(unittest.TestCase):
             for reason in candidate["official_veto_reasons"]
         ))
 
-    def test_handicap_draw_350_to_399_is_weekly_risk_watch_only(self):
+    def test_handicap_draw_350_to_399_is_not_blanket_weekly_vetoed(self):
         candidate = FAEDailyAIAnalyzer._apply_draw_radar_candidate_guard({
             "match_id": "203",
             "selection": "让平",
@@ -577,12 +577,93 @@ class DailyAnalysisTests(unittest.TestCase):
             "reason": "达到独立核心门槛。",
         })
 
-        self.assertEqual(candidate["tier"], "watch")
-        self.assertLessEqual(candidate["rating"], 3.5)
-        self.assertTrue(any(
-            "3.50–3.99" in reason
-            for reason in candidate["official_veto_reasons"]
-        ))
+        self.assertEqual(candidate["tier"], "core")
+        self.assertTrue(candidate["formal_eligible"])
+        self.assertEqual(candidate["official_veto_reasons"], [])
+
+    def test_plus_one_low_odds_formula_is_formal_handicap_draw_kind(self):
+        source_match = match("203")
+        source_match.update({
+            "league": "测试联赛",
+            "euro_initial_win": "4.60",
+            "euro_current_win": "4.50",
+            "euro_initial_lose": "1.70",
+            "euro_current_lose": "1.68",
+            "hi_handicap_value": "1",
+            "hi_initial_home_odds": "2.70",
+            "hi_initial_draw_odds": "3.10",
+            "hi_initial_away_odds": "2.05",
+            "hi_current_home_odds": "2.75",
+            "hi_current_draw_odds": "3.05",
+            "hi_current_away_odds": "2.00",
+            "asian_initial_handicap": "受半/一",
+            "asian_current_handicap": "受半/一",
+            "asian_initial_away_odds": "0.90",
+            "asian_current_away_odds": "0.88",
+        })
+        source = build_daily_match_input(source_match)
+
+        signal = FAEDailyAIAnalyzer._draw_odds_band_signal(
+            source, "让平", []
+        )
+
+        self.assertEqual(
+            signal["kind"], "backtested_hhad_plus1_low_odds_value"
+        )
+        self.assertEqual(signal["sample"], 95)
+        self.assertEqual(signal["hit_rate"], 40.0)
+
+    def test_small_rise_formula_is_formal_handicap_draw_kind(self):
+        source_match = match("204")
+        source_match.update({
+            "hi_initial_home_odds": "2.20",
+            "hi_initial_draw_odds": "3.50",
+            "hi_initial_away_odds": "2.70",
+            "hi_current_home_odds": "2.15",
+            "hi_current_draw_odds": "3.55",
+            "hi_current_away_odds": "2.75",
+            "asian_initial_handicap": "半/一",
+            "asian_current_handicap": "半/一",
+        })
+        source = build_daily_match_input(source_match)
+
+        signal = FAEDailyAIAnalyzer._draw_odds_band_signal(
+            source, "让平", []
+        )
+
+        self.assertEqual(
+            signal["kind"], "backtested_hhad_small_rise_value"
+        )
+        self.assertEqual(signal["sample"], 102)
+        self.assertEqual(signal["hit_rate"], 38.2)
+
+    def test_unified_formula_kind_can_enter_formal_core(self):
+        candidate = {
+            "match_id": "205",
+            "selection": "让平",
+            "tier": "core",
+            "rating": 4.5,
+            "score": 84,
+            "probability": 32,
+            "odds": 3.55,
+            "odds_value": 8.0,
+            "effective_sample": 180,
+            "risk_pattern_ids": [],
+            "draw_odds_band_signal": {
+                "kind": "backtested_hhad_small_rise_value",
+                "official_score_min": 82,
+            },
+        }
+        row = {
+            "match_id": "205",
+            "analysis": {"market_confidence": {"score": 76}},
+            "input_snapshot": {},
+        }
+
+        self.assertEqual(
+            FAEDailyAIAnalyzer._radar_official_level(candidate, row),
+            "core",
+        )
 
     def test_observation_radar_cannot_override_existing_formal_pick(self):
         candidate = FAEDailyAIAnalyzer._apply_draw_radar_candidate_guard({

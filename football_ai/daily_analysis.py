@@ -76,7 +76,6 @@ RADAR_OFFICIAL_SMALL_MIN_VALUE = {"平局": 0.0, "让平": 0.0}
 RADAR_OFFICIAL_MIN_SAMPLE = {"平局": 60.0, "让平": 60.0}
 RADAR_OFFICIAL_MIN_MARKET_CONFIDENCE = 55.0
 RADAR_OFFICIAL_MAX_RISK_IDS = {"平局": 1, "让平": 1}
-HANDICAP_DRAW_WEEKLY_RISK_ODDS = (3.50, 4.00)
 HANDICAP_SECONDARY_MODEL_WEIGHT = 0.65
 HANDICAP_SECONDARY_MARKET_WEIGHT = 0.35
 DAILY_AI_MAX_BATCH_SIZE = 10
@@ -357,7 +356,7 @@ LOW_ODDS_ASIAN_MODEL_VERSION = "low-odds-asian-hhad-v1"
 
 # 历史回测：让平不能靠“升盘高水/欧亚背离”单独升级。
 # 正向信号主要来自：联赛画像 + 竞彩让1球 + 热门胜赔区间 + 让平赔率区间。
-HANDICAP_DRAW_BACKTEST_VERSION = "handicap-draw-backtest-v2-league-pockets"
+HANDICAP_DRAW_BACKTEST_VERSION = "handicap-draw-backtest-v3-unified-formula"
 HANDICAP_DRAW_PATH_MODEL_VERSION = "handicap-draw-path-v1"
 ORDINARY_DRAW_BACKTEST_VERSION = "ordinary-draw-backtest-v1"
 ORDINARY_DRAW_POSITIVE_LEAGUES = {
@@ -392,12 +391,26 @@ HANDICAP_DRAW_POSITIVE_LEAGUES = {
 }
 HANDICAP_DRAW_NEGATIVE_LEAGUES = {
     "欧冠",
+    "英超",
+    "德甲",
+    "葡超",
+    "瑞典超",
     "荷甲",
     "荷乙",
     "澳超",
     "美职联",
     "MLS",
 }
+
+HANDICAP_DRAW_FORMAL_CORE_KINDS = {
+    "backtested_hhad_plus1_low_odds_value",
+    "backtested_hhad_small_rise_value",
+}
+HANDICAP_DRAW_FORMAL_SECONDARY_KINDS = set()
+HANDICAP_DRAW_FORMAL_KINDS = (
+    HANDICAP_DRAW_FORMAL_CORE_KINDS
+    | HANDICAP_DRAW_FORMAL_SECONDARY_KINDS
+)
 
 LEAGUE_TACTICAL_TEMPLATES = {
     "k_league": {
@@ -2183,7 +2196,7 @@ def build_daily_match_input(
             "historical_odds_rules": core.get("historical_odds_rules"),
         },
         "historical_odds_rules": core.get("historical_odds_rules") or {
-            "version": "historical-market-rules-v1",
+            "version": "historical-market-rules-v2",
             "matched_rule_ids": [],
             "ordinary_draw": {
                 "eligible_for_adjustment": False,
@@ -6508,8 +6521,23 @@ class FAEDailyAIAnalyzer:
                 or (source.get("sporttery_handicap") or {}).get("initial")
                 or []
             )
+            initial_hhad_values = (
+                (source.get("sporttery_handicap") or {}).get("initial")
+                or []
+            )
             handicap_draw_odds = (
                 _number(hhad_values[1]) if len(hhad_values) > 1 else None
+            )
+            initial_handicap_draw_odds = (
+                _number(initial_hhad_values[1])
+                if len(initial_hhad_values) > 1 else None
+            )
+            handicap_draw_change = (
+                handicap_draw_odds - initial_handicap_draw_odds
+                if (
+                    handicap_draw_odds is not None
+                    and initial_handicap_draw_odds is not None
+                ) else None
             )
             handicap = _number(
                 (source.get("sporttery_handicap") or {}).get("value")
@@ -6539,20 +6567,36 @@ class FAEDailyAIAnalyzer:
                         "不升级让平"
                     ),
                 }
-            if (
-                handicap_draw_odds is not None
-                and 3.30 <= handicap_draw_odds <= 3.70
-                and handicap is not None
-                and abs(handicap) >= 2
-                and favorite_odds <= 1.55
-            ):
+            if handicap is not None and abs(handicap) >= 2:
                 return {
                     "kind": "handicap_draw_two_goal_block",
                     "role": "让2球回测降级",
                     "score_bonus": -12.0,
                     "block_official": True,
                     "note": (
-                        "历史回测中让2球让平区间表现明显偏弱，"
+                        "历史回测中竞彩让2球及以上的精确净胜球命中明显偏弱，"
+                        "不升级为正式让平"
+                    ),
+                }
+            if handicap_draw_odds is not None and handicap_draw_odds >= 4.00:
+                return {
+                    "kind": "handicap_draw_high_odds_block",
+                    "role": "高让平赔降级",
+                    "score_bonus": -12.0,
+                    "block_official": True,
+                    "note": (
+                        "让平赔率4.00以上历史命中率和ROI均偏弱，"
+                        "不因高回报升级为正式让平"
+                    ),
+                }
+            if favorite_odds > 2.20:
+                return {
+                    "kind": "handicap_draw_weak_favorite_block",
+                    "role": "弱热门让平降级",
+                    "score_bonus": -10.0,
+                    "block_official": True,
+                    "note": (
+                        "热门胜赔高于2.20时，历史精确一球差命中明显下降，"
                         "不升级为正式让平"
                     ),
                 }
@@ -6572,12 +6616,7 @@ class FAEDailyAIAnalyzer:
                         "只保留观察不升级"
                     ),
                 }
-            if (
-                handicap_draw_odds is not None
-                and 3.30 <= handicap_draw_odds <= 3.70
-                and favorite_matches_one_goal
-                and negative_league
-            ):
+            if favorite_matches_one_goal and negative_league:
                 return {
                     "kind": "handicap_draw_negative_league_block",
                     "role": "低命中联赛降级",
@@ -6624,6 +6663,54 @@ class FAEDailyAIAnalyzer:
                     )
                 )
             )
+            if (
+                handicap == 1
+                and favorite_matches_one_goal
+                and handicap_draw_odds is not None
+                and 2.70 <= handicap_draw_odds < 3.20
+            ):
+                return {
+                    "kind": "backtested_hhad_plus1_low_odds_value",
+                    "role": "受让+1低赔让平模型",
+                    "score_bonus": 28.0,
+                    "official_score_min": 80.0,
+                    "backtest_version": HANDICAP_DRAW_BACKTEST_VERSION,
+                    "sample": 95,
+                    "hit_rate": 40.0,
+                    "market_probability": 29.0,
+                    "roi": 23.0,
+                    "note": (
+                        "竞彩主队+1且客队为热门，让平赔2.70-3.19；"
+                        "对应客队刚好赢1球，统一门禁后历史命中40.0%、"
+                        "ROI+23.0%"
+                        + (f"；{path_note}" if path_note else "")
+                    ),
+                }
+            if (
+                favorite_matches_one_goal
+                and handicap == -1
+                and handicap_draw_odds is not None
+                and handicap_draw_change is not None
+                and 3.20 <= handicap_draw_odds < 3.80
+                and 0.03 <= handicap_draw_change < 0.10
+            ):
+                return {
+                    "kind": "backtested_hhad_small_rise_value",
+                    "role": "让平赔小升一球差模型",
+                    "score_bonus": 24.0,
+                    "official_score_min": 82.0,
+                    "backtest_version": HANDICAP_DRAW_BACKTEST_VERSION,
+                    "sample": 102,
+                    "hit_rate": 38.2,
+                    "market_probability": 25.2,
+                    "roi": 33.5,
+                    "note": (
+                        f"竞彩让{int(handicap):+d}且让平赔小升"
+                        f"{handicap_draw_change:.2f}、即时{handicap_draw_odds:g}；"
+                        "统一门禁后历史命中38.2%、ROI+33.5%"
+                        + (f"；{path_note}" if path_note else "")
+                    ),
+                }
             league_handicap_draw_signal = cls._league_specific_handicap_draw_signal(
                 source,
                 favorite_odds,
@@ -7584,13 +7671,6 @@ class FAEDailyAIAnalyzer:
             reasons.append("缺少赔率价值数据，不得升级正式推荐")
         elif odds_value < 0:
             reasons.append("赔率价值为负，不得升级正式推荐")
-        selection = str(candidate.get("selection") or "")
-        odds = _number(candidate.get("odds"))
-        low, high = HANDICAP_DRAW_WEEKLY_RISK_ODDS
-        if selection == "让平" and odds is not None and low <= odds < high:
-            reasons.append(
-                "让平赔率3.50–3.99近7日回测处于高风险区间"
-            )
         if candidate.get("tier") != "core":
             reasons.append("雷达仅为观察层，不能覆盖正式推荐门槛")
         return list(dict.fromkeys(reasons))
@@ -7973,15 +8053,7 @@ class FAEDailyAIAnalyzer:
             }
         ):
             minimum_sample = ORDINARY_DRAW_RULE_MIN_SAMPLE
-        if (
-            selection == "让平"
-            and draw_band_kind in {
-                "backtested_league_one_goal_value",
-                "backtested_league_one_goal_secondary",
-                "backtested_league_handicap_draw_value",
-                "backtested_league_handicap_draw_secondary",
-            }
-        ):
+        if selection == "让平" and draw_band_kind in HANDICAP_DRAW_FORMAL_KINDS:
             minimum_sample = HANDICAP_DRAW_RULE_MIN_SAMPLE
         if sample < minimum_sample:
             return None
@@ -8013,20 +8085,12 @@ class FAEDailyAIAnalyzer:
             return None
 
         if selection == "让平":
-            if draw_band_kind in {
-                "backtested_league_one_goal_value",
-                "backtested_league_one_goal_secondary",
-                "backtested_league_handicap_draw_value",
-                "backtested_league_handicap_draw_secondary",
-            }:
+            if draw_band_kind in HANDICAP_DRAW_FORMAL_KINDS:
                 official_score_min = (
                     _number(draw_band_signal.get("official_score_min")) or 84.0
                 )
                 if score >= official_score_min:
-                    if draw_band_kind in {
-                        "backtested_league_one_goal_value",
-                        "backtested_league_handicap_draw_value",
-                    }:
+                    if draw_band_kind in HANDICAP_DRAW_FORMAL_CORE_KINDS:
                         return "core"
                     return "small"
             return None
@@ -8067,6 +8131,8 @@ class FAEDailyAIAnalyzer:
             "backtested_league_one_goal_secondary": 4.0,
             "backtested_league_handicap_draw_value": 10.0,
             "backtested_league_handicap_draw_secondary": 4.0,
+            "backtested_hhad_plus1_low_odds_value": 10.0,
+            "backtested_hhad_small_rise_value": 10.0,
         }.get(str(draw_band.get("kind") or ""), 0.0)
         return round(
             score + probability * 0.5 + value_component + core_bonus
@@ -8137,6 +8203,8 @@ class FAEDailyAIAnalyzer:
                 draw_band.get("kind") == "backtested_league_draw_secondary",
                 draw_band.get("kind") == "backtested_league_one_goal_value",
                 draw_band.get("kind") == "backtested_league_handicap_draw_value",
+                draw_band.get("kind") == "backtested_hhad_plus1_low_odds_value",
+                draw_band.get("kind") == "backtested_hhad_small_rise_value",
                 draw_band.get("kind") == "backtested_league_one_goal_secondary",
                 draw_band.get("kind") == "backtested_league_handicap_draw_secondary",
                 candidate.get("radar_official_level") == "core",

@@ -10,8 +10,8 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 
 
-HISTORICAL_MARKET_RULES_VERSION = "historical-market-rules-v1"
-HISTORICAL_MARKET_RULES_WINDOW = "2025-08-01~2026-07-23"
+HISTORICAL_MARKET_RULES_VERSION = "historical-market-rules-v2"
+HISTORICAL_MARKET_RULES_WINDOW = "2025-08-01~2026-08-27"
 
 
 ORDINARY_DRAW_LEAGUE_PRIORS = {
@@ -259,10 +259,21 @@ def evaluate_historical_market_rules(
         and 0.03 <= current_hhad_draw - initial_hhad_draw < 0.10
         and 3.20 <= current_hhad_draw < 3.80
     ):
+        minus_one = handicap == -1
         handicap_draw.append(_signal(
             "history-hhad-draw-small-rise",
-            "让平", 1.5, 248, 33.1, 25.0, 17.3,
-            "让平赔小升0.03-0.09且即时3.20-3.79：历史命中高于市场，近期仅作辅助加分",
+            "让平", 2.0 if minus_one else 1.25,
+            180 if minus_one else 248,
+            34.4 if minus_one else 33.1,
+            25.0,
+            21.9 if minus_one else 17.3,
+            (
+                "主队-1且让平赔小升0.03-0.09、即时3.20-3.79："
+                "历史刚好赢1球命中显著高于市场"
+                if minus_one else
+                "让平赔小升0.03-0.09且即时3.20-3.79："
+                "历史命中高于市场，仍需亚盘和数据质量确认"
+            ),
             confidence="中", weights=rule_weights,
         ))
     if current_hhad_draw is not None and 4.00 <= current_hhad_draw < 5.00:

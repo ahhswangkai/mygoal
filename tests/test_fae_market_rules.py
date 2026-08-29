@@ -109,7 +109,7 @@ class FAEHistoricalMarketRulesTests(unittest.TestCase):
 
         self.assertEqual(
             row["historical_odds_rules"]["version"],
-            "historical-market-rules-v1",
+            "historical-market-rules-v2",
         )
         self.assertIn(
             "history-draw-favorite-170-189",
