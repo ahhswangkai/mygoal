@@ -449,6 +449,105 @@ class DailyAIReviewTests(unittest.TestCase):
             100.0,
         )
 
+    def test_settles_draw_two_three_and_two_leg_tickets_separately(self):
+        snapshot = dict(self.snapshot)
+        snapshot["daily_summary"] = {
+            "recommended_combinations": [],
+            "draw_parlay_tickets": {
+                "two_three": {
+                    "key": "draw-two-three",
+                    "title": "平/让平 3场2、3关",
+                    "play": "3场2、3关",
+                    "structure": "1平+2让平",
+                    "picks": [
+                        {"match_id": "201", "selection": "平局", "odds": 3.2},
+                        {"match_id": "202", "selection": "让平", "odds": 3.4},
+                        {"match_id": "214", "selection": "让平", "odds": 3.85},
+                    ],
+                    "lines": [
+                        {
+                            "key": "pair-1", "play": "2串1",
+                            "pick_refs": [
+                                {"match_id": "201", "selection": "平局"},
+                                {"match_id": "202", "selection": "让平"},
+                            ],
+                            "combined_odds": 10.88,
+                        },
+                        {
+                            "key": "pair-2", "play": "2串1",
+                            "pick_refs": [
+                                {"match_id": "201", "selection": "平局"},
+                                {"match_id": "214", "selection": "让平"},
+                            ],
+                            "combined_odds": 12.32,
+                        },
+                        {
+                            "key": "pair-3", "play": "2串1",
+                            "pick_refs": [
+                                {"match_id": "202", "selection": "让平"},
+                                {"match_id": "214", "selection": "让平"},
+                            ],
+                            "combined_odds": 13.09,
+                        },
+                        {
+                            "key": "triple-1", "play": "3串1",
+                            "pick_refs": [
+                                {"match_id": "201", "selection": "平局"},
+                                {"match_id": "202", "selection": "让平"},
+                                {"match_id": "214", "selection": "让平"},
+                            ],
+                            "combined_odds": 41.89,
+                        },
+                    ],
+                },
+                "two_leg": {
+                    "key": "draw-two-leg",
+                    "title": "平/让平二串一",
+                    "play": "2串1",
+                    "structure": "1平+1让平",
+                    "picks": [
+                        {"match_id": "201", "selection": "平局", "odds": 3.2},
+                        {"match_id": "202", "selection": "让平", "odds": 3.4},
+                    ],
+                    "lines": [{
+                        "key": "pair-1", "play": "2串1",
+                        "pick_refs": [
+                            {"match_id": "201", "selection": "平局"},
+                            {"match_id": "202", "selection": "让平"},
+                        ],
+                        "combined_odds": 10.88,
+                    }],
+                },
+            },
+        }
+
+        review = FAEDailyAIReviewEngine().review(snapshot, self.results)
+        tickets = {row["key"]: row for row in review["draw_ticket_results"]}
+
+        self.assertEqual(tickets["draw-two-three"]["status"], "hit")
+        self.assertEqual(
+            tickets["draw-two-three"]["summary"]["winning_lines"], 4
+        )
+        self.assertEqual(
+            tickets["draw-two-three"]["summary"]["stake_units"], 4
+        )
+        self.assertEqual(tickets["draw-two-leg"]["status"], "hit")
+        self.assertEqual(
+            tickets["draw-two-leg"]["summary"]["return_units"], 10.88
+        )
+
+    def test_records_both_draw_ticket_types_when_candidates_are_insufficient(self):
+        review = FAEDailyAIReviewEngine().review(
+            self.snapshot, self.results
+        )
+        tickets = {row["key"]: row for row in review["draw_ticket_results"]}
+
+        self.assertEqual(set(tickets), {"draw-two-three", "draw-two-leg"})
+        self.assertEqual(
+            tickets["draw-two-three"]["status"], "not_generated"
+        )
+        self.assertEqual(tickets["draw-two-leg"]["status"], "not_generated")
+
 
 if __name__ == "__main__":
     unittest.main()

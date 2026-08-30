@@ -358,7 +358,8 @@ LOW_ODDS_ASIAN_MODEL_VERSION = "low-odds-asian-hhad-v1"
 # 历史回测：让平不能靠“升盘高水/欧亚背离”单独升级。
 # 正向信号主要来自：联赛画像 + 竞彩让1球 + 热门胜赔区间 + 让平赔率区间。
 HANDICAP_DRAW_BACKTEST_VERSION = "handicap-draw-backtest-v4-movement-soft-signal"
-HANDICAP_DRAW_PATH_MODEL_VERSION = "handicap-draw-path-v1"
+HANDICAP_DRAW_PATH_MODEL_VERSION = "handicap-draw-path-v2-price-confirmation"
+SPORTTERY_DRAW_PRICE_SIGNAL_VERSION = "sporttery-draw-price-signal-v1"
 ORDINARY_DRAW_BACKTEST_VERSION = "ordinary-draw-backtest-v1"
 ORDINARY_DRAW_POSITIVE_LEAGUES = {
     "德甲",
@@ -2393,6 +2394,7 @@ class FAEDailyAIAnalyzer:
         summary["recommended_combinations"] = self._ensure_mixed_combinations(
             summary
         )
+        summary = self.attach_draw_parlay_tickets(summary)
         summary = self.normalize_summary_memory_governance(
             summary, result.get("review_memory") or {}
         )
@@ -2853,6 +2855,7 @@ class FAEDailyAIAnalyzer:
         daily_summary["recommended_combinations"] = (
             self._ensure_mixed_combinations(daily_summary)
         )
+        daily_summary = self.attach_draw_parlay_tickets(daily_summary)
         daily_summary = self.normalize_summary_memory_governance(
             daily_summary, memory
         )
@@ -6526,6 +6529,85 @@ class FAEDailyAIAnalyzer:
         return {}
 
     @classmethod
+    def _sporttery_draw_price_signal(
+        cls,
+        source: Dict[str, Any],
+        selection: str,
+    ) -> Dict[str, Any]:
+        """Use the handicap three-way prices as a modest draw confirmation.
+
+        For -1, 让胜高于让平 means the book prices an exact one-goal win
+        ahead of a two-goal-or-more cover.  For +1, 让负高于让平 carries the
+        same meaning for an away favorite.  The signal is deliberately small:
+        it can improve ranking but cannot create historical eligibility or
+        bypass the formal-rule allow-list by itself.
+        """
+        handicap = _number(
+            (source.get("sporttery_handicap") or {}).get("value")
+        )
+        if handicap not in {-1.0, 1.0}:
+            return {}
+        prices = (
+            (source.get("sporttery_handicap") or {}).get("current")
+            or (source.get("sporttery_handicap") or {}).get("initial")
+            or []
+        )
+        if len(prices) < 3:
+            return {}
+        draw_odds = _number(prices[1])
+        compare_index = 0 if handicap < 0 else 2
+        compare_odds = _number(prices[compare_index])
+        if (
+            draw_odds is None
+            or compare_odds is None
+            or draw_odds <= 1
+            or compare_odds <= draw_odds
+        ):
+            return {}
+
+        gap = round(compare_odds - draw_odds, 3)
+        if gap >= 0.30:
+            handicap_probability_pp, handicap_score = 1.0, 8.0
+        elif gap >= 0.15:
+            handicap_probability_pp, handicap_score = 0.75, 6.0
+        else:
+            handicap_probability_pp, handicap_score = 0.5, 4.0
+        if selection == "让平":
+            probability_pp = handicap_probability_pp
+            score_bonus = handicap_score
+        elif selection == "平局":
+            probability_pp = handicap_probability_pp * 0.5
+            score_bonus = handicap_score * 0.5
+        else:
+            return {}
+
+        compare_label = "让胜" if handicap < 0 else "受让负"
+        draw_label = "让平" if handicap < 0 else "受让平"
+        return {
+            "version": SPORTTERY_DRAW_PRICE_SIGNAL_VERSION,
+            "role": f"{compare_label}高于{draw_label}",
+            "selection": selection,
+            "handicap": int(handicap),
+            "comparison_label": compare_label,
+            "comparison_odds": round(compare_odds, 3),
+            "draw_label": draw_label,
+            "draw_odds": round(draw_odds, 3),
+            "odds_gap": gap,
+            "probability_adjustment_pp": round(probability_pp, 2),
+            "score_bonus": round(score_bonus, 2),
+            "formal_rule": False,
+            "note": (
+                f"竞彩{compare_label}{compare_odds:g}高于{draw_label}"
+                f"{draw_odds:g}，市场价格更防一球差；"
+                + (
+                    "作为让平的中权重确认信号"
+                    if selection == "让平" else
+                    "只作为热门不穿时普通平局的低权重辅助"
+                )
+            ),
+        }
+
+    @classmethod
     def _league_specific_handicap_draw_signal(
         cls,
         source: Dict[str, Any],
@@ -7553,6 +7635,18 @@ class FAEDailyAIAnalyzer:
             if metric.get("odds") is not None
             else _number(profile.get("odds"))
         )
+        sporttery_price_signal = cls._sporttery_draw_price_signal(
+            source, selection
+        )
+        base_probability = probability
+        price_probability_adjustment = float(
+            sporttery_price_signal.get("probability_adjustment_pp") or 0
+        )
+        if probability is not None and price_probability_adjustment:
+            probability = round(
+                max(0.0, min(100.0, probability + price_probability_adjustment)),
+                2,
+            )
         historical_rule_key = (
             "ordinary_draw" if selection == "平局" else "handicap_draw"
         )
@@ -7580,6 +7674,20 @@ class FAEDailyAIAnalyzer:
             if metric_odds_value is not None
             else profile_odds_value
         )
+        if (
+            sporttery_price_signal
+            and probability is not None
+            and odds is not None
+        ):
+            incremental_value = price_probability_adjustment * odds
+            odds_value = round(
+                (odds_value if odds_value is not None else 0.0)
+                + incremental_value,
+                2,
+            )
+            sporttery_price_signal["odds_value_adjustment"] = round(
+                incremental_value, 2
+            )
         historical_rule_samples = [
             int(item.get("sample") or 0)
             for item in historical_rule_profile.get("signals") or []
@@ -7729,6 +7837,7 @@ class FAEDailyAIAnalyzer:
             + float(draw_band_signal.get("score_bonus") or 0)
             + league_score_bonus
             + odds_band_score_bonus
+            + float(sporttery_price_signal.get("score_bonus") or 0)
         )
         if metric.get("confidence") == "高":
             score += 3
@@ -7860,6 +7969,8 @@ class FAEDailyAIAnalyzer:
             reason_parts.append(league_note)
         if odds_band_note:
             reason_parts.append(odds_band_note)
+        if sporttery_price_signal.get("note"):
+            reason_parts.append(str(sporttery_price_signal["note"]))
         if matched_historical_rules:
             reason_parts.append(
                 "历史赔率规则{}项，概率修正{:+g}个百分点".format(
@@ -7900,6 +8011,8 @@ class FAEDailyAIAnalyzer:
             "score": score,
             "probability": round(probability, 2)
             if probability is not None else None,
+            "base_probability": round(base_probability, 2)
+            if base_probability is not None else None,
             "historical_probability": round(historical_probability, 2)
             if historical_probability is not None else None,
             "market_probability": round(market_probability, 2)
@@ -7915,6 +8028,7 @@ class FAEDailyAIAnalyzer:
             "historical_odds_rule_signals": (
                 historical_rule_profile.get("signals") or []
             ),
+            "sporttery_draw_price_signal": sporttery_price_signal,
             "confidence": (
                 metric.get("confidence")
                 if metric.get("eligible_for_adjustment")
@@ -8074,6 +8188,121 @@ class FAEDailyAIAnalyzer:
                 reverse=True,
             )[:RADAR_DISPLAY_LIMITS.get(key, 3)]
         result["draw_radar"] = radar
+        return result
+
+    @classmethod
+    def attach_draw_parlay_tickets(
+        cls,
+        summary: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Persist the exact draw/handicap-draw tickets shown to users.
+
+        The UI used to assemble these tickets at render time, which meant the
+        post-match reviewer could not reproduce the actual selections.  Keep
+        both tickets in the immutable daily summary so settlement always uses
+        the same picks and prices that were available before kick-off.
+        """
+        result = dict(summary or {})
+        radar = result.get("draw_radar") or {}
+
+        def candidates(key: str) -> List[Dict[str, Any]]:
+            rows = []
+            for raw in radar.get(key) or []:
+                match_id = str(raw.get("match_id") or "")
+                odds = _number(raw.get("odds"))
+                if not match_id or odds is None or odds <= 1:
+                    continue
+                item = dict(raw)
+                item["match_id"] = match_id
+                item["odds"] = round(odds, 3)
+                rows.append(item)
+            return rows
+
+        ordinary = candidates("ordinary_draw")
+        handicap = candidates("handicap_draw")
+
+        def distinct_picks(
+            ordinary_count: int,
+            handicap_count: int,
+        ) -> List[Dict[str, Any]]:
+            picks: List[Dict[str, Any]] = []
+            used = set()
+            for market, rows, limit in (
+                ("ordinary_draw", ordinary, ordinary_count),
+                ("handicap_draw", handicap, handicap_count),
+            ):
+                added = 0
+                for raw in rows:
+                    match_id = str(raw.get("match_id") or "")
+                    if not match_id or match_id in used:
+                        continue
+                    pick = dict(raw)
+                    pick["market"] = market
+                    pick["selection"] = (
+                        "平局" if market == "ordinary_draw" else "让平"
+                    )
+                    picks.append(pick)
+                    used.add(match_id)
+                    added += 1
+                    if added >= limit:
+                        break
+            return picks
+
+        def line(picks: List[Dict[str, Any]], indexes: List[int], key: str):
+            selected = [picks[index] for index in indexes]
+            combined_odds = 1.0
+            for pick in selected:
+                combined_odds *= float(pick["odds"])
+            return {
+                "key": key,
+                "play": f"{len(indexes)}串1",
+                "pick_refs": [{
+                    "match_id": pick.get("match_id"),
+                    "selection": pick.get("selection"),
+                } for pick in selected],
+                "combined_odds": round(combined_odds, 2),
+            }
+
+        two_three = None
+        three_picks = distinct_picks(1, 2)
+        if len(three_picks) == 3:
+            pair_indexes = ((0, 1), (0, 2), (1, 2))
+            lines = [
+                line(three_picks, list(indexes), f"pair-{index + 1}")
+                for index, indexes in enumerate(pair_indexes)
+            ]
+            lines.append(line(three_picks, [0, 1, 2], "triple-1"))
+            two_three = {
+                "key": "draw-two-three",
+                "title": "平/让平 3场2、3关",
+                "play": "3场2、3关",
+                "structure": "1平+2让平",
+                "picks": three_picks,
+                "lines": lines,
+                "line_count": 4,
+                "stake_units": 4,
+            }
+
+        two_leg = None
+        two_picks = distinct_picks(1, 1)
+        if len(two_picks) == 2:
+            two_leg = {
+                "key": "draw-two-leg",
+                "title": "平/让平二串一",
+                "play": "2串1",
+                "structure": "1平+1让平",
+                "picks": two_picks,
+                "lines": [line(two_picks, [0, 1], "pair-1")],
+                "line_count": 1,
+                "stake_units": 1,
+            }
+
+        result["draw_parlay_tickets"] = {
+            "version": "draw-parlay-ticket-v1",
+            "source": "draw_radar",
+            "two_three": two_three,
+            "two_leg": two_leg,
+        }
         return result
 
     @classmethod

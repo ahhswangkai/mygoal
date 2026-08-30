@@ -14,7 +14,7 @@ from .provider import ArkNarrativeClient, FAEOutputError
 from .version import ENGINE_VERSION
 
 
-AI_REVIEW_PROMPT_VERSION = "fae-deep-review-v11-deterministic-metrics"
+AI_REVIEW_PROMPT_VERSION = "fae-deep-review-v12-draw-ticket-audit"
 SETTLED_STATUSES = {"hit", "miss", "push"}
 LEARNING_SCOPES = {
     "euro",
@@ -80,7 +80,9 @@ def _metric_snapshot(value: Any) -> Dict[str, Any]:
     keys = (
         "total", "settled", "hits", "misses", "pushes", "hit_rate",
         "equal_stake", "equal_stake_return", "equal_stake_profit",
-        "equal_stake_roi",
+        "equal_stake_roi", "total_lines", "settled_lines",
+        "pending_lines", "winning_lines", "losing_lines", "stake_units",
+        "return_units", "profit_units", "roi",
     )
     return {
         key: (
@@ -96,6 +98,7 @@ def _verified_settlement_summary(review: Dict[str, Any]) -> Dict[str, Any]:
     summary = review.get("summary") or {}
     radar = summary.get("draw_radar") or {}
     two_option = summary.get("two_option") or {}
+    draw_tickets = summary.get("draw_tickets") or {}
     return {
         "main_direction": _metric_snapshot(summary.get("singles")),
         "official_bets": _metric_snapshot(summary.get("official_bets")),
@@ -103,6 +106,12 @@ def _verified_settlement_summary(review: Dict[str, Any]) -> Dict[str, Any]:
         "ordinary_draw": _metric_snapshot(radar.get("ordinary_draw")),
         "handicap_draw": _metric_snapshot(radar.get("handicap_draw")),
         "two_option": _metric_snapshot(two_option.get("overall")),
+        "draw_two_three": _metric_snapshot(
+            draw_tickets.get("draw-two-three")
+        ),
+        "draw_two_leg": _metric_snapshot(
+            draw_tickets.get("draw-two-leg")
+        ),
         "source": "deterministic-program-settlement",
     }
 
@@ -114,17 +123,24 @@ def _verified_settlement_text(value: Dict[str, Any]) -> str:
         ("普通平", "ordinary_draw"),
         ("让平", "handicap_draw"),
         ("双选", "two_option"),
+        ("平/让平3场2、3关", "draw_two_three"),
+        ("平/让平二串一", "draw_two_leg"),
     )
     parts = []
     for label, key in labels:
         metric = value.get(key) or {}
         settled = metric.get("settled")
         hits = metric.get("hits")
+        if settled is None:
+            settled = metric.get("settled_lines")
+            hits = metric.get("winning_lines")
         if settled in (None, 0) or hits is None:
             continue
         detail = f"{label}{hits}/{settled}"
         roi = metric.get("equal_stake_roi")
-        if key == "two_option" and roi is not None:
+        if roi is None:
+            roi = metric.get("roi")
+        if key in {"two_option", "draw_two_three", "draw_two_leg"} and roi is not None:
             detail += f"，等额ROI{float(roi):+g}%"
         parts.append(detail)
     return (
@@ -388,6 +404,29 @@ class FAEAIReviewAnalyzer:
             } for pick in item.get("picks") or []],
         } for item in review.get("combo_results") or []
             if item.get("status") in SETTLED_STATUSES]
+        for ticket in review.get("draw_ticket_results") or []:
+            for line in ticket.get("line_results") or []:
+                if line.get("status") not in SETTLED_STATUSES:
+                    continue
+                combinations.append({
+                    "ticket_key": ticket.get("key"),
+                    "ticket_title": ticket.get("title"),
+                    "play": line.get("play"),
+                    "status": line.get("status"),
+                    "combined_odds": line.get("combined_odds"),
+                    "profit": line.get("profit"),
+                    "reason": (
+                        f"{ticket.get('title') or '平/让平专项票'}独立结算"
+                    ),
+                    "picks": [{
+                        "match_id": pick.get("match_id"),
+                        "match_number": pick.get("match_number"),
+                        "selection": pick.get("selection"),
+                        "selection_text": pick.get("selection_text"),
+                        "status": pick.get("status"),
+                        "odds": pick.get("odds"),
+                    } for pick in line.get("picks") or []],
+                })
         return {
             "owner_date": str(review.get("owner_date") or "")[:10],
             "run_id": review.get("run_id"),
@@ -548,6 +587,7 @@ class FAEAIReviewAnalyzer:
             "prediction.no_bet=true时，result.status通常为skipped，result.observation_status表示如果按赛前观察方向下注会命中、未中或走盘；若observation_status=miss，优先复核不下注是否避免错误，若observation_status=hit，必须复核是否过度保守。",
             "selection=观望且没有具体下注方向时，不能按命中率评价，只复核是否正确识别了数据不足、盘口冲突或风险。",
             "必须单独复核draw_radar_predictions：核心候选与观察候选分开统计；观察命中不能事后包装成正式推荐，核心未中也必须记录。",
+            "必须把平/让平3场2、3关与平/让平二串一当作两张独立票复核；3场2、3关按3个2串1和1个3串1共4注结算，禁止与独立二串一合并命中率或ROI。",
             "竞彩让球必须严格按保存的让球数计算：主队-1时，赢2球以上为让胜、恰好赢1球为让平、其余为让负；确定性结算结果优先于文字推断。",
             "每场result.handicap_settlement.actual_outcome是程序计算的唯一让球赛果，禁止自行重算或改写；诊断中提到让球赛果时必须逐字使用该字段。",
             "market_risk_context中的水位模式仅表示赛前风险结构；可以检验该预警是否有效，但不得把退盘、升水或欧亚背离直接写成比赛失利的真实原因。",

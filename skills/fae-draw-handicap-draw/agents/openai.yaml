@@ -1,0 +1,4 @@
+interface:
+  display_name: "FAE 本地平局与让平研判"
+  short_description: "原始盘口结合持续复盘记忆，本地筛选普通平局与竞彩让平"
+  default_prompt: "使用 $fae-draw-handicap-draw 加载目标日期之前的持续复盘记忆，并在本地独立筛选指定比赛日的平局和让平候选。"

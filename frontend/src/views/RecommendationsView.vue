@@ -394,6 +394,17 @@
                 <b>{{ line.odds }}倍</b>
               </span>
             </div>
+            <div v-if="drawRadarTwoLeg" class="draw-radar-two-leg">
+              <span>
+                <strong>独立二串一</strong>
+                <small>
+                  {{ drawRadarTwoLeg.picks.map(pick => (
+                    `${dailyMatch(pick.match_id).match_number}${pick.selection}`
+                  )).join(' × ') }}
+                </small>
+              </span>
+              <b>{{ drawRadarTwoLeg.combinedOdds }}倍</b>
+            </div>
             <footer>
               <span>
                 <strong>3场2、3关 · 共4注</strong>
@@ -1112,6 +1123,68 @@
               </button>
             </section>
 
+            <section
+              v-if="drawTicketReviewRows.length"
+              class="daily-review-block combo-review-block draw-ticket-review-block"
+            >
+              <h2>
+                <span>平 / 让平组合专项复盘</span>
+                <small>两种票型独立结算</small>
+              </h2>
+              <article v-for="ticket in drawTicketReviewRows" :key="ticket.key">
+                <header>
+                  <span>
+                    <strong>{{ ticket.title }}</strong>
+                    <small>{{ ticket.structure }}</small>
+                  </span>
+                  <i :class="ticket.status">
+                    {{ ticket.status === 'hit'
+                      ? `✓ 中${ticket.summary?.winning_lines || 0}注`
+                      : reviewStatusLabel(ticket.status)
+                    }}
+                  </i>
+                </header>
+                <p v-for="pick in ticket.picks" :key="`${ticket.key}-${pick.match_id}-${pick.selection}`">
+                  <span>
+                    {{ pick.match_number }} {{ pick.selection_text || pick.selection }}
+                    <small>{{ pick.result_score || '待赛' }}</small>
+                  </span>
+                  <b :class="pick.status">
+                    {{ reviewStatusLabel(pick.status) }} · @{{ pick.odds || '--' }}
+                  </b>
+                </p>
+                <p v-if="!ticket.picks?.length" class="draw-ticket-empty">
+                  {{ ticket.reason || '当日候选不足，未生成该票型。' }}
+                </p>
+                <div class="draw-ticket-lines">
+                  <span
+                    v-for="line in ticket.line_results"
+                    :key="`${ticket.key}-${line.key}`"
+                    :class="line.status"
+                  >
+                    {{ line.play }}
+                    <b>{{ reviewStatusLabel(line.status) }}</b>
+                    <small>@{{ line.combined_odds || '--' }}</small>
+                  </span>
+                </div>
+                <footer>
+                  <span>
+                    {{ ticket.summary?.winning_lines || 0 }}/{{ ticket.summary?.settled_lines || 0 }}注
+                    · 返还 {{ ticket.summary?.return_units || 0 }}单位
+                  </span>
+                  <b
+                    v-if="ticket.summary?.profit_units !== null && ticket.summary?.profit_units !== undefined"
+                    :class="metricClass(ticket.summary.profit_units)"
+                  >
+                    {{ signedMetric(ticket.summary.profit_units) }}单位
+                    <small v-if="ticket.summary?.roi !== null && ticket.summary?.roi !== undefined">
+                      · ROI {{ signedMetric(ticket.summary.roi) }}%
+                    </small>
+                  </b>
+                </footer>
+              </article>
+            </section>
+
             <section class="daily-review-block combo-review-block">
               <h2><span>当天组合结果</span><small>2串1 / 3串1</small></h2>
               <article v-for="item in faeReview.combo_results" :key="item.key">
@@ -1612,6 +1685,43 @@ const drawRadarSpotlights = computed(() => {
   }).filter(Boolean)
 })
 const drawRadarParlay = computed(() => {
+  const stored = faeDailyAi.value?.daily_summary?.draw_parlay_tickets?.two_three
+  if (
+    stored?.picks?.length === 3
+    && stored.picks.every(pick => (
+      pick?.match_id
+      && Number.isFinite(Number(pick.odds))
+      && isVisibleDailyMatch(dailyMatch(pick.match_id))
+    ))
+  ) {
+    const picks = stored.picks.map(pick => ({ ...pick }))
+    const lines = (stored.lines || []).map(line => {
+      const refs = line.pick_refs || []
+      return {
+        key: line.key,
+        label: refs.length === 3
+          ? '三串一'
+          : refs.map(ref => dailyMatch(ref.match_id).match_number).join(' × '),
+        odds: Number(line.combined_odds || 0).toFixed(2)
+      }
+    })
+    const probabilities = picks.map(pick => Number(pick.probability || 0) / 100)
+    const tripleProbability = probabilities.reduce((total, probability) => (
+      total * probability
+    ), 1)
+    const pairIndexes = [[0, 1], [0, 2], [1, 2]]
+    const pairProbability = pairIndexes.reduce((total, [leftIndex, rightIndex]) => (
+      total + probabilities[leftIndex] * probabilities[rightIndex]
+    ), 0)
+    return {
+      picks,
+      lines,
+      coverageProbability: Math.max(
+        0,
+        (pairProbability - 2 * tripleProbability) * 100
+      ).toFixed(1)
+    }
+  }
   const radar = faeDailyAi.value?.daily_summary?.draw_radar || {}
   const visibleCandidates = key => (radar[key] || []).filter(candidate => (
     candidate?.match_id
@@ -1675,6 +1785,30 @@ const drawRadarParlay = computed(() => {
       0,
       (pairProbability - 2 * tripleProbability) * 100
     ).toFixed(1)
+  }
+})
+const drawRadarTwoLeg = computed(() => {
+  const stored = faeDailyAi.value?.daily_summary?.draw_parlay_tickets?.two_leg
+  if (
+    stored?.picks?.length === 2
+    && stored.picks.every(pick => (
+      pick?.match_id
+      && Number.isFinite(Number(pick.odds))
+      && isVisibleDailyMatch(dailyMatch(pick.match_id))
+    ))
+  ) {
+    return {
+      picks: stored.picks,
+      combinedOdds: Number(stored.lines?.[0]?.combined_odds || 0).toFixed(2)
+    }
+  }
+  const picks = drawRadarParlay.value?.picks || []
+  const ordinary = picks.find(pick => pick.market === 'ordinary_draw')
+  const handicap = picks.find(pick => pick.market === 'handicap_draw')
+  if (!ordinary || !handicap) return null
+  return {
+    picks: [ordinary, handicap],
+    combinedOdds: (Number(ordinary.odds) * Number(handicap.odds)).toFixed(2)
   }
 })
 const leagueModelGroups = computed(() => {
@@ -1761,6 +1895,9 @@ const twoOptionReviewRows = computed(() => {
   }
   return Array.from(byMatch.values())
 })
+const drawTicketReviewRows = computed(() => (
+  faeReview.value?.draw_ticket_results || []
+))
 const reviewableMatchCount = computed(() => (
   faeReview.value?.match_results || []
 ).filter(item => (
@@ -2285,6 +2422,7 @@ function reviewStatusLabel(status, noBet = false) {
   if (status === 'push') return '走盘'
   if (status === 'skipped') return noBet ? '观察降级' : '观望'
   if (status === 'ungraded') return '未结算'
+  if (status === 'not_generated') return '未成票'
   return '待赛'
 }
 
@@ -3474,6 +3612,44 @@ onBeforeUnmount(() => {
 .draw-radar-parlay-lines b {
   color: #d93051;
   white-space: nowrap;
+}
+
+.draw-radar-two-leg {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  color: #61565a;
+  background: #fff8ee;
+  border-top: 1px solid #f1e3ce;
+}
+
+.draw-radar-two-leg span,
+.draw-radar-two-leg strong,
+.draw-radar-two-leg small {
+  display: block;
+  min-width: 0;
+}
+
+.draw-radar-two-leg strong {
+  color: #8b5d17;
+  font-size: 10px;
+}
+
+.draw-radar-two-leg small {
+  margin-top: 2px;
+  overflow: hidden;
+  color: #9a8665;
+  font-size: 8px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.draw-radar-two-leg > b {
+  flex: 0 0 auto;
+  color: #d93051;
+  font-size: 11px;
 }
 
 .draw-radar-parlay > footer {
@@ -5032,6 +5208,17 @@ onBeforeUnmount(() => {
   font-size: 13px;
 }
 
+.draw-ticket-review-block article > header span,
+.draw-ticket-review-block article > header small {
+  display: block;
+}
+
+.draw-ticket-review-block article > header small {
+  margin-top: 2px;
+  color: #999;
+  font-size: 10px;
+}
+
 .combo-review-block article > header i {
   color: #999;
   font-size: 12px;
@@ -5044,12 +5231,86 @@ onBeforeUnmount(() => {
   font-size: 12px;
 }
 
+.draw-ticket-review-block article > p span small {
+  margin-left: 5px;
+  color: #aaa;
+  font-size: 10px;
+}
+
+.draw-ticket-review-block article > p b {
+  color: #999;
+  font-size: 10px;
+  font-weight: 500;
+}
+
+.draw-ticket-review-block article > p b.hit,
+.draw-ticket-lines span.hit b {
+  color: #15956f;
+}
+
+.draw-ticket-review-block article > p b.miss,
+.draw-ticket-lines span.miss b {
+  color: #e53955;
+}
+
+.draw-ticket-review-block article > p.draw-ticket-empty {
+  display: block;
+  margin: 7px 0 0;
+  padding: 6px 8px;
+  color: #999;
+  font-size: 10px;
+  line-height: 1.5;
+  background: #faf8f9;
+  border-radius: 6px;
+}
+
+.draw-ticket-lines {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 5px;
+  margin-top: 8px;
+}
+
+.draw-ticket-lines span {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 5px;
+  padding: 5px 6px;
+  color: #706970;
+  font-size: 10px;
+  background: #faf8f9;
+  border-radius: 6px;
+}
+
+.draw-ticket-lines span b {
+  justify-self: end;
+  color: #999;
+}
+
+.draw-ticket-lines span small {
+  grid-column: 1 / -1;
+  color: #aaa;
+  font-size: 9px;
+}
+
 .combo-review-block article > footer {
   margin-top: 7px;
   padding-top: 6px;
   color: #999;
   font-size: 12px;
   border-top: 1px dashed #f0e5e7;
+}
+
+.draw-ticket-review-block article > footer b.positive {
+  color: #15956f;
+}
+
+.draw-ticket-review-block article > footer b.negative {
+  color: #e53955;
+}
+
+.draw-ticket-review-block article > footer b small {
+  font-size: 9px;
 }
 
 .review-pending {

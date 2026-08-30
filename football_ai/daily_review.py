@@ -402,6 +402,14 @@ class FAEDailyAIReviewEngine:
                 "profit": round(payout - 1, 2) if payout is not None else None,
             })
 
+        draw_ticket_results = self._settle_draw_parlay_tickets(
+            ((snapshot.get("daily_summary") or {}).get(
+                "draw_parlay_tickets"
+            ) or {}),
+            snapshot_by_id,
+            matches_by_id,
+        )
+
         pending = sum(
             1 for row in match_results if row.get("status") == "pending"
         )
@@ -433,6 +441,7 @@ class FAEDailyAIReviewEngine:
             "two_option_results": two_option_results,
             "draw_radar_results": draw_radar_results,
             "combo_results": combo_results,
+            "draw_ticket_results": draw_ticket_results,
             "conflicts": conflicts,
             "summary": {
                 "singles": summarize_ai_settled(match_results),
@@ -485,6 +494,11 @@ class FAEDailyAIReviewEngine:
                         row for row in draw_radar_results
                         if row.get("tier") == "watch"
                     ]),
+                },
+                "draw_tickets": {
+                    str(item.get("key") or ""): item.get("summary") or {}
+                    for item in draw_ticket_results
+                    if item.get("key")
                 },
                 "handicap_by_selection": {
                     label: summarize_ai_settled([
@@ -751,6 +765,174 @@ class FAEDailyAIReviewEngine:
         selection_set = set(selections)
         return any(selection_set <= market for market in market_sets)
 
+    @classmethod
+    def _settle_draw_parlay_tickets(
+        cls,
+        tickets: Dict[str, Any],
+        snapshot_by_id: Dict[str, Dict[str, Any]],
+        matches_by_id: Dict[str, Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """Settle the two immutable draw tickets independently by line."""
+        results = []
+        defaults = {
+            "two_three": {
+                "key": "draw-two-three",
+                "title": "平/让平 3场2、3关",
+                "play": "3场2、3关",
+                "structure": "1平+2让平",
+                "required_picks": 3,
+            },
+            "two_leg": {
+                "key": "draw-two-leg",
+                "title": "平/让平二串一",
+                "play": "2串1",
+                "structure": "1平+1让平",
+                "required_picks": 2,
+            },
+        }
+        for field in ("two_three", "two_leg"):
+            base = defaults[field]
+            ticket = tickets.get(field) or {}
+            if not ticket.get("picks") or not ticket.get("lines"):
+                results.append({
+                    "key": base["key"],
+                    "title": base["title"],
+                    "play": base["play"],
+                    "structure": base["structure"],
+                    "status": "not_generated",
+                    "reason": (
+                        f"当日平/让平雷达不足{base['required_picks']}场，"
+                        "未生成该票型。"
+                    ),
+                    "picks": [],
+                    "line_results": [],
+                    "summary": {
+                        "total_lines": 0,
+                        "settled_lines": 0,
+                        "pending_lines": 0,
+                        "winning_lines": 0,
+                        "losing_lines": 0,
+                        "stake_units": 0,
+                        "return_units": 0,
+                        "profit_units": None,
+                        "roi": None,
+                    },
+                })
+                continue
+            settled_picks = []
+            settled_by_key = {}
+            for pick in ticket.get("picks") or []:
+                match_id = str(pick.get("match_id") or "")
+                selection = str(pick.get("selection") or "")
+                settled = cls._settle_selection(
+                    snapshot_by_id.get(match_id) or {},
+                    matches_by_id.get(match_id) or {},
+                    selection,
+                )
+                # The ticket price is immutable and is the price used for its
+                # settlement, even if another page later shows newer odds.
+                if _number(pick.get("odds")) is not None:
+                    settled["odds"] = round(float(pick["odds"]), 3)
+                settled["ticket_market"] = pick.get("market")
+                settled_picks.append(settled)
+                settled_by_key[(match_id, selection)] = settled
+
+            line_results = []
+            for source_line in ticket.get("lines") or []:
+                picks = [
+                    settled_by_key.get((
+                        str(ref.get("match_id") or ""),
+                        str(ref.get("selection") or ""),
+                    ))
+                    for ref in source_line.get("pick_refs") or []
+                ]
+                picks = [pick for pick in picks if pick]
+                statuses = [str(pick.get("status") or "pending") for pick in picks]
+                if not picks or any(value in {"ungraded", "skipped"} for value in statuses):
+                    status = "ungraded"
+                elif "miss" in statuses:
+                    status = "miss"
+                elif "pending" in statuses:
+                    status = "pending"
+                elif all(value == "hit" for value in statuses):
+                    status = "hit"
+                else:
+                    status = "ungraded"
+
+                combined_odds = _number(source_line.get("combined_odds"))
+                if combined_odds is None and picks:
+                    combined_odds = 1.0
+                    for pick in picks:
+                        odds = _number(pick.get("odds"))
+                        if odds is None:
+                            combined_odds = None
+                            break
+                        combined_odds *= odds
+                payout = (
+                    combined_odds if status == "hit" and combined_odds
+                    else 0.0 if status == "miss"
+                    else None
+                )
+                line_results.append({
+                    "key": source_line.get("key"),
+                    "play": source_line.get("play") or f"{len(picks)}串1",
+                    "picks": picks,
+                    "status": status,
+                    "combined_odds": (
+                        round(combined_odds, 2)
+                        if combined_odds is not None else None
+                    ),
+                    "return": round(payout, 2) if payout is not None else None,
+                    "profit": (
+                        round(payout - 1, 2)
+                        if payout is not None else None
+                    ),
+                })
+
+            settled_lines = [
+                row for row in line_results
+                if row.get("status") in {"hit", "miss"}
+            ]
+            hit_lines = sum(
+                1 for row in settled_lines if row.get("status") == "hit"
+            )
+            returns = round(sum(
+                _number(row.get("return")) or 0 for row in settled_lines
+            ), 2)
+            stake = len(settled_lines)
+            pending = len(line_results) - stake
+            if pending:
+                status = "pending"
+            elif hit_lines:
+                status = "hit"
+            else:
+                status = "miss"
+            profit = round(returns - stake, 2) if stake else None
+            results.append({
+                "key": ticket.get("key") or field,
+                "title": ticket.get("title") or ticket.get("play"),
+                "play": ticket.get("play"),
+                "structure": ticket.get("structure"),
+                "status": status,
+                "picks": settled_picks,
+                "line_results": line_results,
+                "summary": {
+                    "total_lines": len(line_results),
+                    "settled_lines": stake,
+                    "pending_lines": pending,
+                    "winning_lines": hit_lines,
+                    "losing_lines": stake - hit_lines,
+                    "stake_units": stake,
+                    "return_units": returns,
+                    "profit_units": profit,
+                    "roi": (
+                        round(profit / stake * 100, 1)
+                        if profit is not None and stake else None
+                    ),
+                },
+            })
+        return results
+
     def _settle_draw_radar(
         self, source: Dict[str, Any], match: Dict[str, Any]
     ) -> List[Dict[str, Any]]:
@@ -928,6 +1110,7 @@ def aggregate_daily_ai_reviews(
     two_option_results: List[Dict[str, Any]] = []
     draw_radar_results: List[Dict[str, Any]] = []
     combos: List[Dict[str, Any]] = []
+    draw_ticket_results: List[Dict[str, Any]] = []
     conflicts: List[Dict[str, Any]] = []
     for review in rows:
         owner_date = str(review.get("owner_date") or "")[:10]
@@ -952,6 +1135,10 @@ def aggregate_daily_ai_reviews(
             "review_owner_date": owner_date,
         } for row in review.get("draw_radar_results") or [])
         combos.extend(review.get("combo_results") or [])
+        draw_ticket_results.extend({
+            **row,
+            "review_owner_date": owner_date,
+        } for row in review.get("draw_ticket_results") or [])
         conflicts.extend(review.get("conflicts") or [])
     labels = sorted({
         row.get("selection") for row in matches
@@ -1016,6 +1203,34 @@ def aggregate_daily_ai_reviews(
                 row for row in draw_radar_results
                 if row.get("tier") == "watch"
             ]),
+        },
+        "draw_tickets": {
+            key: {
+                "days": len(items),
+                "settled_days": sum(
+                    1 for item in items if item.get("status") in {"hit", "miss"}
+                ),
+                "returning_days": sum(
+                    1 for item in items
+                    if int((item.get("summary") or {}).get("winning_lines") or 0) > 0
+                ),
+                "stake_units": round(sum(
+                    _number((item.get("summary") or {}).get("stake_units")) or 0
+                    for item in items
+                ), 2),
+                "return_units": round(sum(
+                    _number((item.get("summary") or {}).get("return_units")) or 0
+                    for item in items
+                ), 2),
+            }
+            for key in sorted({
+                str(item.get("key") or "")
+                for item in draw_ticket_results if item.get("key")
+            })
+            for items in [[
+                item for item in draw_ticket_results
+                if str(item.get("key") or "") == key
+            ]]
         },
         "handicap_by_selection": {
             label: summarize_ai_settled([

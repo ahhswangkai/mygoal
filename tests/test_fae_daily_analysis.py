@@ -143,6 +143,62 @@ def match(match_id, total_initial="2.5", total_current="2.5"):
 
 
 class DailyAnalysisTests(unittest.TestCase):
+    def test_minus_one_cover_price_above_draw_confirms_handicap_draw(self):
+        source = {
+            "sporttery_handicap": {
+                "value": -1,
+                "current": [3.70, 3.40, 1.72],
+            },
+        }
+
+        let_draw = FAEDailyAIAnalyzer._sporttery_draw_price_signal(
+            source, "让平"
+        )
+        ordinary_draw = FAEDailyAIAnalyzer._sporttery_draw_price_signal(
+            source, "平局"
+        )
+
+        self.assertEqual(let_draw["role"], "让胜高于让平")
+        self.assertEqual(let_draw["odds_gap"], 0.3)
+        self.assertEqual(let_draw["probability_adjustment_pp"], 1.0)
+        self.assertEqual(let_draw["score_bonus"], 8.0)
+        self.assertFalse(let_draw["formal_rule"])
+        self.assertEqual(ordinary_draw["probability_adjustment_pp"], 0.5)
+        self.assertEqual(ordinary_draw["score_bonus"], 4.0)
+
+    def test_plus_one_receiving_lose_above_receiving_draw_confirms_margin(self):
+        source = {
+            "sporttery_handicap": {
+                "value": 1,
+                "current": [1.62, 3.20, 3.36],
+            },
+        }
+
+        signal = FAEDailyAIAnalyzer._sporttery_draw_price_signal(
+            source, "让平"
+        )
+
+        self.assertEqual(signal["role"], "受让负高于受让平")
+        self.assertEqual(signal["comparison_label"], "受让负")
+        self.assertEqual(signal["draw_label"], "受让平")
+        self.assertEqual(signal["probability_adjustment_pp"], 0.75)
+        self.assertEqual(signal["score_bonus"], 6.0)
+
+    def test_draw_price_signal_does_not_trigger_when_cover_is_shorter(self):
+        source = {
+            "sporttery_handicap": {
+                "value": -1,
+                "current": [2.85, 3.40, 2.10],
+            },
+        }
+
+        self.assertEqual(
+            FAEDailyAIAnalyzer._sporttery_draw_price_signal(
+                source, "让平"
+            ),
+            {},
+        )
+
     @staticmethod
     def radar_match(
         match_id,
@@ -3374,6 +3430,41 @@ class DailyAnalysisTests(unittest.TestCase):
         self.assertFalse(profile["actionable"])
         self.assertTrue(profile["high_upset_favorite_conflict"])
         self.assertIn("防冷预警冲突", profile["reason"])
+
+    def test_persists_exact_draw_two_three_and_two_leg_tickets(self):
+        summary = {
+            "draw_radar": {
+                "ordinary_draw": [{
+                    "match_id": "201", "match_number": "周六201",
+                    "selection": "平局", "odds": 3.2,
+                    "probability": 31,
+                }],
+                "handicap_draw": [{
+                    "match_id": "202", "match_number": "周六202",
+                    "selection": "让平", "handicap": -1,
+                    "odds": 3.5, "probability": 28,
+                }, {
+                    "match_id": "203", "match_number": "周六203",
+                    "selection": "让平", "handicap": 1,
+                    "odds": 3.4, "probability": 27,
+                }],
+            },
+        }
+
+        result = FAEDailyAIAnalyzer.attach_draw_parlay_tickets(summary)
+        tickets = result["draw_parlay_tickets"]
+
+        self.assertEqual(tickets["two_three"]["line_count"], 4)
+        self.assertEqual(tickets["two_three"]["stake_units"], 4)
+        self.assertEqual(
+            [pick["selection"] for pick in tickets["two_three"]["picks"]],
+            ["平局", "让平", "让平"],
+        )
+        self.assertEqual(tickets["two_leg"]["line_count"], 1)
+        self.assertEqual(
+            [pick["match_id"] for pick in tickets["two_leg"]["picks"]],
+            ["201", "202"],
+        )
 
 
 if __name__ == "__main__":

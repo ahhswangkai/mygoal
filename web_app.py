@@ -1432,6 +1432,20 @@ def _review_fae_daily_ai(
     )
     if not snapshot:
         return None
+    # Backfill the explicit ticket structures for snapshots generated before
+    # draw-parlay-ticket-v1.  The radar rows and their pre-match prices are
+    # already immutable in the snapshot, so this does not introduce live data.
+    if not (
+        ((snapshot.get('daily_summary') or {}).get(
+            'draw_parlay_tickets'
+        ) or {}).get('version')
+    ):
+        snapshot = dict(snapshot)
+        snapshot['daily_summary'] = (
+            fae_daily_ai_analyzer.attach_draw_parlay_tickets(
+                snapshot.get('daily_summary') or {}
+            )
+        )
     matches = {
         str(item.get('match_id')): (
             mongo_storage.get_match_by_id(item.get('match_id')) or {}
@@ -2030,6 +2044,11 @@ def get_fae_daily_ai():
             )
         )
         data['daily_summary'] = (
+            fae_daily_ai_analyzer.attach_draw_parlay_tickets(
+                data.get('daily_summary') or {}
+            )
+        )
+        data['daily_summary'] = (
             fae_daily_ai_analyzer.normalize_summary_memory_governance(
                 data.get('daily_summary') or {},
                 data.get('review_memory') or {},
@@ -2213,6 +2232,20 @@ def get_fae_daily_ai_review():
         ).lower() in ('1', 'true', 'yes', 'on'),
         'ai_review_configured': fae_ai_review_analyzer.configured,
         'run_id': latest_run_id,
+    })
+
+
+@app.route('/api/fae/review-memory', methods=['GET'])
+def get_fae_review_memory():
+    """Expose compact pre-date review memory for deterministic local tools."""
+    if not mongo_storage:
+        return jsonify({'success': False, 'message': 'MongoDB不可用'}), 500
+    date_str = request.args.get('date') or datetime.now().strftime('%Y-%m-%d')
+    return jsonify({
+        'success': True,
+        'data': mongo_storage.get_fae_review_memory(date_str),
+        'before_date': date_str,
+        'future_data_excluded': True,
     })
 
 

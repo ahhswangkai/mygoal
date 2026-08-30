@@ -25,11 +25,11 @@ class DrawParlayTests(unittest.TestCase):
             "engine_version": "2.0.0",
             "groups": {
                 "平局": [
-                    ranking_row(str(i), f"周六20{i}", "平局", 30 + i, 3.2 + i / 10)
+                    ranking_row(str(i), f"周六20{i}", "平局", 36 + i, 3.2 + i / 10)
                     for i in range(1, 5)
                 ],
                 "让平": [
-                    ranking_row(str(i), f"周六20{i}", "让平", 25 + i, 3.5 + i / 10, 78)
+                    ranking_row(str(i), f"周六20{i}", "让平", 34 + i, 3.5 + i / 10, 78)
                     for i in range(1, 5)
                 ],
             },
