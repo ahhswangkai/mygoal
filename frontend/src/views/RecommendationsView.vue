@@ -1090,6 +1090,15 @@
                 </span>
                 <span class="review-pick-info">
                   <strong>{{ item.selection_text || item.selection }}</strong>
+                  <small
+                    class="two-option-level"
+                    :class="item.formal_two_option ? 'core' : 'watch'"
+                  >
+                    {{ item.formal_two_option
+                      ? `核心${item.daily_rank ? ` #${item.daily_rank}` : ''}`
+                      : '观察'
+                    }}
+                  </small>
                   <i :class="item.status">
                     {{ item.status === 'hit' ? `✓ 覆盖${item.hit_selection_text ? ` ${item.hit_selection_text}` : ''}` : reviewStatusLabel(item.status) }}
                   </i>
@@ -2308,9 +2317,10 @@ function twoOptionRowRank(item) {
     ungraded: 0,
     skipped: 0
   }[item?.status] ?? 0
-  const marketRank = item?.result_type === 'two_option_handicap' ? 2 : 1
+  const formalRank = item?.formal_two_option ? 100 : 0
+  const marketRank = item?.result_type === 'two_option_main' ? 2 : 1
   const oddsRank = twoOptionHitOdds(item) ? 1 : 0
-  return statusRank + marketRank + oddsRank
+  return formalRank + statusRank + marketRank + oddsRank
 }
 
 function aiScopeLabel(scope) {
@@ -4984,6 +4994,25 @@ onBeforeUnmount(() => {
   font-size: 9px;
   line-height: 1.25;
   white-space: nowrap;
+}
+
+.review-pick-info > small.two-option-level {
+  padding: 1px 5px;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1.4;
+  border-radius: 8px;
+  white-space: nowrap;
+}
+
+.review-pick-info > small.two-option-level.core {
+  color: #d92f50;
+  background: #fff0f3;
+}
+
+.review-pick-info > small.two-option-level.watch {
+  color: #a9771a;
+  background: #fff7df;
 }
 
 .combo-review-block > article {

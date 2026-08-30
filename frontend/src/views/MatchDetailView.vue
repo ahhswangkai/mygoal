@@ -56,12 +56,16 @@
                   <strong v-else-if="dailyAiContent.no_bet" class="daily-no-bet"><small>结论</small>不下注</strong>
                   <span v-if="dailyAiPrimaryRadar"><small>总盘结论</small>{{ dailyAiContent.decision || '观望' }}</span>
                   <span><small>赛果预测</small>{{ dailyAiContent.predicted_result || '观望' }}</span>
-                  <strong>
+                  <strong v-if="dailyAiTwoOptionText" class="daily-two-option">
+                    <small>{{ dailyAiTwoOption.actionable ? '正式双选' : '观察双选' }}</small>{{ dailyAiTwoOptionText }}
+                  </strong>
+                  <strong v-else>
                     <small>单选</small>{{ dailyAiContent.single_play || dailyAiContent.primary_play || '观望' }}
                     <template v-if="dailyAiContent.single_odds"> @{{ dailyAiContent.single_odds }}</template>
                   </strong>
                   <span
-                    v-if="(dailyAiContent.single_secondary_play || dailyAiContent.secondary_play)
+                    v-if="!dailyAiTwoOptionText
+                      && (dailyAiContent.single_secondary_play || dailyAiContent.secondary_play)
                       && (dailyAiContent.single_secondary_play || dailyAiContent.secondary_play) !== '观望'"
                   >
                     <small>次选</small>{{ dailyAiContent.single_secondary_play || dailyAiContent.secondary_play }}
@@ -69,11 +73,19 @@
                       @{{ dailyAiContent.single_secondary_odds }}
                     </template>
                   </span>
-                  <span v-if="dailyAiContent.primary_play && dailyAiContent.primary_play !== '观望'">
+                  <span
+                    v-if="dailyAiContent.primary_play
+                      && dailyAiContent.primary_play !== '观望'
+                      && !dailyAiTwoOptionSelections.includes(dailyAiContent.primary_play)"
+                  >
                     <small>价值玩法</small>{{ dailyAiContent.primary_play }}
                   </span>
-                  <span v-if="dailyAiContent.handicap_play && dailyAiContent.handicap_play !== '观望'">
-                    <small>让球</small>{{ dailyAiContent.handicap_play }}
+                  <span
+                    v-if="dailyAiContent.handicap_play
+                      && dailyAiContent.handicap_play !== '观望'
+                      && !dailyAiTwoOptionSelections.includes(dailyAiContent.handicap_play)"
+                  >
+                    <small>让球参考</small>{{ dailyAiContent.handicap_play }}
                   </span>
                 </div>
                 <b>{{ dailyAiPrimaryRadar ? starText(dailyAiPrimaryRadar.rating) : dailyAiContent.no_bet ? '方向观察' : (dailyAiContent.star_text || starText(dailyAiContent.rating)) }}</b>
@@ -420,6 +432,30 @@ let fetchVersion = 0
 const aiContent = computed(() => aiAnalysis.value?.analysis || null)
 const dailyAiContent = computed(() => dailyAiAnalysis.value?.analysis || null)
 const dailyAiSnapshot = computed(() => dailyAiAnalysis.value?.input_snapshot || {})
+const dailyAiTwoOption = computed(() => (
+  dailyAiContent.value?.two_option_recommendation || {}
+))
+const dailyAiTwoOptionSelections = computed(() => {
+  if (!['胜平负', '竞彩让球'].includes(dailyAiTwoOption.value?.market)) return []
+  const selections = dailyAiTwoOption.value?.selections
+  if (!Array.isArray(selections)) return []
+  return selections
+    .map(selection => String(selection || '').trim())
+    .filter(selection => selection && selection !== '观望')
+    .slice(0, 2)
+})
+const dailyAiTwoOptionText = computed(() => {
+  if (dailyAiTwoOptionSelections.value.length !== 2) return ''
+  const odds = dailyAiTwoOption.value?.odds || {}
+  return dailyAiTwoOptionSelections.value
+    .map(selection => {
+      const value = Number(odds[selection])
+      return Number.isFinite(value) && value > 0
+        ? `${selection} @${value.toFixed(2).replace(/\.?0+$/, '')}`
+        : selection
+    })
+    .join(' / ')
+})
 const dailyAiRadarRows = computed(() => {
   const radar = dailyAiContent.value?.draw_radar || {}
   return ['handicap_draw', 'ordinary_draw']
@@ -970,6 +1006,11 @@ onMounted(fetchAll)
   font-size: 15px;
   background: linear-gradient(135deg, #ff5962, #ee2e42);
   border-radius: 6px;
+}
+
+.daily-detail-picks .daily-two-option {
+  color: var(--detail-accent);
+  font-size: 19px;
 }
 
 .daily-detail-picks .daily-radar-main small {

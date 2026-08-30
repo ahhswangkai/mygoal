@@ -590,6 +590,12 @@ class FAEDailyAIReviewEngine:
     ) -> List[Dict[str, Any]]:
         """Settle primary + hedge coverage without treating it as ROI."""
         analysis = source.get("analysis") or {}
+        two_option_profile = analysis.get("two_option_recommendation") or {}
+        profile_selections = [
+            str(value or "")
+            for value in two_option_profile.get("selections") or []
+            if str(value or "") in TWO_OPTION_SELECTIONS
+        ]
         rows: List[Dict[str, Any]] = []
         groups = {
             "main": {
@@ -626,6 +632,13 @@ class FAEDailyAIReviewEngine:
                 continue
             if not self._same_market(selections):
                 continue
+            matches_profile = bool(
+                len(selections) == len(profile_selections)
+                and set(selections) == set(profile_selections)
+            )
+            formal_two_option = bool(
+                matches_profile and two_option_profile.get("actionable")
+            )
             settled = [
                 self._settle_selection(source, match, selection)
                 for selection in selections
@@ -691,6 +704,27 @@ class FAEDailyAIReviewEngine:
                 "status": status,
                 "result_score": first.get("result_score"),
                 "pair_key": " / ".join(selections),
+                "formal_two_option": formal_two_option,
+                "actionable": formal_two_option,
+                "recommendation_level": (
+                    "core" if formal_two_option else "watch"
+                ),
+                "daily_rank": (
+                    two_option_profile.get("daily_rank")
+                    if formal_two_option else None
+                ),
+                "coverage_score": (
+                    two_option_profile.get("coverage_score")
+                    if matches_profile else None
+                ),
+                "rank_score": (
+                    two_option_profile.get("rank_score")
+                    if matches_profile else None
+                ),
+                "ai_verified": (
+                    two_option_profile.get("ai_verified")
+                    if matches_profile else None
+                ),
                 "rating": first.get("rating"),
                 "rating_bucket": first.get("rating_bucket"),
                 "no_bet": bool(analysis.get("no_bet")),

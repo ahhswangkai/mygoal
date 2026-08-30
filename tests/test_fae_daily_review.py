@@ -166,18 +166,26 @@ class DailyAIReviewTests(unittest.TestCase):
         self.assertEqual(row["single_probability"], 58.4)
 
     def test_settles_two_option_coverage_for_handicap_hedge(self):
+        match = source(
+            "208",
+            "让平",
+            secondary_play="让负",
+            handicap_play="让平",
+            handicap=-1,
+            hhad=(2.8, 3.5, 2.0),
+        )
+        match["analysis"]["two_option_recommendation"] = {
+            "actionable": True,
+            "recommendation_level": "core",
+            "daily_rank": 1,
+            "selections": ["让平", "让负"],
+            "coverage_score": 82.5,
+            "rank_score": 78.0,
+            "ai_verified": True,
+        }
         snapshot = {
             **self.snapshot,
-            "matches": [
-                source(
-                    "208",
-                    "让平",
-                    secondary_play="让负",
-                    handicap_play="让平",
-                    handicap=-1,
-                    hhad=(2.8, 3.5, 2.0),
-                ),
-            ],
+            "matches": [match],
             "daily_summary": {"recommended_combinations": []},
         }
         results = {
@@ -188,6 +196,10 @@ class DailyAIReviewTests(unittest.TestCase):
         row = review["two_option_results"][0]
 
         self.assertEqual(row["selection"], "让平 / 让负")
+        self.assertTrue(row["formal_two_option"])
+        self.assertEqual(row["recommendation_level"], "core")
+        self.assertEqual(row["daily_rank"], 1)
+        self.assertEqual(row["coverage_score"], 82.5)
         self.assertEqual(row["status"], "hit")
         self.assertEqual(row["hit_selection"], "让负")
         self.assertEqual(row["hit_odds"], 2.0)
