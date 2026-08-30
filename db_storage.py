@@ -1175,14 +1175,20 @@ class MongoDBStorage:
             self.logger.error(f"保存企业微信投递记录失败: {str(e)}")
             return False
 
-    def get_fae_daily_ai_snapshot(self, owner_date):
-        """Return the latest daily AI run created while every match was pre-game."""
+    def get_fae_daily_ai_snapshot(self, owner_date, latest=False):
+        """Return one immutable daily AI run with its per-match snapshot.
+
+        Historical replay keeps the latest fully pre-game run by default.  A
+        post-match review passes ``latest=True`` so settlement always follows
+        the final analysis run shown to the user, even when that run was an
+        incremental refresh after some fixtures had started.
+        """
         try:
+            query = {'owner_date': str(owner_date or '')[:10]}
+            if not latest:
+                query['eligible_for_review'] = True
             run = self.fae_daily_ai_runs_collection.find_one(
-                {
-                    'owner_date': str(owner_date or '')[:10],
-                    'eligible_for_review': True,
-                },
+                query,
                 {'_id': 0},
                 sort=[('generated_at', DESCENDING)],
             )
@@ -1202,12 +1208,13 @@ class MongoDBStorage:
             self.logger.error(f"读取 FAE 全日AI赛前快照失败: {str(e)}")
             return None
 
-    def get_fae_daily_ai_snapshot_dates(self, limit=14):
+    def get_fae_daily_ai_snapshot_dates(self, limit=14, eligible_only=True):
         try:
+            query = {'eligible_for_review': True} if eligible_only else {}
             dates = sorted(
                 value
                 for value in self.fae_daily_ai_runs_collection.distinct(
-                    'owner_date', {'eligible_for_review': True}
+                    'owner_date', query
                 )
                 if value
             )

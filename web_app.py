@@ -1424,7 +1424,12 @@ def _review_fae_daily_ai(
     """Settle the immutable Ark run and cache an AI post-match diagnosis."""
     if not mongo_storage:
         return None
-    snapshot = snapshot or mongo_storage.get_fae_daily_ai_snapshot(owner_date)
+    # Settlement must follow the final analysis run for the match day.  Do not
+    # fall back to an older all-pregame run, otherwise the review page and the
+    # recommendation page can point at different run_ids.
+    snapshot = snapshot or mongo_storage.get_fae_daily_ai_snapshot(
+        owner_date, latest=True
+    )
     if not snapshot:
         return None
     matches = {
@@ -3201,7 +3206,9 @@ def _crawl_latest():
             try:
                 ai_review_count = 0
                 for snapshot_date in (
-                    mongo_storage.get_fae_daily_ai_snapshot_dates(14)
+                    mongo_storage.get_fae_daily_ai_snapshot_dates(
+                        14, eligible_only=False
+                    )
                 ):
                     daily_review = _review_fae_daily_ai(snapshot_date)
                     if daily_review:
