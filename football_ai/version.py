@@ -2,8 +2,8 @@
 
 ENGINE_NAME = "Football AI Engine"
 ENGINE_CODE = "FAE"
-ENGINE_VERSION = "2.16.1"
-SCHEMA_VERSION = "2.9"
+ENGINE_VERSION = "2.17.0"
+SCHEMA_VERSION = "2.10"
 
 DIMENSION_WEIGHTS = {
     "handicap": 0.20,
@@ -113,6 +113,7 @@ VERSION_MANIFEST = {
         "全场方向与正式投注池分离：逐场继续输出主次选，仅由大模型来源、融合概率、赔率价值、盘口可信度和数据风险共同筛出每日最多5场正式单选",
         "大模型覆盖纠偏：仅按实际返回match_id计数，遗漏场次自动按最多3场一批补研判",
         "让平雷达赔率变化软化：主队-1让平赔3.20-3.79不再强制要求小升，持平或下降可继续参与正式门禁，小升仅保留为额外加分",
+        "正式池滚动盈利单选：仅筛竞彩让胜/让负、四市场完整且模型与市场第一方向一致的候选，每日按同市场领先分差只取一场，并要求发现段、验证段和最终留出段均为正收益",
     ],
     "learning_policy": {
         "minimum_samples": 10,

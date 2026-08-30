@@ -1608,16 +1608,27 @@ def _run_fae_supervised_training(requested_days=120, save=True):
     result = fae_supervised_backtest_engine.build(training_days)
     model = result.get('model') or {}
     report = result.get('report') or {}
-    # Promotion is always an explicit later release action.  A successful
-    # gate only marks the artifact eligible; it never changes live picks.
+    # Ordinary-draw and handicap-draw rankings remain shadow-only until their
+    # own release guard is promoted.  The formal-single policy has a separate
+    # three-block temporal profit gate and may become active independently.
     model['status'] = 'shadow'
     model['release_eligible'] = bool(
         (report.get('release_guard') or {}).get('can_promote')
+    )
+    model['profit_single_release_eligible'] = bool(
+        ((report.get('profit_single') or {}).get('policy') or {}).get(
+            'active'
+        )
     )
     report['requested_days'] = days
     report['available_snapshot_days'] = len(snapshot_days)
     report['usable_training_days'] = len(training_days)
     report['model_status'] = 'shadow'
+    report['profit_single_status'] = (
+        ((report.get('profit_single') or {}).get('policy') or {}).get(
+            'status'
+        ) or 'shadow_only'
+    )
     if save:
         mongo_storage.save_fae_supervised_model(model)
         mongo_storage.save_fae_supervised_backtest(report)

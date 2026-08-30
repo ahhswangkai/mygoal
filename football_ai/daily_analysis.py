@@ -4913,26 +4913,106 @@ class FAEDailyAIAnalyzer:
         cls,
         matches: List[Dict[str, Any]],
     ) -> List[Dict[str, Any]]:
-        """Select at most three AI-verified singles for the formal pool."""
+        """Select the formal pool, preferring the validated profit policy."""
+        profit_policy_active = any(
+            bool(
+                ((((item.get("input_snapshot") or {}).get(
+                    "supervised_shadow"
+                ) or {}).get("profit_single") or {}).get("policy_active"))
+            )
+            for item in matches or []
+        )
+        daily_limit = (
+            1 if profit_policy_active else OFFICIAL_SINGLE_DAILY_LIMIT
+        )
         rows = []
         eligible = []
         for index, item in enumerate(matches):
             row = dict(item or {})
             analysis = dict(row.get("analysis") or {})
-            profile = cls._official_bet_profile(
-                row.get("input_snapshot") or {}, analysis
-            )
             analysis_source = str(row.get("analysis_source") or "")
             ai_verified = analysis_source == "volcengine-ark"
-            profile["ai_verified"] = ai_verified
-            profile["analysis_source"] = analysis_source or "legacy"
-            if profile.get("actionable") and not ai_verified:
-                profile["actionable"] = False
-                profile["qualified_before_daily_limit"] = False
-                profile["reason"] = (
-                    str(profile.get("reason") or "")
-                    + "；本场不是火山大模型研判，不能进入正式投注池"
-                ).strip("；")
+            if profit_policy_active:
+                shadow = (
+                    (row.get("input_snapshot") or {}).get(
+                        "supervised_shadow"
+                    ) or {}
+                )
+                candidate = dict(shadow.get("profit_single") or {})
+                candidate_active = bool(
+                    candidate.get("actionable_before_daily_limit")
+                )
+                probability = _number(candidate.get("probability"))
+                odds = _number(candidate.get("odds"))
+                model_probability = _number(
+                    candidate.get("model_probability")
+                )
+                market_probability = _number(
+                    candidate.get("market_probability")
+                )
+                market_gap = _number(
+                    candidate.get("model_market_gap_pp")
+                ) or 0.0
+                value_edge = _number(candidate.get("value_edge"))
+                profile = {
+                    "actionable": candidate_active,
+                    "qualified_before_daily_limit": candidate_active,
+                    "selection": candidate.get("selection"),
+                    "market": candidate.get("market"),
+                    "odds": round(odds, 3)
+                    if odds is not None else None,
+                    "probability": round(probability, 2)
+                    if probability is not None else None,
+                    "model_probability": round(model_probability, 2)
+                    if model_probability is not None else None,
+                    "market_probability": round(market_probability, 2)
+                    if market_probability is not None else None,
+                    "model_market_edge": candidate.get("market_edge_pp"),
+                    "model_expected_return": (
+                        round(probability / 100.0 * odds, 3)
+                        if probability is not None and odds is not None
+                        else None
+                    ),
+                    "value_score": round(value_edge, 1)
+                    if value_edge is not None else None,
+                    "bet_score": round(market_gap, 1),
+                    "market_confidence": round(market_gap, 1),
+                    "model_rating": None,
+                    "rank_score": round(market_gap, 2),
+                    "model_market_gap_pp": round(market_gap, 2),
+                    "market_direction_agreement": bool(
+                        candidate.get("market_direction_agreement")
+                    ),
+                    "strategy_version": candidate.get("policy_version"),
+                    "strategy_source": "fae-supervised-profit-policy",
+                    "ai_verified": ai_verified,
+                    "analysis_source": (
+                        analysis_source or "fae-supervised"
+                    ),
+                    "reason": (
+                        "滚动样本外盈利策略：竞彩让球模型与市场"
+                        "第一方向一致，全日按同市场领先分差取第一场"
+                        if candidate_active else str(
+                            candidate.get("reason")
+                            or "未达到盈利单选候选条件"
+                        )
+                    ),
+                }
+            else:
+                profile = cls._official_bet_profile(
+                    row.get("input_snapshot") or {}, analysis
+                )
+                profile["ai_verified"] = ai_verified
+                profile["analysis_source"] = (
+                    analysis_source or "legacy"
+                )
+                if profile.get("actionable") and not ai_verified:
+                    profile["actionable"] = False
+                    profile["qualified_before_daily_limit"] = False
+                    profile["reason"] = (
+                        str(profile.get("reason") or "")
+                        + "；本场不是火山大模型研判，不能进入正式投注池"
+                    ).strip("；")
             analysis["official_bet_recommendation"] = profile
             row["analysis"] = analysis
             rows.append(row)
@@ -4943,7 +5023,7 @@ class FAEDailyAIAnalyzer:
 
         selected_order = [
             index for _, index in sorted(eligible, reverse=True)
-        ][:OFFICIAL_SINGLE_DAILY_LIMIT]
+        ][:daily_limit]
         selected = set(selected_order)
         rank_by_index = {
             index: rank
@@ -4964,7 +5044,7 @@ class FAEDailyAIAnalyzer:
             if was_eligible and not shortlisted:
                 profile["reason"] = (
                     str(profile.get("reason") or "")
-                    + f"；全日正式投注池仅保留前{OFFICIAL_SINGLE_DAILY_LIMIT}场"
+                    + f"；全日正式投注池仅保留前{daily_limit}场"
                 ).strip("；")
             analysis["official_bet_recommendation"] = profile
             row["analysis"] = analysis

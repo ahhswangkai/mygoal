@@ -23,8 +23,8 @@ import numpy as np
 from .league_profile import _handicap_value
 
 
-SUPERVISED_SCHEMA_VERSION = "1.4"
-SUPERVISED_MODEL_VERSION = "draw-margin-supervised-v5"
+SUPERVISED_SCHEMA_VERSION = "1.5"
+SUPERVISED_MODEL_VERSION = "draw-margin-supervised-v6"
 MARGIN_CLASSES = (-3, -2, -1, 0, 1, 2, 3)
 SINGLE_SELECTIONS = ("主胜", "平局", "客胜", "让胜", "让平", "让负")
 SINGLE_MIN_ODDS = 1.50
@@ -32,6 +32,10 @@ SINGLE_MAX_ODDS = 2.20
 SINGLE_DAILY_LIMIT = 2
 SINGLE_POLICY_PROBABILITIES = (42.0, 46.0, 50.0, 54.0, 58.0)
 SINGLE_POLICY_GAPS = (-6.0, -2.0, 0.0, 4.0, 8.0)
+PROFIT_SINGLE_SELECTIONS = ("让胜", "让负")
+PROFIT_SINGLE_MIN_ODDS = 1.50
+PROFIT_SINGLE_MAX_ODDS = 3.00
+PROFIT_SINGLE_DAILY_LIMIT = 1
 
 FEATURE_NAMES = (
     "euro_home_odds",
@@ -1596,6 +1600,77 @@ class FAESupervisedPredictor:
                 and candidate["market_rank"] == 1
             )
 
+        profit_policy = dict(
+            self.artifact.get("profit_single_policy") or {}
+        )
+        profit_minimum_odds = float(
+            profit_policy.get("minimum_odds")
+            or PROFIT_SINGLE_MIN_ODDS
+        )
+        profit_maximum_odds = float(
+            profit_policy.get("maximum_odds")
+            or PROFIT_SINGLE_MAX_ODDS
+        )
+        profit_candidates = [
+            candidate for candidate in single_candidates
+            if (
+                candidate.get("selection") in PROFIT_SINGLE_SELECTIONS
+                and _number(candidate.get("odds")) is not None
+                and profit_minimum_odds
+                <= float(candidate["odds"])
+                <= profit_maximum_odds
+                and int(candidate.get("model_market_rank") or 99) == 1
+                and int(candidate.get("market_rank") or 99) == 1
+                and candidate.get("market_direction_agreement")
+            )
+        ]
+        profit_candidates.sort(
+            key=lambda candidate: (
+                float(candidate.get("model_market_gap_pp") or 0),
+                float(candidate.get("probability") or 0),
+                float(candidate.get("value_edge") or -999),
+            ),
+            reverse=True,
+        )
+        best_profit_single = (
+            profit_candidates[0] if profit_candidates else None
+        )
+        profit_reasons = []
+        if not profit_policy.get("active"):
+            profit_reasons.append("盈利单选策略仍在时间分段验证")
+        if not best_profit_single:
+            profit_reasons.append("没有模型与市场同向的让胜/让负候选")
+        if not feature_row.get("quality", {}).get("complete"):
+            profit_reasons.append("欧赔、亚盘、竞彩让球或大小球数据不完整")
+        profit_qualified = bool(
+            best_profit_single
+            and feature_row.get("quality", {}).get("complete")
+        )
+        profit_single = {
+            **(best_profit_single or {}),
+            "policy_active": bool(profit_policy.get("active")),
+            "policy_status": profit_policy.get("status") or "shadow_only",
+            "policy_version": (
+                profit_policy.get("version")
+                or "handicap-gap-single-v1"
+            ),
+            "minimum_odds": profit_minimum_odds,
+            "maximum_odds": profit_maximum_odds,
+            "daily_limit": int(
+                profit_policy.get("daily_limit")
+                or PROFIT_SINGLE_DAILY_LIMIT
+            ),
+            "qualified_before_daily_limit": profit_qualified,
+            "actionable_before_daily_limit": bool(
+                profit_qualified and profit_policy.get("active")
+            ),
+            "reason": (
+                "让球模型与市场第一方向一致，进入全日领先分差排序"
+                if profit_qualified and profit_policy.get("active")
+                else "；".join(dict.fromkeys(profit_reasons))
+            ),
+        }
+
         priced_candidates = [
             candidate for candidate in single_candidates
             if (
@@ -1795,6 +1870,7 @@ class FAESupervisedPredictor:
                 "conditional_exact_margin_probability": round(conditional_exact * 100, 2) if conditional_exact is not None else None,
             },
             "high_confidence_single": high_confidence_single,
+            "profit_single": profit_single,
             "goal_margin_distribution": {
                 str(margin): round(probability * 100, 2)
                 for margin, probability in margin_probabilities.items()
@@ -1855,6 +1931,192 @@ def _metric(events: List[Dict[str, Any]]) -> Dict[str, Any]:
             (returns - len(financial)) / len(financial) * 100, 1
         ) if financial else 0,
         "ece": round(ece * 100, 2),
+    }
+
+
+def _profit_metric(events: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Return flat-stake profit, drawdown and streak metrics."""
+    rows = sorted(
+        list(events),
+        key=lambda row: (
+            str(row.get("owner_date") or ""),
+            str(row.get("match_time") or ""),
+            str(row.get("match_id") or ""),
+        ),
+    )
+    result = _metric(rows)
+    equity = 0.0
+    peak = 0.0
+    max_drawdown = 0.0
+    miss_streak = 0
+    max_miss_streak = 0
+    returned = 0.0
+    priced = []
+    for row in rows:
+        odds = _number(row.get("odds"))
+        if odds is None or odds <= 1:
+            continue
+        priced.append(row)
+        if bool(row.get("label")):
+            profit = odds - 1.0
+            returned += odds
+            miss_streak = 0
+        else:
+            profit = -1.0
+            miss_streak += 1
+            max_miss_streak = max(max_miss_streak, miss_streak)
+        equity += profit
+        peak = max(peak, equity)
+        max_drawdown = max(max_drawdown, peak - equity)
+    result.update({
+        "stake_units": round(float(len(priced)), 2),
+        "return_units": round(returned, 2),
+        "profit_units": round(returned - len(priced), 2),
+        "average_odds": round(
+            sum(float(row["odds"]) for row in priced) / len(priced), 3
+        ) if priced else 0,
+        "max_drawdown_units": round(max_drawdown, 2),
+        "max_consecutive_misses": max_miss_streak,
+        "active_days": len({
+            str(row.get("owner_date") or "") for row in priced
+        }),
+    })
+    return result
+
+
+def _select_profit_single_events(
+    events: Iterable[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Select one daily handicap favourite by its same-market lead gap."""
+    grouped: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+    for event in events:
+        odds = _number(event.get("odds"))
+        if (
+            str(event.get("selection") or "")
+            not in PROFIT_SINGLE_SELECTIONS
+            or odds is None
+            or odds < PROFIT_SINGLE_MIN_ODDS
+            or odds > PROFIT_SINGLE_MAX_ODDS
+            or int(event.get("model_market_rank") or 99) != 1
+            or int(event.get("market_rank") or 99) != 1
+            or not event.get("market_direction_agreement")
+            or not event.get("quality_complete")
+        ):
+            continue
+        grouped[str(event.get("owner_date") or "")].append(event)
+    selected = []
+    for rows in grouped.values():
+        selected.extend(sorted(
+            rows,
+            key=lambda row: (
+                float(row.get("model_market_gap_pp") or 0),
+                float(row.get("probability") or 0),
+                float(row.get("value_edge") or -999),
+            ),
+            reverse=True,
+        )[:PROFIT_SINGLE_DAILY_LIMIT])
+    return sorted(
+        selected,
+        key=lambda row: (
+            str(row.get("owner_date") or ""),
+            str(row.get("match_time") or ""),
+            str(row.get("match_id") or ""),
+        ),
+    )
+
+
+def _profit_single_policy_report(
+    events: List[Dict[str, Any]], tested_dates: Sequence[str]
+) -> Dict[str, Any]:
+    """Validate the daily handicap-gap single on three time blocks."""
+    dates = sorted({str(value)[:10] for value in tested_dates if value})
+    discovery_end = max(1, int(len(dates) * 0.60))
+    validation_end = max(discovery_end + 1, int(len(dates) * 0.80))
+    validation_end = min(max(1, len(dates) - 1), validation_end)
+    discovery_dates = set(dates[:discovery_end])
+    validation_dates = set(dates[discovery_end:validation_end])
+    holdout_dates = set(dates[validation_end:])
+    selected = _select_profit_single_events(events)
+
+    def block_metric(block_dates: set) -> Dict[str, Any]:
+        return _profit_metric([
+            row for row in selected
+            if str(row.get("owner_date") or "")[:10] in block_dates
+        ])
+
+    discovery = block_metric(discovery_dates)
+    validation = block_metric(validation_dates)
+    holdout = block_metric(holdout_dates)
+    overall = _profit_metric(selected)
+    confidence_lower = _wilson_lower(
+        int(overall.get("hits") or 0),
+        int(overall.get("settled") or 0),
+    ) * 100
+    reasons = []
+    if len(dates) < 30:
+        reasons.append(f"滚动样本外仅{len(dates)}个比赛日，少于30日")
+    for label, metric, minimum in (
+        ("发现段", discovery, 15),
+        ("验证段", validation, 5),
+        ("最终留出段", holdout, 5),
+    ):
+        if int(metric.get("settled") or 0) < minimum:
+            reasons.append(f"{label}可投注样本少于{minimum}场")
+        if float(metric.get("roi") or 0) <= 0:
+            reasons.append(f"{label}ROI未达到正收益")
+    if int(overall.get("settled") or 0) < 30:
+        reasons.append("全部样本外可投注样本少于30场")
+    if float(overall.get("hit_rate") or 0) < 60:
+        reasons.append("全部样本外命中率低于60%")
+    if float(overall.get("roi") or 0) <= 0:
+        reasons.append("全部样本外ROI未达到正收益")
+    if confidence_lower < 45:
+        reasons.append("全部样本外命中率95%置信下限低于45%")
+    if float(overall.get("max_drawdown_units") or 0) > 5:
+        reasons.append("全部样本外最大回撤超过5单位")
+    active = not reasons
+    policy = {
+        "version": "handicap-gap-single-v1",
+        "status": "active" if active else "shadow_only",
+        "active": active,
+        "selections": list(PROFIT_SINGLE_SELECTIONS),
+        "minimum_odds": PROFIT_SINGLE_MIN_ODDS,
+        "maximum_odds": PROFIT_SINGLE_MAX_ODDS,
+        "daily_limit": PROFIT_SINGLE_DAILY_LIMIT,
+        "ranking_field": "model_market_gap_pp",
+        "requires_model_market_rank_one": True,
+        "requires_market_rank_one": True,
+        "requires_market_direction_agreement": True,
+        "requires_complete_four_markets": True,
+        "requires_ark_alignment": False,
+        "selection_method": (
+            "竞彩让胜/让负中筛选模型与市场同为第一方向，"
+            "每天按同市场领先分差只取第一场"
+        ),
+        "reasons": reasons or [
+            "发现段、验证段、最终留出段及全部样本均为正收益"
+        ],
+    }
+    return {
+        "policy": policy,
+        "tested_days": len(dates),
+        "discovery_dates": sorted(discovery_dates),
+        "validation_dates": sorted(validation_dates),
+        "holdout_dates": sorted(holdout_dates),
+        "discovery": discovery,
+        "validation": validation,
+        "holdout": holdout,
+        "all_out_of_sample": overall,
+        "confidence_lower": round(confidence_lower, 2),
+        "selected_events": [{
+            "owner_date": row.get("owner_date"),
+            "match_id": row.get("match_id"),
+            "match_number": row.get("match_number"),
+            "selection": row.get("selection"),
+            "odds": row.get("odds"),
+            "model_market_gap_pp": row.get("model_market_gap_pp"),
+            "status": "hit" if row.get("label") else "miss",
+        } for row in selected],
     }
 
 
@@ -2311,6 +2573,7 @@ class FAESupervisedBacktestEngine:
         draw_events = []
         handicap_events = []
         single_events = []
+        profit_single_events = []
         tested_dates = []
         training_cutoffs = []
         predictor = None
@@ -2412,6 +2675,59 @@ class FAESupervisedBacktestEngine:
                 single_profile = (
                     prediction.get("high_confidence_single") or {}
                 )
+                for candidate in single_profile.get("candidates") or []:
+                    candidate_selection = str(
+                        candidate.get("selection") or ""
+                    )
+                    if candidate_selection not in PROFIT_SINGLE_SELECTIONS:
+                        continue
+                    profit_single_events.append({
+                        "owner_date": day.get("owner_date"),
+                        "match_id": example.get("match_id"),
+                        "match_number": example.get("match_number"),
+                        "match_time": example.get("match_time"),
+                        "league": example.get("league"),
+                        "selection": candidate_selection,
+                        "market": candidate.get("market"),
+                        "probability": (
+                            float(candidate.get("probability") or 0)
+                            / 100.0
+                        ),
+                        "ranking_probability": (
+                            float(
+                                candidate.get("ranking_probability") or 0
+                            ) / 100.0
+                        ),
+                        "market_probability": (
+                            float(candidate.get("market_probability"))
+                            / 100.0
+                            if candidate.get("market_probability")
+                            is not None else None
+                        ),
+                        "model_market_gap_pp": float(
+                            candidate.get("model_market_gap_pp") or 0
+                        ),
+                        "model_market_rank": int(
+                            candidate.get("model_market_rank") or 99
+                        ),
+                        "market_rank": int(
+                            candidate.get("market_rank") or 99
+                        ),
+                        "market_direction_agreement": bool(
+                            candidate.get("market_direction_agreement")
+                        ),
+                        "quality_complete": bool(
+                            prediction.get("quality", {}).get("complete")
+                        ),
+                        "value_edge": candidate.get("value_edge"),
+                        "odds": candidate.get("odds"),
+                        "label": _single_event_hit(
+                            example, candidate_selection
+                        ),
+                        "weekend": bool(
+                            example["features"].get("weekend")
+                        ),
+                    })
                 official_selection = str(
                     (example.get("prematch_ai") or {}).get(
                         "official_selection"
@@ -2507,6 +2823,15 @@ class FAESupervisedBacktestEngine:
         final_artifact["high_confidence_single_policy"] = (
             high_confidence_single["policy"]
         )
+        profit_single = _profit_single_policy_report(
+            profit_single_events, tested_dates
+        )
+        final_artifact["profit_single_policy"] = (
+            profit_single["policy"]
+        )
+        final_artifact["governance"][
+            "may_override_official_recommendations"
+        ] = bool(profit_single["policy"].get("active"))
         release_guard = self._release_guard(
             draw_metric,
             handicap_metric,
@@ -2573,6 +2898,7 @@ class FAESupervisedBacktestEngine:
                 draw_events, handicap_events
             ),
             "high_confidence_single": high_confidence_single,
+            "profit_single": profit_single,
             "weekend": {
                 "ordinary_draw": _metric([row for row in draw_events if row["weekend"]]),
                 "handicap_draw": _metric([row for row in handicap_events if row["weekend"]]),

@@ -3147,6 +3147,52 @@ class DailyAnalysisTests(unittest.TestCase):
             [1, 2, 3, 4, 5],
         )
 
+    def test_profit_policy_replaces_legacy_pool_and_keeps_daily_best(self):
+        rows = []
+        for index, gap in enumerate((8.0, 15.0)):
+            rows.append({
+                "match_id": str(index + 1),
+                "analysis_source": "fae-core-fallback",
+                "analysis": {},
+                "input_snapshot": {
+                    "supervised_shadow": {
+                        "profit_single": {
+                            "policy_active": True,
+                            "policy_status": "active",
+                            "policy_version": "handicap-gap-single-v1",
+                            "actionable_before_daily_limit": True,
+                            "qualified_before_daily_limit": True,
+                            "selection": "让负",
+                            "market": "竞彩让球",
+                            "odds": 1.60,
+                            "probability": 64.0,
+                            "model_probability": 64.0,
+                            "market_probability": 59.0,
+                            "market_edge_pp": 5.0,
+                            "value_edge": 2.4,
+                            "model_market_gap_pp": gap,
+                            "market_direction_agreement": True,
+                        },
+                    },
+                },
+            })
+
+        result = FAEDailyAIAnalyzer.apply_official_bet_recommendations(rows)
+        profiles = [
+            row["analysis"]["official_bet_recommendation"]
+            for row in result
+        ]
+        selected = [row for row in profiles if row["actionable"]]
+
+        self.assertEqual(len(selected), 1)
+        self.assertEqual(selected[0]["daily_rank"], 1)
+        self.assertEqual(selected[0]["model_market_gap_pp"], 15.0)
+        self.assertEqual(
+            selected[0]["strategy_source"],
+            "fae-supervised-profit-policy",
+        )
+        self.assertFalse(selected[0]["ai_verified"])
+
     def test_official_bet_pool_rejects_fallback_and_short_favorite_proxy(self):
         source = {
             "euro": {"current": [1.40, 4.20, 7.50]},

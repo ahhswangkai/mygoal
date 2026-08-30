@@ -11,6 +11,7 @@ from football_ai.supervised import (
     build_training_example,
     extract_prematch_features,
     mine_feature_patterns,
+    _profit_single_policy_report,
 )
 
 
@@ -107,6 +108,47 @@ def reversed_pattern_examples(days=24):
 
 
 class FAESupervisedTests(unittest.TestCase):
+    def test_profit_single_policy_requires_three_positive_time_blocks(self):
+        start_day = date.fromisoformat("2026-07-01")
+        events = []
+        for index in range(34):
+            owner_date = (start_day + timedelta(days=index)).isoformat()
+            block_index = index if index < 20 else (
+                index - 20 if index < 27 else index - 27
+            )
+            if index < 20:
+                hit = block_index not in {2, 5, 8, 11, 14, 17, 19}
+            else:
+                hit = block_index < 5
+            events.append({
+                "owner_date": owner_date,
+                "match_id": str(index),
+                "match_number": f"周六{index + 1:03d}",
+                "match_time": f"{owner_date} 18:00",
+                "selection": "让负" if index % 2 else "让胜",
+                "odds": 1.60,
+                "model_market_gap_pp": 12.0 + index / 10,
+                "model_market_rank": 1,
+                "market_rank": 1,
+                "market_direction_agreement": True,
+                "quality_complete": True,
+                "value_edge": 2.0,
+                "probability": 0.64,
+                "label": hit,
+            })
+
+        report = _profit_single_policy_report(
+            events,
+            [row["owner_date"] for row in events],
+        )
+
+        self.assertTrue(report["policy"]["active"])
+        self.assertEqual(report["all_out_of_sample"]["settled"], 34)
+        self.assertEqual(report["all_out_of_sample"]["hits"], 23)
+        self.assertGreater(report["discovery"]["roi"], 0)
+        self.assertGreater(report["validation"]["roi"], 0)
+        self.assertGreater(report["holdout"]["roi"], 0)
+
     def test_labels_keep_result_out_of_feature_vector(self):
         self.assertIsNone(build_training_example(
             prematch(0, "2026-08-22", handicap=-1),
