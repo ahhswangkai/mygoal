@@ -11,6 +11,7 @@ from football_ai.supervised import (
     build_training_example,
     extract_prematch_features,
     mine_feature_patterns,
+    _profit_parlay_policy_report,
     _profit_single_policy_report,
 )
 
@@ -108,6 +109,66 @@ def reversed_pattern_examples(days=24):
 
 
 class FAESupervisedTests(unittest.TestCase):
+    def test_profit_parlay_policy_passes_three_positive_time_blocks(self):
+        start_day = date.fromisoformat("2026-07-01")
+        events = []
+        for index in range(34):
+            owner_date = (start_day + timedelta(days=index)).isoformat()
+            if index < 20:
+                block_index = index
+                hit = block_index not in {2, 5, 8, 11, 14, 17, 19}
+            elif index < 27:
+                block_index = index - 20
+                hit = block_index < 5
+            else:
+                block_index = index - 27
+                hit = block_index < 5
+            common = {
+                "owner_date": owner_date,
+                "match_time": f"{owner_date} 18:00",
+                "model_market_rank": 1,
+                "market_rank": 1,
+                "market_direction_agreement": True,
+                "quality_complete": True,
+                "value_edge": 1.0,
+            }
+            events.extend((
+                {
+                    **common,
+                    "match_id": f"m-{index}",
+                    "match_number": f"周六{index + 1:03d}",
+                    "selection": "让负",
+                    "odds": 1.60,
+                    "probability": 0.64,
+                    "market_probability": 0.60,
+                    "model_market_gap_pp": 15.0,
+                    "label": hit,
+                },
+                {
+                    **common,
+                    "match_id": f"a-{index}",
+                    "match_number": f"周六{index + 101:03d}",
+                    "selection": "主胜",
+                    "odds": 1.20,
+                    "probability": 0.82,
+                    "market_probability": 0.80,
+                    "model_market_gap_pp": 40.0,
+                    "label": hit,
+                },
+            ))
+
+        report = _profit_parlay_policy_report(
+            events,
+            [(start_day + timedelta(days=i)).isoformat() for i in range(34)],
+        )
+
+        self.assertTrue(report["policy"]["active"])
+        self.assertEqual(report["all_out_of_sample"]["settled"], 34)
+        self.assertEqual(report["all_out_of_sample"]["hits"], 23)
+        self.assertGreater(report["discovery"]["roi"], 0)
+        self.assertGreater(report["validation"]["roi"], 0)
+        self.assertGreater(report["holdout"]["roi"], 0)
+
     def test_profit_single_policy_requires_three_positive_time_blocks(self):
         start_day = date.fromisoformat("2026-07-01")
         events = []

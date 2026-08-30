@@ -1620,12 +1620,22 @@ def _run_fae_supervised_training(requested_days=120, save=True):
             'active'
         )
     )
+    model['profit_parlay_release_eligible'] = bool(
+        ((report.get('profit_parlay') or {}).get('policy') or {}).get(
+            'active'
+        )
+    )
     report['requested_days'] = days
     report['available_snapshot_days'] = len(snapshot_days)
     report['usable_training_days'] = len(training_days)
     report['model_status'] = 'shadow'
     report['profit_single_status'] = (
         ((report.get('profit_single') or {}).get('policy') or {}).get(
+            'status'
+        ) or 'shadow_only'
+    )
+    report['profit_parlay_status'] = (
+        ((report.get('profit_parlay') or {}).get('policy') or {}).get(
             'status'
         ) or 'shadow_only'
     )

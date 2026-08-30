@@ -3193,6 +3193,85 @@ class DailyAnalysisTests(unittest.TestCase):
         )
         self.assertFalse(selected[0]["ai_verified"])
 
+    def test_profit_parlay_selects_distinct_main_and_anchor_matches(self):
+        common = {
+            "policy_active": True,
+            "policy_status": "active",
+            "policy_version": "handicap-anchor-parlay-v1",
+            "minimum_combined_odds": 1.75,
+            "maximum_combined_odds": 3.80,
+        }
+        rows = [{
+            "match_id": "main",
+            "analysis_source": "volcengine-ark",
+            "analysis": {},
+            "input_snapshot": {
+                "supervised_shadow": {
+                    "profit_parlay": {
+                        **common,
+                        "main_leg": {
+                            "actionable_before_daily_limit": True,
+                            "selection": "让负",
+                            "market": "竞彩让球",
+                            "odds": 1.60,
+                            "probability": 64.0,
+                            "model_probability": 65.0,
+                            "market_probability": 60.0,
+                            "model_market_gap_pp": 18.0,
+                            "market_direction_agreement": True,
+                        },
+                    },
+                },
+            },
+        }, {
+            "match_id": "anchor",
+            "analysis_source": "volcengine-ark",
+            "analysis": {},
+            "input_snapshot": {
+                "supervised_shadow": {
+                    "profit_parlay": {
+                        **common,
+                        "anchor_leg": {
+                            "actionable_before_daily_limit": True,
+                            "selection": "主胜",
+                            "market": "胜平负",
+                            "odds": 1.20,
+                            "probability": 82.0,
+                            "model_probability": 83.0,
+                            "market_probability": 80.0,
+                            "model_market_gap_pp": 55.0,
+                            "market_direction_agreement": True,
+                        },
+                    },
+                },
+            },
+        }]
+
+        result = FAEDailyAIAnalyzer.apply_official_bet_recommendations(rows)
+        profiles = [
+            row["analysis"]["official_bet_recommendation"]
+            for row in result
+        ]
+
+        self.assertEqual(sum(row["actionable"] for row in profiles), 2)
+        self.assertEqual(
+            [row["parlay_role"] for row in profiles],
+            ["主腿", "稳胆锚点"],
+        )
+        self.assertTrue(all(row["combined_odds"] == 1.92 for row in profiles))
+        self.assertTrue(all(
+            row["strategy_source"] == "fae-supervised-profit-parlay"
+            for row in profiles
+        ))
+        summary = FAEDailyAIAnalyzer.align_summary_ratings(
+            {"pools": {}}, result
+        )
+        self.assertEqual(len(summary["pools"]["profit_parlay"]), 2)
+        self.assertEqual(
+            [row["role"] for row in summary["pools"]["profit_parlay"]],
+            ["主腿", "稳胆锚点"],
+        )
+
     def test_official_bet_pool_rejects_fallback_and_short_favorite_proxy(self):
         source = {
             "euro": {"current": [1.40, 4.20, 7.50]},

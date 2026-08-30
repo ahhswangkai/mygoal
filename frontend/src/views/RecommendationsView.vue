@@ -413,7 +413,7 @@
               :key="group.key"
               :class="{
                 'two-option-pool': group.key === 'two_option_core',
-                'official-single-pool': ['official_single', 'high_confidence_single'].includes(group.key)
+                'official-single-pool': ['profit_parlay', 'official_single', 'high_confidence_single'].includes(group.key)
               }"
             >
               <h2>{{ group.title }}</h2>
@@ -430,7 +430,7 @@
                 <span class="daily-pool-meta">
                   <i v-if="item.role">{{ item.role }}</i>
                   <strong v-if="group.key === 'two_option_core'">{{ item.selection_text }}</strong>
-                  <strong v-else-if="group.key === 'official_single'">
+                  <strong v-else-if="['profit_parlay', 'official_single'].includes(group.key)">
                     {{ item.selection }}<template v-if="item.odds"> @{{ formatPickOdds(item.odds) }}</template>
                   </strong>
                   <strong v-else-if="group.key === 'high_confidence_single'">
@@ -1376,6 +1376,7 @@ const supervisedShadow = computed(() => (
   faeDailyAi.value?.daily_summary?.supervised_shadow || {}
 ))
 const dailyPoolLabels = {
+  profit_parlay: '回测二串一',
   high_confidence_single: '高命中单选',
   official_single: '正式投注池',
   two_option_core: '双选核心',
@@ -1396,6 +1397,9 @@ const dailyPoolGroups = computed(() => {
   pools.high_confidence_single = highConfidenceSingles.filter(item => (
     isVisibleDailyMatch(dailyMatch(item.match_id))
   ))
+  if ((pools.profit_parlay || []).length) {
+    pools.official_single = []
+  }
   return Object.entries(dailyPoolLabels)
     .map(([key, title]) => ({ key, title, items: pools[key] || [] }))
     .filter(group => group.items.length)

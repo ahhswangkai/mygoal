@@ -23,8 +23,8 @@ import numpy as np
 from .league_profile import _handicap_value
 
 
-SUPERVISED_SCHEMA_VERSION = "1.5"
-SUPERVISED_MODEL_VERSION = "draw-margin-supervised-v6"
+SUPERVISED_SCHEMA_VERSION = "1.6"
+SUPERVISED_MODEL_VERSION = "draw-margin-supervised-v7"
 MARGIN_CLASSES = (-3, -2, -1, 0, 1, 2, 3)
 SINGLE_SELECTIONS = ("主胜", "平局", "客胜", "让胜", "让平", "让负")
 SINGLE_MIN_ODDS = 1.50
@@ -36,6 +36,15 @@ PROFIT_SINGLE_SELECTIONS = ("让胜", "让负")
 PROFIT_SINGLE_MIN_ODDS = 1.50
 PROFIT_SINGLE_MAX_ODDS = 3.00
 PROFIT_SINGLE_DAILY_LIMIT = 1
+PROFIT_PARLAY_EVENT_SELECTIONS = ("主胜", "客胜", "让胜", "让负")
+PROFIT_PARLAY_MAIN_SELECTIONS = ("让胜", "让负")
+PROFIT_PARLAY_MAIN_MIN_ODDS = 1.40
+PROFIT_PARLAY_MAIN_MAX_ODDS = 2.50
+PROFIT_PARLAY_ANCHOR_SELECTIONS = ("主胜", "客胜")
+PROFIT_PARLAY_ANCHOR_MIN_ODDS = 1.10
+PROFIT_PARLAY_ANCHOR_MAX_ODDS = 1.40
+PROFIT_PARLAY_MIN_COMBINED_ODDS = 1.75
+PROFIT_PARLAY_MAX_COMBINED_ODDS = 3.80
 
 FEATURE_NAMES = (
     "euro_home_odds",
@@ -1671,6 +1680,128 @@ class FAESupervisedPredictor:
             ),
         }
 
+        parlay_policy = dict(
+            self.artifact.get("profit_parlay_policy") or {}
+        )
+        main_minimum_odds = float(
+            parlay_policy.get("main_minimum_odds")
+            or PROFIT_PARLAY_MAIN_MIN_ODDS
+        )
+        main_maximum_odds = float(
+            parlay_policy.get("main_maximum_odds")
+            or PROFIT_PARLAY_MAIN_MAX_ODDS
+        )
+        anchor_minimum_odds = float(
+            parlay_policy.get("anchor_minimum_odds")
+            or PROFIT_PARLAY_ANCHOR_MIN_ODDS
+        )
+        anchor_maximum_odds = float(
+            parlay_policy.get("anchor_maximum_odds")
+            or PROFIT_PARLAY_ANCHOR_MAX_ODDS
+        )
+
+        def parlay_candidates(
+            selections: Sequence[str], minimum_odds: float,
+            maximum_odds: float,
+        ) -> List[Dict[str, Any]]:
+            return [
+                candidate for candidate in single_candidates
+                if (
+                    candidate.get("selection") in selections
+                    and _number(candidate.get("odds")) is not None
+                    and minimum_odds
+                    <= float(candidate["odds"])
+                    <= maximum_odds
+                    and int(candidate.get("model_market_rank") or 99) == 1
+                    and int(candidate.get("market_rank") or 99) == 1
+                    and candidate.get("market_direction_agreement")
+                )
+            ]
+
+        parlay_main_candidates = parlay_candidates(
+            PROFIT_PARLAY_MAIN_SELECTIONS,
+            main_minimum_odds,
+            main_maximum_odds,
+        )
+        parlay_main_candidates.sort(
+            key=lambda candidate: (
+                float(candidate.get("model_market_gap_pp") or 0),
+                float(candidate.get("probability") or 0),
+            ),
+            reverse=True,
+        )
+        parlay_anchor_candidates = parlay_candidates(
+            PROFIT_PARLAY_ANCHOR_SELECTIONS,
+            anchor_minimum_odds,
+            anchor_maximum_odds,
+        )
+        parlay_anchor_candidates.sort(
+            key=lambda candidate: (
+                float(candidate.get("probability") or 0),
+                float(candidate.get("market_probability") or 0),
+            ),
+            reverse=True,
+        )
+        quality_complete = bool(
+            feature_row.get("quality", {}).get("complete")
+        )
+        best_parlay_main = (
+            dict(parlay_main_candidates[0])
+            if parlay_main_candidates else None
+        )
+        best_parlay_anchor = (
+            dict(parlay_anchor_candidates[0])
+            if parlay_anchor_candidates else None
+        )
+        for leg, role in (
+            (best_parlay_main, "main"),
+            (best_parlay_anchor, "anchor"),
+        ):
+            if leg is not None:
+                leg["role"] = role
+                leg["qualified_before_daily_limit"] = quality_complete
+                leg["actionable_before_daily_limit"] = bool(
+                    quality_complete and parlay_policy.get("active")
+                )
+        parlay_reasons = []
+        if not parlay_policy.get("active"):
+            parlay_reasons.append("二串一策略仍在三段时间验证")
+        if not best_parlay_main:
+            parlay_reasons.append("本场没有合格的竞彩让球主腿")
+        if not best_parlay_anchor:
+            parlay_reasons.append("本场没有合格的低赔普通胜负锚点")
+        if not quality_complete:
+            parlay_reasons.append("欧赔、亚盘、竞彩让球或大小球数据不完整")
+        profit_parlay = {
+            "policy_active": bool(parlay_policy.get("active")),
+            "policy_status": (
+                parlay_policy.get("status") or "shadow_only"
+            ),
+            "policy_version": (
+                parlay_policy.get("version")
+                or "handicap-anchor-parlay-v1"
+            ),
+            "main_leg": best_parlay_main,
+            "anchor_leg": best_parlay_anchor,
+            "main_minimum_odds": main_minimum_odds,
+            "main_maximum_odds": main_maximum_odds,
+            "anchor_minimum_odds": anchor_minimum_odds,
+            "anchor_maximum_odds": anchor_maximum_odds,
+            "minimum_combined_odds": float(
+                parlay_policy.get("minimum_combined_odds")
+                or PROFIT_PARLAY_MIN_COMBINED_ODDS
+            ),
+            "maximum_combined_odds": float(
+                parlay_policy.get("maximum_combined_odds")
+                or PROFIT_PARLAY_MAX_COMBINED_ODDS
+            ),
+            "reason": (
+                "主腿按让球领先分差排序，锚点按普通胜负概率排序"
+                if parlay_policy.get("active") and quality_complete
+                else "；".join(dict.fromkeys(parlay_reasons))
+            ),
+        }
+
         priced_candidates = [
             candidate for candidate in single_candidates
             if (
@@ -1871,6 +2002,7 @@ class FAESupervisedPredictor:
             },
             "high_confidence_single": high_confidence_single,
             "profit_single": profit_single,
+            "profit_parlay": profit_parlay,
             "goal_margin_distribution": {
                 str(margin): round(probability * 100, 2)
                 for margin, probability in margin_probabilities.items()
@@ -2117,6 +2249,242 @@ def _profit_single_policy_report(
             "model_market_gap_pp": row.get("model_market_gap_pp"),
             "status": "hit" if row.get("label") else "miss",
         } for row in selected],
+    }
+
+
+def _select_profit_parlay_tickets(
+    events: Iterable[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Build one asymmetric two-leg ticket per eligible match day."""
+    grouped: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+    for event in events:
+        if not event.get("quality_complete"):
+            continue
+        if int(event.get("model_market_rank") or 99) != 1:
+            continue
+        if int(event.get("market_rank") or 99) != 1:
+            continue
+        if not event.get("market_direction_agreement"):
+            continue
+        grouped[str(event.get("owner_date") or "")].append(event)
+
+    tickets = []
+    for owner_date, rows in grouped.items():
+        main_rows = sorted(
+            [
+                row for row in rows
+                if (
+                    str(row.get("selection") or "")
+                    in PROFIT_PARLAY_MAIN_SELECTIONS
+                    and _number(row.get("odds")) is not None
+                    and PROFIT_PARLAY_MAIN_MIN_ODDS
+                    <= float(row["odds"])
+                    <= PROFIT_PARLAY_MAIN_MAX_ODDS
+                )
+            ],
+            key=lambda row: (
+                float(row.get("model_market_gap_pp") or 0),
+                float(row.get("probability") or 0),
+            ),
+            reverse=True,
+        )
+        anchor_rows = sorted(
+            [
+                row for row in rows
+                if (
+                    str(row.get("selection") or "")
+                    in PROFIT_PARLAY_ANCHOR_SELECTIONS
+                    and _number(row.get("odds")) is not None
+                    and PROFIT_PARLAY_ANCHOR_MIN_ODDS
+                    <= float(row["odds"])
+                    <= PROFIT_PARLAY_ANCHOR_MAX_ODDS
+                )
+            ],
+            key=lambda row: (
+                float(row.get("probability") or 0),
+                float(row.get("market_probability") or 0),
+            ),
+            reverse=True,
+        )
+        pair = None
+        for main in main_rows:
+            anchor = next((
+                row for row in anchor_rows
+                if str(row.get("match_id") or "")
+                != str(main.get("match_id") or "")
+            ), None)
+            if not anchor:
+                continue
+            combined_odds = float(main["odds"]) * float(anchor["odds"])
+            if (
+                PROFIT_PARLAY_MIN_COMBINED_ODDS
+                <= combined_odds
+                <= PROFIT_PARLAY_MAX_COMBINED_ODDS
+            ):
+                pair = (main, anchor, combined_odds)
+                break
+        if not pair:
+            continue
+        main, anchor, combined_odds = pair
+        tickets.append({
+            "owner_date": owner_date,
+            "main_leg": main,
+            "anchor_leg": anchor,
+            "combined_odds": combined_odds,
+            "label": bool(main.get("label") and anchor.get("label")),
+        })
+    return sorted(
+        tickets,
+        key=lambda row: str(row.get("owner_date") or ""),
+    )
+
+
+def _profit_parlay_metric(
+    tickets: Iterable[Dict[str, Any]],
+) -> Dict[str, Any]:
+    rows = sorted(
+        list(tickets), key=lambda row: str(row.get("owner_date") or "")
+    )
+    returned = 0.0
+    equity = 0.0
+    peak = 0.0
+    max_drawdown = 0.0
+    miss_streak = 0
+    max_miss_streak = 0
+    for row in rows:
+        odds = float(row.get("combined_odds") or 0)
+        hit = bool(row.get("label"))
+        if hit:
+            returned += odds
+            equity += odds - 1.0
+            miss_streak = 0
+        else:
+            equity -= 1.0
+            miss_streak += 1
+            max_miss_streak = max(max_miss_streak, miss_streak)
+        peak = max(peak, equity)
+        max_drawdown = max(max_drawdown, peak - equity)
+    hits = sum(bool(row.get("label")) for row in rows)
+    settled = len(rows)
+    return {
+        "settled": settled,
+        "hits": hits,
+        "hit_rate": round(hits / settled * 100, 1) if settled else 0,
+        "stake_units": float(settled),
+        "return_units": round(returned, 2),
+        "profit_units": round(returned - settled, 2),
+        "roi": round((returned - settled) / settled * 100, 1)
+        if settled else 0,
+        "average_combined_odds": round(
+            sum(float(row.get("combined_odds") or 0) for row in rows)
+            / settled,
+            3,
+        ) if settled else 0,
+        "max_drawdown_units": round(max_drawdown, 2),
+        "max_consecutive_misses": max_miss_streak,
+        "active_days": settled,
+    }
+
+
+def _profit_parlay_policy_report(
+    events: List[Dict[str, Any]], tested_dates: Sequence[str]
+) -> Dict[str, Any]:
+    """Validate the asymmetric two-leg ticket on three time blocks."""
+    dates = sorted({str(value)[:10] for value in tested_dates if value})
+    discovery_end = max(1, int(len(dates) * 0.60))
+    validation_end = max(discovery_end + 1, int(len(dates) * 0.80))
+    validation_end = min(max(1, len(dates) - 1), validation_end)
+    date_blocks = {
+        "discovery": set(dates[:discovery_end]),
+        "validation": set(dates[discovery_end:validation_end]),
+        "holdout": set(dates[validation_end:]),
+    }
+    tickets = _select_profit_parlay_tickets(events)
+
+    def block_metric(block_dates: set) -> Dict[str, Any]:
+        return _profit_parlay_metric([
+            row for row in tickets
+            if str(row.get("owner_date") or "")[:10] in block_dates
+        ])
+
+    discovery = block_metric(date_blocks["discovery"])
+    validation = block_metric(date_blocks["validation"])
+    holdout = block_metric(date_blocks["holdout"])
+    overall = _profit_parlay_metric(tickets)
+    confidence_lower = _wilson_lower(
+        int(overall.get("hits") or 0),
+        int(overall.get("settled") or 0),
+    ) * 100
+    reasons = []
+    if len(dates) < 30:
+        reasons.append(f"滚动样本外仅{len(dates)}个比赛日，少于30日")
+    for label, metric, minimum in (
+        ("发现段", discovery, 15),
+        ("验证段", validation, 5),
+        ("最终留出段", holdout, 5),
+    ):
+        if int(metric.get("settled") or 0) < minimum:
+            reasons.append(f"{label}二串一少于{minimum}张")
+        if float(metric.get("roi") or 0) <= 0:
+            reasons.append(f"{label}二串一ROI未达到正收益")
+    if int(overall.get("settled") or 0) < 25:
+        reasons.append("全部样本外二串一少于25张")
+    if float(overall.get("hit_rate") or 0) < 55:
+        reasons.append("全部样本外二串一命中率低于55%")
+    if float(overall.get("roi") or 0) <= 0:
+        reasons.append("全部样本外二串一ROI未达到正收益")
+    if confidence_lower < 45:
+        reasons.append("二串一命中率95%置信下限低于45%")
+    if float(overall.get("max_drawdown_units") or 0) > 5:
+        reasons.append("二串一最大回撤超过5单位")
+    active = not reasons
+    policy = {
+        "version": "handicap-anchor-parlay-v1",
+        "status": "active" if active else "shadow_only",
+        "active": active,
+        "main_selections": list(PROFIT_PARLAY_MAIN_SELECTIONS),
+        "main_minimum_odds": PROFIT_PARLAY_MAIN_MIN_ODDS,
+        "main_maximum_odds": PROFIT_PARLAY_MAIN_MAX_ODDS,
+        "anchor_selections": list(PROFIT_PARLAY_ANCHOR_SELECTIONS),
+        "anchor_minimum_odds": PROFIT_PARLAY_ANCHOR_MIN_ODDS,
+        "anchor_maximum_odds": PROFIT_PARLAY_ANCHOR_MAX_ODDS,
+        "minimum_combined_odds": PROFIT_PARLAY_MIN_COMBINED_ODDS,
+        "maximum_combined_odds": PROFIT_PARLAY_MAX_COMBINED_ODDS,
+        "requires_distinct_matches": True,
+        "requires_model_market_rank_one": True,
+        "requires_market_direction_agreement": True,
+        "requires_complete_four_markets": True,
+        "requires_ark_alignment": False,
+        "selection_method": (
+            "主腿从竞彩让胜/让负按同市场领先分差取最高；"
+            "锚点从另一场普通主胜/客胜按模型概率取最高"
+        ),
+        "reasons": reasons or [
+            "发现段、验证段、最终留出段及全部样本均为正收益"
+        ],
+    }
+    return {
+        "policy": policy,
+        "tested_days": len(dates),
+        "discovery_dates": sorted(date_blocks["discovery"]),
+        "validation_dates": sorted(date_blocks["validation"]),
+        "holdout_dates": sorted(date_blocks["holdout"]),
+        "discovery": discovery,
+        "validation": validation,
+        "holdout": holdout,
+        "all_out_of_sample": overall,
+        "confidence_lower": round(confidence_lower, 2),
+        "selected_tickets": [{
+            "owner_date": row.get("owner_date"),
+            "combined_odds": round(float(row.get("combined_odds") or 0), 3),
+            "status": "hit" if row.get("label") else "miss",
+            "legs": [{
+                "match_id": leg.get("match_id"),
+                "match_number": leg.get("match_number"),
+                "selection": leg.get("selection"),
+                "odds": leg.get("odds"),
+            } for leg in (row.get("main_leg"), row.get("anchor_leg"))],
+        } for row in tickets],
     }
 
 
@@ -2679,7 +3047,10 @@ class FAESupervisedBacktestEngine:
                     candidate_selection = str(
                         candidate.get("selection") or ""
                     )
-                    if candidate_selection not in PROFIT_SINGLE_SELECTIONS:
+                    if (
+                        candidate_selection
+                        not in PROFIT_PARLAY_EVENT_SELECTIONS
+                    ):
                         continue
                     profit_single_events.append({
                         "owner_date": day.get("owner_date"),
@@ -2829,9 +3200,18 @@ class FAESupervisedBacktestEngine:
         final_artifact["profit_single_policy"] = (
             profit_single["policy"]
         )
+        profit_parlay = _profit_parlay_policy_report(
+            profit_single_events, tested_dates
+        )
+        final_artifact["profit_parlay_policy"] = (
+            profit_parlay["policy"]
+        )
         final_artifact["governance"][
             "may_override_official_recommendations"
-        ] = bool(profit_single["policy"].get("active"))
+        ] = bool(
+            profit_parlay["policy"].get("active")
+            or profit_single["policy"].get("active")
+        )
         release_guard = self._release_guard(
             draw_metric,
             handicap_metric,
@@ -2899,6 +3279,7 @@ class FAESupervisedBacktestEngine:
             ),
             "high_confidence_single": high_confidence_single,
             "profit_single": profit_single,
+            "profit_parlay": profit_parlay,
             "weekend": {
                 "ordinary_draw": _metric([row for row in draw_events if row["weekend"]]),
                 "handicap_draw": _metric([row for row in handicap_events if row["weekend"]]),

@@ -4914,6 +4914,16 @@ class FAEDailyAIAnalyzer:
         matches: List[Dict[str, Any]],
     ) -> List[Dict[str, Any]]:
         """Select the formal pool, preferring the validated profit policy."""
+        profit_parlay_policy_active = any(
+            bool(
+                ((((item.get("input_snapshot") or {}).get(
+                    "supervised_shadow"
+                ) or {}).get("profit_parlay") or {}).get("policy_active"))
+            )
+            for item in matches or []
+        )
+        if profit_parlay_policy_active:
+            return cls._apply_profit_parlay_recommendations(matches)
         profit_policy_active = any(
             bool(
                 ((((item.get("input_snapshot") or {}).get(
@@ -5046,6 +5056,184 @@ class FAEDailyAIAnalyzer:
                     str(profile.get("reason") or "")
                     + f"；全日正式投注池仅保留前{daily_limit}场"
                 ).strip("；")
+            analysis["official_bet_recommendation"] = profile
+            row["analysis"] = analysis
+        return rows
+
+    @classmethod
+    def _apply_profit_parlay_recommendations(
+        cls,
+        matches: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """Select one validated asymmetric two-leg ticket for the day."""
+        rows = [dict(item or {}) for item in matches or []]
+        main_candidates = []
+        anchor_candidates = []
+        minimum_combined_odds = 1.75
+        maximum_combined_odds = 3.80
+        policy_version = "handicap-anchor-parlay-v1"
+        for index, row in enumerate(rows):
+            analysis = dict(row.get("analysis") or {})
+            row["analysis"] = analysis
+            shadow = (
+                (row.get("input_snapshot") or {}).get(
+                    "supervised_shadow"
+                ) or {}
+            )
+            parlay = dict(shadow.get("profit_parlay") or {})
+            minimum_combined_odds = _number(
+                parlay.get("minimum_combined_odds")
+            ) or minimum_combined_odds
+            maximum_combined_odds = _number(
+                parlay.get("maximum_combined_odds")
+            ) or maximum_combined_odds
+            policy_version = str(
+                parlay.get("policy_version") or policy_version
+            )
+            main = dict(parlay.get("main_leg") or {})
+            anchor = dict(parlay.get("anchor_leg") or {})
+            if main.get("actionable_before_daily_limit"):
+                main_candidates.append((index, main))
+            if anchor.get("actionable_before_daily_limit"):
+                anchor_candidates.append((index, anchor))
+
+        main_candidates.sort(
+            key=lambda value: (
+                float(value[1].get("model_market_gap_pp") or 0),
+                float(value[1].get("probability") or 0),
+            ),
+            reverse=True,
+        )
+        anchor_candidates.sort(
+            key=lambda value: (
+                float(value[1].get("probability") or 0),
+                float(value[1].get("market_probability") or 0),
+            ),
+            reverse=True,
+        )
+        selected_pair = None
+        for main_index, main in main_candidates:
+            anchor_pair = next((
+                value for value in anchor_candidates
+                if value[0] != main_index
+            ), None)
+            if not anchor_pair:
+                continue
+            anchor_index, anchor = anchor_pair
+            main_odds = _number(main.get("odds"))
+            anchor_odds = _number(anchor.get("odds"))
+            if main_odds is None or anchor_odds is None:
+                continue
+            combined_odds = main_odds * anchor_odds
+            if (
+                minimum_combined_odds
+                <= combined_odds
+                <= maximum_combined_odds
+            ):
+                selected_pair = (
+                    main_index, main, anchor_index, anchor, combined_odds
+                )
+                break
+
+        selected = {}
+        combined_odds = None
+        if selected_pair:
+            (
+                main_index, main, anchor_index, anchor, combined_odds
+            ) = selected_pair
+            selected = {
+                main_index: (main, "主腿", 1),
+                anchor_index: (anchor, "稳胆锚点", 2),
+            }
+
+        for index, row in enumerate(rows):
+            analysis = row["analysis"]
+            analysis_source = str(row.get("analysis_source") or "")
+            if index not in selected:
+                profile = {
+                    "actionable": False,
+                    "qualified_before_daily_limit": False,
+                    "selection": None,
+                    "market": None,
+                    "odds": None,
+                    "daily_rank": None,
+                    "recommendation_level": "direction",
+                    "strategy_version": policy_version,
+                    "strategy_source": "fae-supervised-profit-parlay",
+                    "parlay_role": None,
+                    "combined_odds": (
+                        round(combined_odds, 3)
+                        if combined_odds is not None else None
+                    ),
+                    "ai_verified": analysis_source == "volcengine-ark",
+                    "analysis_source": (
+                        analysis_source or "fae-supervised"
+                    ),
+                    "reason": (
+                        "未进入全日回测二串一的主腿或稳胆锚点"
+                        if selected_pair else
+                        "当天没有形成两个不同比赛的合格二串一"
+                    ),
+                }
+            else:
+                candidate, role, daily_rank = selected[index]
+                probability = _number(candidate.get("probability"))
+                odds = _number(candidate.get("odds"))
+                model_probability = _number(
+                    candidate.get("model_probability")
+                )
+                market_probability = _number(
+                    candidate.get("market_probability")
+                )
+                gap = _number(
+                    candidate.get("model_market_gap_pp")
+                ) or 0.0
+                value_edge = _number(candidate.get("value_edge"))
+                profile = {
+                    "actionable": True,
+                    "qualified_before_daily_limit": True,
+                    "selection": candidate.get("selection"),
+                    "market": candidate.get("market"),
+                    "odds": round(odds, 3)
+                    if odds is not None else None,
+                    "probability": round(probability, 2)
+                    if probability is not None else None,
+                    "model_probability": round(model_probability, 2)
+                    if model_probability is not None else None,
+                    "market_probability": round(market_probability, 2)
+                    if market_probability is not None else None,
+                    "model_market_edge": candidate.get("market_edge_pp"),
+                    "model_expected_return": (
+                        round(probability / 100.0 * odds, 3)
+                        if probability is not None and odds is not None
+                        else None
+                    ),
+                    "value_score": round(value_edge, 1)
+                    if value_edge is not None else None,
+                    "bet_score": round(gap, 1),
+                    "market_confidence": round(gap, 1),
+                    "model_rating": None,
+                    "rank_score": round(
+                        gap if role == "主腿" else probability or 0,
+                        2,
+                    ),
+                    "model_market_gap_pp": round(gap, 2),
+                    "market_direction_agreement": True,
+                    "strategy_version": policy_version,
+                    "strategy_source": "fae-supervised-profit-parlay",
+                    "parlay_role": role,
+                    "combined_odds": round(float(combined_odds), 3),
+                    "daily_rank": daily_rank,
+                    "recommendation_level": "official",
+                    "ai_verified": analysis_source == "volcengine-ark",
+                    "analysis_source": (
+                        analysis_source or "fae-supervised"
+                    ),
+                    "reason": (
+                        f"回测二串一{role}：模型与市场第一方向一致；"
+                        f"两项合计赔率{combined_odds:.2f}"
+                    ),
+                }
             analysis["official_bet_recommendation"] = profile
             row["analysis"] = analysis
         return rows
@@ -10285,9 +10473,16 @@ class FAEDailyAIAnalyzer:
             odds = _number(profile.get("odds"))
             probability = _number(profile.get("probability"))
             confidence = _number(profile.get("market_confidence"))
+            is_profit_parlay = (
+                profile.get("strategy_source")
+                == "fae-supervised-profit-parlay"
+            )
+            role = str(profile.get("parlay_role") or "")
             reason_parts = [
-                f"正式单选{selection}"
-                + (f"@{odds:g}" if odds is not None else ""),
+                (
+                    f"回测二串一{role}{selection}"
+                    if is_profit_parlay else f"正式单选{selection}"
+                ) + (f"@{odds:g}" if odds is not None else ""),
             ]
             if probability is not None:
                 reason_parts.append(f"融合概率{probability:g}%")
@@ -10309,9 +10504,18 @@ class FAEDailyAIAnalyzer:
                 "market_confidence": confidence,
                 "daily_rank": profile.get("daily_rank"),
                 "rank_score": profile.get("rank_score"),
+                "strategy_version": profile.get("strategy_version"),
+                "strategy_source": profile.get("strategy_source"),
+                "parlay_role": role or None,
+                "combined_odds": profile.get("combined_odds"),
                 "reason": "，".join(reason_parts),
-                "role": "正式投注",
+                "role": role or "正式投注",
             })
+        pools["profit_parlay"] = [
+            dict(item) for item in pools["official_single"]
+            if item.get("strategy_source")
+            == "fae-supervised-profit-parlay"
+        ]
         two_option_candidates = sorted(
             (
                 item for item in matches
