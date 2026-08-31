@@ -3255,6 +3255,7 @@ class DailyAnalysisTests(unittest.TestCase):
             "analysis_source": "volcengine-ark",
             "analysis": {
                 "single_play": "让负",
+                "market_confidence": {"score": 80},
                 "single_probability_profile": {
                     "selection": "让负",
                 },
@@ -3284,6 +3285,7 @@ class DailyAnalysisTests(unittest.TestCase):
             "analysis_source": "volcengine-ark",
             "analysis": {
                 "single_play": "主胜",
+                "market_confidence": {"score": 80},
                 "single_probability_profile": {
                     "selection": "主胜",
                 },

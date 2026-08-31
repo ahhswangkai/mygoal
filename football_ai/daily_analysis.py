@@ -52,7 +52,8 @@ FORMAL_PARLAY_FALLBACK_MAX_ODDS = 3.50
 FORMAL_PARLAY_MIN_LEG_ODDS = 1.50
 FORMAL_PARLAY_MAX_LEG_ODDS = 2.25
 FORMAL_PARLAY_MIN_PROBABILITY = 50.0
-FORMAL_PARLAY_MIN_EXPECTED_RETURN = 0.90
+FORMAL_PARLAY_MIN_EXPECTED_RETURN = 0.85
+FORMAL_PARLAY_MIN_MARKET_CONFIDENCE = 65.0
 
 TWO_OPTION_MIN_COVERAGE = 64.0
 TWO_OPTION_MIN_MARKET_CONFIDENCE = 65.0
@@ -5160,6 +5161,11 @@ class FAEDailyAIAnalyzer:
                     or 0
                 ), 1),
             })
+            if (
+                float(candidate.get("market_confidence") or 0)
+                < FORMAL_PARLAY_MIN_MARKET_CONFIDENCE
+            ):
+                continue
             candidates.append((index, candidate))
 
         pairs = []
