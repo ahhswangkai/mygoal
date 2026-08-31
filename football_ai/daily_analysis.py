@@ -188,6 +188,7 @@ def compact_daily_ai_run(source: Optional[Dict[str, Any]]) -> Optional[Dict[str,
                 "retained_from_pregame",
                 "retained_from_run_id",
                 "generated_at",
+                "analysis_source",
             )
             if key in item
         }

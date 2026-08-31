@@ -1024,6 +1024,7 @@ class MongoDBStorage:
                     'retained_from_pregame': 1,
                     'retained_from_run_id': 1,
                     'generated_at': 1,
+                    'analysis_source': 1,
                     'analysis.primary_play': 1,
                     'analysis.secondary_play': 1,
                     'analysis.secondary_selection_guard': 1,

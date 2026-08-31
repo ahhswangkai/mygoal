@@ -2061,6 +2061,15 @@ def get_fae_daily_ai():
             )
         )
     if data and compact:
+        data['matches'] = (
+            fae_daily_ai_analyzer.apply_official_bet_recommendations(
+                data.get('matches') or []
+            )
+        )
+        data['daily_summary'] = fae_daily_ai_analyzer.align_summary_ratings(
+            data.get('daily_summary') or {},
+            data.get('matches') or [],
+        )
         data = compact_daily_ai_run(data)
     response = jsonify({
         'success': True,
