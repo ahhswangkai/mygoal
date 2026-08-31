@@ -77,11 +77,6 @@
           <div class="daily-ai-summary">
             <span class="daily-ai-kicker">今日核心结论</span>
             <p>{{ displayDailyText(faeDailyAi.daily_summary?.core_conclusion || '暂无总览结论') }}</p>
-            <div v-if="faeDailyAi.daily_summary?.warnings?.length" class="daily-ai-warnings">
-              <span v-for="warning in faeDailyAi.daily_summary.warnings" :key="warning">
-                ⚠ {{ displayDailyText(warning) }}
-              </span>
-            </div>
             <div
               v-if="faeDailyAi.review_memory?.review_days"
               class="daily-review-memory"
@@ -487,35 +482,6 @@
               </button>
               <small class="two-option-combo-note">两条路径各 1 注，不代表保证盈利</small>
             </article>
-          </section>
-
-          <section
-            v-if="visibleDailyCombinations.length"
-            class="daily-ai-combos"
-          >
-            <h2>AI 推荐 2 / 3 关</h2>
-            <article
-              v-for="(combo, index) in visibleDailyCombinations"
-              :key="`daily-combo-${index}`"
-            >
-              <header><b>{{ combo.play }}</b><span>{{ displayDailyText(combo.reason) }}</span></header>
-              <button
-                v-for="pick in combo.picks"
-                :key="`${index}-${pick.match_id}`"
-                type="button"
-                @click="goToDetail(pick.match_id)"
-              >
-                <span>
-                  {{ dailyMatch(pick.match_id).match_number }}
-                  {{ dailyMatch(pick.match_id).home_team }} vs {{ dailyMatch(pick.match_id).away_team }}
-                </span>
-                <strong>{{ pick.selection }}</strong>
-              </button>
-            </article>
-          </section>
-          <section v-else class="daily-ai-combos daily-ai-combos-empty">
-            <h2>AI 推荐 2 / 3 关</h2>
-            <p>今日没有同时达到门槛的平局与让平单选候选，不强行凑单选组合；双选请看上方“双选核心”。</p>
           </section>
 
           <section v-if="shouldShowDailyMatchList && visibleDailyMatches.length" class="daily-match-section">
@@ -1488,7 +1454,6 @@ const dailyPoolGroups = computed(() => {
 })
 const hasOfficialDailyRecommendations = computed(() => (
   dailyPoolGroups.value.length > 0 ||
-  visibleDailyCombinations.value.length > 0 ||
   visibleDailyMatches.value.some(item => item.analysis?.two_option_recommendation?.actionable)
 ))
 const shouldShowDailyMatchList = computed(() => (
@@ -1858,14 +1823,6 @@ const historicalCalibrationCount = computed(() => (
 const visibleDailyMatches = computed(() => (
   faeDailyAi.value?.matches || []
 ).filter(isVisibleDailyMatch))
-const visibleDailyCombinations = computed(() => (
-  faeDailyAi.value?.daily_summary?.recommended_combinations || []
-).filter(combo => (
-  (combo.picks || []).length > 0
-  && (combo.picks || []).every(pick => (
-    isVisibleDailyMatch(dailyMatch(pick.match_id))
-  ))
-)))
 const visibleTwoOptionCombinations = computed(() => (
   faeDailyAi.value?.daily_summary?.two_option_combinations || []
 ).filter(combo => (
@@ -2838,22 +2795,6 @@ onBeforeUnmount(() => {
   overflow: hidden;
   -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
-}
-
-.daily-ai-warnings {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 5px;
-  margin-top: 9px;
-}
-
-.daily-ai-warnings span {
-  padding: 4px 6px;
-  color: #9b6328;
-  font-size: 11px;
-  line-height: 1.35;
-  background: #fff7e9;
-  border-radius: 5px;
 }
 
 .daily-review-memory {
@@ -3877,21 +3818,6 @@ onBeforeUnmount(() => {
   border-radius: 9px;
 }
 
-.daily-ai-combos-empty {
-  padding: 9px;
-  color: #969aa1;
-  background: #fff;
-  border: 1px solid #eee4e6;
-  border-radius: 9px;
-}
-
-.daily-ai-combos-empty h2 {
-  margin: 0 0 5px;
-  color: #555;
-  font-size: 13px;
-}
-
-.daily-ai-combos-empty p,
 .combo-review-empty {
   margin: 0;
   color: #999;
