@@ -2197,10 +2197,28 @@ def get_fae_daily_ai_match(match_id):
                 if owner_date else {},
             )[0]
         )
-        # Daily rankings and the formal two-leg ticket must be calculated from
-        # the complete slate. Re-running those selectors with a one-match list
-        # would erase the other leg and make detail disagree with the list.
-        # The stored pre-match row already contains the immutable daily result.
+        # Recalculate the cross-match formal ticket from the compact full slate,
+        # then copy only this match's profile into the detailed immutable row.
+        # Running the selector with one match would erase the other leg.
+        daily_run = (
+            mongo_storage.get_fae_daily_ai_run(owner_date, compact=True)
+            if owner_date else None
+        )
+        daily_rows = fae_daily_ai_analyzer.apply_official_bet_recommendations(
+            (daily_run or {}).get('matches') or []
+        )
+        daily_row = next((
+            row for row in daily_rows
+            if str(row.get('match_id') or '') == str(match_id)
+        ), None)
+        if daily_row:
+            analysis = dict(data.get('analysis') or {})
+            analysis['official_bet_recommendation'] = (
+                (daily_row.get('analysis') or {}).get(
+                    'official_bet_recommendation'
+                ) or {}
+            )
+            data['analysis'] = analysis
     return jsonify({'success': True, 'data': data})
 
 

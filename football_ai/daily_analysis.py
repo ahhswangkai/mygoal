@@ -125,6 +125,7 @@ DAILY_AI_COMPACT_ANALYSIS_FIELDS = (
     "market_confidence",
     "bet_score",
     "decision",
+    "non_cover_guard",
     "historical_calibration",
     "two_option_recommendation",
     "official_bet_recommendation",
@@ -206,6 +207,10 @@ def compact_daily_ai_run(source: Optional[Dict[str, Any]]) -> Optional[Dict[str,
                     "current": (snapshot.get("sporttery_handicap") or {}).get("current"),
                 },
                 "total": {"current": (snapshot.get("total") or {}).get("current")},
+                "upset_warning_model": snapshot.get(
+                    "upset_warning_model"
+                ) or {},
+                "data_warnings": snapshot.get("data_warnings") or [],
                 "historical_goal_margin_model": snapshot.get(
                     "historical_goal_margin_model"
                 ) or {},
@@ -216,7 +221,8 @@ def compact_daily_ai_run(source: Optional[Dict[str, Any]]) -> Optional[Dict[str,
                     "supervised_shadow"
                 ) or {},
                 "fae_core": {
-                    "recommendation": {"category_scores": scores}
+                    "recommendation": {"category_scores": scores},
+                    "risk": fae_core.get("risk") or {},
                 },
             },
         })

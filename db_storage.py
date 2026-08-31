@@ -1048,6 +1048,7 @@ class MongoDBStorage:
                     'analysis.market_confidence': 1,
                     'analysis.bet_score': 1,
                     'analysis.decision': 1,
+                    'analysis.non_cover_guard': 1,
                     'analysis.historical_calibration': 1,
                     'analysis.two_option_recommendation': 1,
                     'analysis.official_bet_recommendation': 1,
@@ -1062,6 +1063,8 @@ class MongoDBStorage:
                     'input_snapshot.sporttery_handicap.value': 1,
                     'input_snapshot.sporttery_handicap.current': 1,
                     'input_snapshot.total.current': 1,
+                    'input_snapshot.upset_warning_model': 1,
+                    'input_snapshot.data_warnings': 1,
                     'input_snapshot.historical_goal_margin_model': 1,
                     'input_snapshot.low_odds_asian_model': 1,
                     'input_snapshot.supervised_shadow': 1,
@@ -1069,6 +1072,7 @@ class MongoDBStorage:
                     'input_snapshot.fae_core.recommendation.category_scores.odds': 1,
                     'input_snapshot.fae_core.recommendation.category_scores.bet_score': 1,
                     'input_snapshot.fae_core.recommendation.category_scores.no_bet': 1,
+                    'input_snapshot.fae_core.risk': 1,
                 }
             matches = list(self.fae_daily_ai_matches_collection.find(
                 {'run_id': run.get('run_id')},
