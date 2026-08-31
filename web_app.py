@@ -1446,6 +1446,20 @@ def _review_fae_daily_ai(
                 snapshot.get('daily_summary') or {}
             )
         )
+    # Formal parlay policy is deterministic over the immutable pre-match
+    # two-option profiles. Reapply the current released policy before every
+    # settlement so historical pages and forward reviews use the same ticket
+    # definition without reading live odds or final scores into selection.
+    snapshot = dict(snapshot)
+    snapshot['matches'] = (
+        fae_daily_ai_analyzer.apply_official_bet_recommendations(
+            snapshot.get('matches') or []
+        )
+    )
+    snapshot['daily_summary'] = fae_daily_ai_analyzer.align_summary_ratings(
+        snapshot.get('daily_summary') or {},
+        snapshot.get('matches') or [],
+    )
     matches = {
         str(item.get('match_id')): (
             mongo_storage.get_match_by_id(item.get('match_id')) or {}
