@@ -3249,68 +3249,38 @@ class DailyAnalysisTests(unittest.TestCase):
         )
         self.assertFalse(selected[0]["ai_verified"])
 
-    def test_profit_parlay_selects_two_ark_aligned_target_three_legs(self):
-        rows = [{
-            "match_id": "first",
-            "analysis_source": "volcengine-ark",
-            "analysis": {
-                "single_play": "让负",
-                "market_confidence": {"score": 80},
-                "single_probability_profile": {
-                    "selection": "让负",
-                },
-            },
-            "input_snapshot": {
-                "supervised_shadow": {
-                    "quality": {"complete": True},
-                    "high_confidence_single": {
-                        "candidates": [{
-                            "selection": "让负",
-                            "market": "竞彩让球",
-                            "odds": 1.72,
-                            "probability": 62.0,
-                            "ranking_probability": 61.0,
-                            "model_probability": 63.0,
-                            "market_probability": 58.0,
-                            "model_market_gap_pp": 12.0,
-                            "model_market_rank": 1,
-                            "market_rank": 1,
-                            "market_direction_agreement": True,
-                        }],
+    def test_formal_parlay_uses_top_two_receiving_coverage_candidates(self):
+        def candidate(match_id, handicap, selection, odds, rank_score):
+            return {
+                "match_id": match_id,
+                "match_number": "周一001",
+                "owner_date": "2026-08-31",
+                "match_time": f"08-31 {18 + len(match_id)}:00",
+                "analysis_source": "volcengine-ark",
+                "analysis": {
+                    "two_option_recommendation": {
+                        "market": "竞彩让球",
+                        "selections": [selection, "让平"],
+                        "odds": {selection: odds, "让平": 3.5},
+                        "rank_score": rank_score,
+                        "coverage_score": rank_score - 1,
+                        "pair_value_score": 90,
+                        "market_confidence": 80,
                     },
                 },
-            },
-        }, {
-            "match_id": "second",
-            "analysis_source": "volcengine-ark",
-            "analysis": {
-                "single_play": "主胜",
-                "market_confidence": {"score": 80},
-                "single_probability_profile": {
-                    "selection": "主胜",
-                },
-            },
-            "input_snapshot": {
-                "supervised_shadow": {
-                    "quality": {"complete": True},
-                    "high_confidence_single": {
-                        "candidates": [{
-                            "selection": "主胜",
-                            "market": "胜平负",
-                            "odds": 1.75,
-                            "probability": 61.0,
-                            "ranking_probability": 60.0,
-                            "model_probability": 62.0,
-                            "market_probability": 57.0,
-                            "model_market_gap_pp": 11.0,
-                            "model_market_rank": 1,
-                            "market_rank": 1,
-                            "market_direction_agreement": True,
-                        }],
+                "input_snapshot": {
+                    "sporttery_handicap": {
+                        "value": handicap,
+                        "current": [1.46, 3.5, 2.65],
                     },
                 },
-            },
-        }]
+            }
+
+        rows = [
+            candidate("first", -1, "让负", 2.65, 79.0),
+            candidate("second", 1, "让胜", 1.46, 80.0),
+            candidate("third", -1, "让负", 1.70, 70.0),
+        ]
 
         result = FAEDailyAIAnalyzer.apply_official_bet_recommendations(rows)
         profiles = [
@@ -3321,11 +3291,14 @@ class DailyAnalysisTests(unittest.TestCase):
         self.assertEqual(sum(row["actionable"] for row in profiles), 2)
         self.assertEqual(
             [row["parlay_role"] for row in profiles],
-            ["第1腿", "第2腿"],
+            ["全日第2腿", "全日第1腿", None],
         )
-        self.assertTrue(all(row["combined_odds"] == 3.01 for row in profiles))
         self.assertTrue(all(
-            row["strategy_source"] == "fae-ark-target-3-parlay"
+            row["combined_odds"] == 3.869
+            for row in profiles[:2]
+        ))
+        self.assertTrue(all(
+            row["strategy_source"] == "fae-two-option-receiving-parlay"
             for row in profiles
         ))
         summary = FAEDailyAIAnalyzer.align_summary_ratings(
@@ -3334,7 +3307,46 @@ class DailyAnalysisTests(unittest.TestCase):
         self.assertEqual(len(summary["pools"]["profit_parlay"]), 2)
         self.assertEqual(
             [row["role"] for row in summary["pools"]["profit_parlay"]],
-            ["第1腿", "第2腿"],
+            ["全日第1腿", "全日第2腿"],
+        )
+
+    def test_formal_receiving_parlay_splits_weekend_at_21(self):
+        def row(match_id, match_time, rank_score):
+            return {
+                "match_id": match_id,
+                "match_number": "周日001",
+                "owner_date": "2026-08-30",
+                "match_time": match_time,
+                "analysis_source": "volcengine-ark",
+                "analysis": {"two_option_recommendation": {
+                    "market": "竞彩让球",
+                    "selections": ["让负", "让平"],
+                    "odds": {"让负": 1.6, "让平": 3.5},
+                    "rank_score": rank_score,
+                    "coverage_score": rank_score,
+                }},
+                "input_snapshot": {"sporttery_handicap": {
+                    "value": -1,
+                    "current": [2.1, 3.5, 1.6],
+                }},
+            }
+
+        result = FAEDailyAIAnalyzer.apply_official_bet_recommendations([
+            row("early-1", "08-30 18:00", 80),
+            row("early-2", "08-30 20:30", 79),
+            row("late-1", "08-30 21:00", 78),
+            row("late-2", "08-31 01:00", 77),
+        ])
+        profiles = [
+            item["analysis"]["official_bet_recommendation"]
+            for item in result
+        ]
+
+        self.assertEqual(sum(item["actionable"] for item in profiles), 4)
+        self.assertEqual(len({item["ticket_id"] for item in profiles}), 2)
+        self.assertEqual(
+            [item["parlay_role"] for item in profiles],
+            ["早场第1腿", "早场第2腿", "晚场第1腿", "晚场第2腿"],
         )
 
     def test_official_bet_pool_rejects_fallback_and_short_favorite_proxy(self):
