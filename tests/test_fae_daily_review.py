@@ -411,6 +411,47 @@ class DailyAIReviewTests(unittest.TestCase):
         self.assertEqual(review["summary"]["official_bets"]["hits"], 1)
         self.assertEqual(review["summary"]["official_bets"]["roi"], 80.0)
 
+    def test_settles_formal_parlay_as_one_ticket(self):
+        first = source(
+            "205", "主胜", euro=(1.75, 3.60, 4.50), single_play="主胜",
+        )
+        second = source(
+            "206", "客胜", euro=(4.40, 3.50, 1.70), single_play="客胜",
+        )
+        for rank, (pick, selection, role) in enumerate((
+            (first, "主胜", "第1腿"),
+            (second, "客胜", "第2腿"),
+        ), 1):
+            pick["analysis"]["official_bet_recommendation"] = {
+                "actionable": True,
+                "selection": selection,
+                "daily_rank": rank,
+                "parlay_role": role,
+                "ticket_id": "formal-target-3-205-206",
+                "combined_odds": 2.975,
+                "strategy_version": "ark-aligned-target-3-parlay-v2",
+                "strategy_source": "fae-ark-target-3-parlay",
+            }
+        snapshot = {
+            **self.snapshot,
+            "matches": [first, second],
+            "daily_summary": {"recommended_combinations": []},
+        }
+        results = {
+            "205": {"status": 2, "home_score": 2, "away_score": 1},
+            "206": {"status": 2, "home_score": 0, "away_score": 1},
+        }
+
+        review = FAEDailyAIReviewEngine().review(snapshot, results)
+
+        self.assertEqual(len(review["official_bet_results"]), 2)
+        self.assertEqual(len(review["official_parlay_results"]), 1)
+        ticket = review["official_parlay_results"][0]
+        self.assertEqual(ticket["status"], "hit")
+        self.assertEqual(ticket["odds"], 2.975)
+        self.assertEqual(review["summary"]["official_parlays"]["hits"], 1)
+        self.assertEqual(review["summary"]["official_parlays"]["settled"], 1)
+
     def test_settles_published_high_confidence_single_pool(self):
         pick = source("205", "平局", euro=(1.80, 3.50, 4.20))
         snapshot = {

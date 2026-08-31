@@ -2188,17 +2188,10 @@ def get_fae_daily_ai_match(match_id):
                 if owner_date else {},
             )[0]
         )
-        rows = fae_daily_ai_analyzer.apply_draw_radar([data])
-        rows = fae_daily_ai_analyzer.apply_draw_radar_recommendation_overrides(
-            rows
-        )
-        rows = fae_daily_ai_analyzer.apply_two_option_recommendations(rows)
-        rows = fae_daily_ai_analyzer.apply_official_bet_recommendations(rows)
-        rows = (
-            fae_daily_ai_analyzer
-            .apply_high_confidence_single_recommendations(rows)
-        )
-        data = rows[0] if rows else data
+        # Daily rankings and the formal two-leg ticket must be calculated from
+        # the complete slate. Re-running those selectors with a one-match list
+        # would erase the other leg and make detail disagree with the list.
+        # The stored pre-match row already contains the immutable daily result.
     return jsonify({'success': True, 'data': data})
 
 

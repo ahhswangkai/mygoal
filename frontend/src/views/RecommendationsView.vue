@@ -693,14 +693,14 @@
 
           <div class="review-stats-grid">
             <article>
-              <span>正式池命中</span>
-              <strong>{{ faeStats.official_bets?.hit_rate || 0 }}%</strong>
-              <small>{{ faeStats.official_bets?.hits || 0 }}/{{ faeStats.official_bets?.settled || 0 }} 命中</small>
+              <span>正式二串一命中</span>
+              <strong>{{ formalBetStats.hit_rate || 0 }}%</strong>
+              <small>{{ formalBetStats.hits || 0 }}/{{ formalBetStats.settled || 0 }} 张命中</small>
             </article>
             <article>
-              <span>正式池ROI</span>
-              <strong :class="metricClass(faeStats.official_bets?.roi)">{{ signedMetric(faeStats.official_bets?.roi) }}%</strong>
-              <small>仅统计通过全部门槛的单选</small>
+              <span>正式二串一ROI</span>
+              <strong :class="metricClass(formalBetStats.roi)">{{ signedMetric(formalBetStats.roi) }}%</strong>
+              <small>按整张二串一1单位统计</small>
             </article>
             <article>
               <span>累计单场</span>
@@ -977,11 +977,11 @@
               class="daily-review-block official-review-block"
             >
               <h2>
-                <span>正式投注池复盘</span>
-                <small>
-                  {{ faeReview.summary?.official_bets?.hits || 0 }}/{{ faeReview.summary?.official_bets?.settled || 0 }} 命中
-                  · ROI {{ signedMetric(faeReview.summary?.official_bets?.roi) }}%
-                </small>
+                  <span>正式二串一复盘</span>
+                  <small>
+                  {{ formalReviewStats.hits || 0 }}/{{ formalReviewStats.settled || 0 }} 张命中
+                  · ROI {{ signedMetric(formalReviewStats.roi) }}%
+                  </small>
               </h2>
               <button
                 v-for="item in faeReview.official_bet_results"
@@ -1394,6 +1394,14 @@ const skillBusy = ref(false)
 const skillMessage = ref('')
 const skillError = ref('')
 const skillConfirmation = ref(null)
+const formalBetStats = computed(() => (
+  faeStats.value?.official_parlays || faeStats.value?.official_bets || {}
+))
+const formalReviewStats = computed(() => (
+  faeReview.value?.summary?.official_parlays ||
+  faeReview.value?.summary?.official_bets ||
+  {}
+))
 let requestController = null
 let reviewRequestController = null
 let skillsRequestController = null
@@ -1424,7 +1432,7 @@ const supervisedShadow = computed(() => (
   faeDailyAi.value?.daily_summary?.supervised_shadow || {}
 ))
 const dailyPoolLabels = {
-  profit_parlay: '回测二串一',
+  profit_parlay: '正式二串一 · 目标3.0倍',
   high_confidence_single: '高命中单选',
   official_single: '正式投注池',
   two_option_core: '双选核心',

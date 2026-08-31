@@ -288,6 +288,9 @@ class FAEDailyAIReviewEngine:
             )]
             if result is not None
         ]
+        official_parlay_results = self._settle_official_parlays(
+            official_bet_results
+        )
         handicap_results = [
             result
             for item in matches
@@ -434,6 +437,7 @@ class FAEDailyAIReviewEngine:
             "pending_matches": pending,
             "match_results": match_results,
             "official_bet_results": official_bet_results,
+            "official_parlay_results": official_parlay_results,
             "high_confidence_single_results": (
                 high_confidence_single_results
             ),
@@ -447,6 +451,9 @@ class FAEDailyAIReviewEngine:
                 "singles": summarize_ai_settled(match_results),
                 "official_bets": summarize_ai_settled(
                     official_bet_results
+                ),
+                "official_parlays": summarize_ai_settled(
+                    official_parlay_results
                 ),
                 "high_confidence_singles": summarize_ai_settled(
                     high_confidence_single_results
@@ -595,9 +602,88 @@ class FAEDailyAIReviewEngine:
             "bet_score": profile.get("bet_score"),
             "market_confidence": profile.get("market_confidence"),
             "rank_score": profile.get("rank_score"),
+            "strategy_version": profile.get("strategy_version"),
+            "strategy_source": profile.get("strategy_source"),
+            "parlay_role": profile.get("parlay_role"),
+            "ticket_id": profile.get("ticket_id"),
+            "combined_odds": profile.get("combined_odds"),
             "gate_reason": profile.get("reason"),
         })
         return result
+
+    @staticmethod
+    def _settle_official_parlays(
+        official_results: Iterable[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """Grade formal two-leg products as tickets rather than two singles."""
+        groups: Dict[str, List[Dict[str, Any]]] = {}
+        for row in official_results:
+            if not row.get("parlay_role") or not row.get("combined_odds"):
+                continue
+            key = str(
+                row.get("ticket_id")
+                or f"{row.get('strategy_version')}:{row.get('combined_odds')}"
+            )
+            groups.setdefault(key, []).append(dict(row))
+
+        tickets = []
+        for ticket_id, legs in groups.items():
+            legs.sort(key=lambda row: int(row.get("daily_rank") or 999))
+            if len(legs) != 2:
+                continue
+            statuses = [str(row.get("status") or "") for row in legs]
+            if "miss" in statuses:
+                status = "miss"
+            elif "pending" in statuses:
+                status = "pending"
+            elif any(value in {"ungraded", "skipped", ""} for value in statuses):
+                status = "ungraded"
+            elif all(value == "push" for value in statuses):
+                status = "push"
+            else:
+                status = "hit"
+            combined_odds = _number(legs[0].get("combined_odds"))
+            if combined_odds is None:
+                leg_odds = [_number(row.get("odds")) for row in legs]
+                combined_odds = (
+                    leg_odds[0] * leg_odds[1]
+                    if all(value is not None for value in leg_odds) else None
+                )
+            payout = (
+                combined_odds if status == "hit"
+                else 1.0 if status == "push"
+                else 0.0 if status == "miss"
+                else None
+            )
+            tickets.append({
+                "key": ticket_id,
+                "ticket_id": ticket_id,
+                "result_type": "official_parlay",
+                "play": "2串1",
+                "picks": legs,
+                "selection": " × ".join(
+                    str(row.get("selection_text") or row.get("selection") or "")
+                    for row in legs
+                ),
+                "selection_text": " × ".join(
+                    str(row.get("selection_text") or row.get("selection") or "")
+                    for row in legs
+                ),
+                "status": status,
+                "combined_odds": (
+                    round(combined_odds, 3)
+                    if combined_odds is not None else None
+                ),
+                "odds": (
+                    round(combined_odds, 3)
+                    if combined_odds is not None else None
+                ),
+                "return": round(payout, 2) if payout is not None else None,
+                "profit": round(payout - 1, 2) if payout is not None else None,
+                "strategy_version": legs[0].get("strategy_version"),
+                "strategy_source": legs[0].get("strategy_source"),
+            })
+        return tickets
 
     def _settle_two_option_references(
         self, source: Dict[str, Any], match: Dict[str, Any]
@@ -1106,6 +1192,7 @@ def aggregate_daily_ai_reviews(
     rows = list(reviews)
     matches: List[Dict[str, Any]] = []
     official_bet_results: List[Dict[str, Any]] = []
+    official_parlay_results: List[Dict[str, Any]] = []
     handicap_results: List[Dict[str, Any]] = []
     two_option_results: List[Dict[str, Any]] = []
     draw_radar_results: List[Dict[str, Any]] = []
@@ -1122,6 +1209,10 @@ def aggregate_daily_ai_reviews(
             **row,
             "review_owner_date": owner_date,
         } for row in review.get("official_bet_results") or [])
+        official_parlay_results.extend({
+            **row,
+            "review_owner_date": owner_date,
+        } for row in review.get("official_parlay_results") or [])
         handicap_results.extend({
             **row,
             "review_owner_date": owner_date,
@@ -1162,6 +1253,9 @@ def aggregate_daily_ai_reviews(
         ),
         "singles": summarize_ai_settled(matches),
         "official_bets": summarize_ai_settled(official_bet_results),
+        "official_parlays": summarize_ai_settled(
+            official_parlay_results
+        ),
         "handicap": summarize_ai_settled(handicap_results),
         "two_option": {
             "overall": summarize_two_option(two_option_results),
