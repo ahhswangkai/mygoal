@@ -12,10 +12,11 @@ from json_repair import repair_json
 
 from .league_profile import classify_asian_risk_patterns
 from .provider import ArkNarrativeClient, FAEError, FAEOutputError
+from .special_markets import build_special_market_analysis
 from .version import ENGINE_VERSION
 
 
-DAILY_PROMPT_VERSION = "five-market-daily-v34-replay-guards"
+DAILY_PROMPT_VERSION = "five-market-daily-v35-special-markets"
 
 OFFICIAL_PLAY_SELECTIONS = {"平局", "让平"}
 OFFICIAL_MIN_BET_SCORE = 70.0
@@ -215,6 +216,28 @@ def compact_daily_ai_run(source: Optional[Dict[str, Any]]) -> Optional[Dict[str,
                 },
             },
         })
+        special = analysis.get("special_markets") or {}
+        compact_special = {
+            "version": special.get("version"),
+            "source": special.get("source"),
+        }
+        for key in ("total_goals", "half_full"):
+            market = special.get(key) or {}
+            if not market:
+                continue
+            compact_special[key] = {
+                field: market.get(field)
+                for field in (
+                    "available", "market", "model_version", "primary",
+                    "secondary", "confidence", "reason",
+                )
+                if field in market
+            }
+            compact_special[key]["snapshot"] = {
+                "updated_at": (market.get("snapshot") or {}).get("updated_at")
+            }
+        if len(compact_special) > 2:
+            compact_item["analysis"]["special_markets"] = compact_special
         secondary_guard = analysis.get("secondary_selection_guard") or {}
         if secondary_guard:
             compact_item["analysis"]["secondary_selection_guard"] = {
@@ -2042,6 +2065,7 @@ def build_daily_match_input(
     goal_margin_model: Optional[Dict[str, Any]] = None,
     source_analysis: Optional[Dict[str, Any]] = None,
     draw_selection_policy: Optional[str] = None,
+    special_market_snapshot: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Create a compact, auditable input for the daily Ark request."""
     analysis = (fae_result or {}).get("analysis") or {}
@@ -2134,7 +2158,7 @@ def build_daily_match_input(
         fundamentals,
         odds_band_model,
     )
-    return {
+    payload = {
         "match_id": str(match.get("match_id") or ""),
         "match_number": match.get("match_number") or match.get("round_id"),
         "owner_date": str(match.get("owner_date") or "")[:10] or None,
@@ -2250,6 +2274,16 @@ def build_daily_match_input(
         "data_warnings": list(dict.fromkeys(warnings)),
         "missing_fundamentals": missing_fundamentals,
     }
+    payload["special_markets"] = build_special_market_analysis(
+        special_market_snapshot,
+        payload,
+    )
+    if not (
+        (payload["special_markets"].get("total_goals") or {}).get("available")
+        or (payload["special_markets"].get("half_full") or {}).get("available")
+    ):
+        payload["data_warnings"].append("竞彩总进球/半全场赔率快照缺失")
+    return payload
 
 
 class FAEDailyAIAnalyzer:
@@ -3151,6 +3185,7 @@ class FAEDailyAIAnalyzer:
             "若让平对应的historical_goal_margin_model同时满足expected_return<0.95且value_edge<-5%，让平不得作为主选；应改用同市场校准概率最高的方向项，让平最多保留为观察防选。",
             "联赛中亚盘不配合（退盘、升盘高水、上盘升水、降水不升盘、欧亚背离、热门浅盘）时，胜负方向必须硬降级为观察。杯赛/淘汰赛/两回合赛事若只有退盘或降水不升盘单一信号，且没有欧赔走弱、竞彩保护或阵容赛程第二项独立证据，只降低置信度，不得直接反转方向；赛事阶段缺失时必须说明未知。",
             "大小球跳动达到0.75或以上时优先标记数据异常，不得据此强推方向。",
+            "special_markets包含体彩计算器的总进球与半全场固定快照及程序校正结果；它们是独立玩法，只能辅助解释比分路径，不得改写胜平负/让球主次选，程序会保留其首选和次选供单独复盘。",
             "不得伪造近期状态、伤停、首发、天气、战意和赛程；输入缺失必须明确说明。",
             "fundamentals来自500赛前页：recent、history、team_rankings、future可作基本面证据；lineups.status=predicted仅表示预计阵容，禁止称为官方首发；injuries.status=no_listed_players仅表示页面未列出球员，禁止称为确认无伤停。",
             "fundamentals.cache_status=stale时代表刷新失败后的过期缓存，只能低权重引用并必须提示时效风险。",
@@ -3243,6 +3278,7 @@ class FAEDailyAIAnalyzer:
             "固定检查欧赔、亚盘真实升深、竞彩让球、大小球、市场一致性。",
             "升降是走势而非盘口名；严格区分升盘和水位变化。",
             "让平必须结合让球数解释；大小球跳动达到0.75优先标异常。",
+            "special_markets中的总进球与半全场是程序按体彩计算器赔率生成的独立首选/次选；只可用于比分路径解释，不得把它们输出为胜平负或让球主次选。",
             "primary_play与secondary_play只允许主胜、平局、客胜、让胜、让平、让负或观望；仅同市场两项可称双选覆盖，跨市场次选只是独立方向。大球、小球只作为market_analysis.total辅助证据。",
             "不得编造近期状态、伤停、首发、天气、战意或赛程。",
             "fundamentals来自500赛前页；预计阵容不能写成官方首发，伤停栏目未列球员不能写成确认无伤停。",
@@ -3513,6 +3549,7 @@ class FAEDailyAIAnalyzer:
                 "evidence": cls._list(generated.get("evidence"), 6, 220),
                 "risks": risks,
                 "score_candidates": scores,
+                "special_markets": source.get("special_markets") or {},
             },
             "input_snapshot": source,
         }
@@ -5070,20 +5107,218 @@ class FAEDailyAIAnalyzer:
         return rows
 
     @classmethod
+    def _one_goal_margin_parlay_signal(
+        cls,
+        source: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Identify a narrow low-total path to an exact one-goal win.
+
+        A low total alone is not a draw signal.  When the Euro favourite is
+        still aligned with a Sporttery +/-1 line, the Asian handicap remains
+        between a quarter and three-quarter ball, and the total is no higher
+        than 2.5, the useful split is usually ``让平`` versus the protected
+        side rather than ordinary draw versus favourite win.  The signal is
+        deliberately narrow so a truly deepening/high-total favourite is not
+        reclassified as an exact-margin pick.
+        """
+        handicap = _number(
+            (source.get("sporttery_handicap") or {}).get("value")
+        )
+        if handicap is None or abs(handicap) != 1:
+            return {"triggered": False}
+
+        favorite = cls._favorite_market_profile(source)
+        favorite_side = str(favorite.get("side") or "")
+        favorite_odds = _number(favorite.get("odds"))
+        aligned = (
+            (favorite_side == "home" and handicap < 0)
+            or (favorite_side == "away" and handicap > 0)
+        )
+        if not aligned or favorite_odds is None or favorite_odds > 2.30:
+            return {"triggered": False}
+
+        asian = cls._asian_favorite_depth_profile(source, favorite_side)
+        current_depth = _number(asian.get("current_depth"))
+        line_change = _number(asian.get("line_change"))
+        favorite_water = _number(asian.get("current_favorite_water"))
+        total = cls._total_market_profile(source)
+        total_line = _number(total.get("line"))
+        if (
+            current_depth is None
+            or not 0.25 <= current_depth <= 0.75
+            or total_line is None
+            or total_line > 2.50
+            or (line_change is not None and line_change > 0.01)
+            or (favorite_water is not None and favorite_water > 1.08)
+        ):
+            return {"triggered": False}
+
+        return {
+            "triggered": True,
+            "selection": "让平",
+            "favorite_side": favorite_side,
+            "favorite_odds": round(favorite_odds, 3),
+            "asian_depth": round(current_depth, 3),
+            "asian_line_change": (
+                round(line_change, 3) if line_change is not None else None
+            ),
+            "favorite_water": (
+                round(favorite_water, 3)
+                if favorite_water is not None else None
+            ),
+            "total_line": round(total_line, 3),
+            "probability_adjustment_pp": 3.0,
+            "score_bonus": 14.0,
+            "reason": (
+                f"一球差分流：竞彩让球{int(handicap):+d}、亚盘热门深度"
+                f"{current_depth:g}球、大小球{total_line:g}；低总球只压低"
+                "比分，热门仍与让球方向一致，优先评估刚好赢1球"
+            ),
+        }
+
+    @classmethod
+    def _deep_cover_parlay_signal(
+        cls,
+        source: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Recognise a genuinely deepening favourite that should cover."""
+        handicap = _number(
+            (source.get("sporttery_handicap") or {}).get("value")
+        )
+        if handicap is None or abs(handicap) < 1:
+            return {"triggered": False}
+        favorite = cls._favorite_market_profile(source)
+        favorite_side = str(favorite.get("side") or "")
+        favorite_odds = _number(favorite.get("odds"))
+        aligned = (
+            (favorite_side == "home" and handicap < 0)
+            or (favorite_side == "away" and handicap > 0)
+        )
+        if not aligned or favorite_odds is None or favorite_odds > 1.45:
+            return {"triggered": False}
+
+        asian = cls._asian_favorite_depth_profile(source, favorite_side)
+        current_depth = _number(asian.get("current_depth"))
+        line_change = _number(asian.get("line_change"))
+        total = cls._total_market_profile(source)
+        total_line = _number(total.get("line"))
+        if (
+            current_depth is None
+            or current_depth < abs(handicap) + 0.24
+            or line_change is None
+            or line_change < 0.24
+            or total_line is None
+            or total_line < 3.0
+        ):
+            return {"triggered": False}
+        selection = "让胜" if favorite_side == "home" else "让负"
+        return {
+            "triggered": True,
+            "selection": selection,
+            "favorite_side": favorite_side,
+            "favorite_odds": round(favorite_odds, 3),
+            "asian_depth": round(current_depth, 3),
+            "asian_line_change": round(line_change, 3),
+            "total_line": round(total_line, 3),
+            "reason": (
+                f"穿盘分流：热门胜赔{favorite_odds:g}、亚盘真实升深至"
+                f"{current_depth:g}球、大小球{total_line:g}，优先{selection}"
+            ),
+        }
+
+    @classmethod
+    def _two_option_parlay_selection(
+        cls,
+        row: Dict[str, Any],
+        profile: Dict[str, Any],
+        handicap: float,
+    ) -> Dict[str, Any]:
+        """Choose one leg from a two-option profile using market evidence."""
+        analysis = row.get("analysis") or {}
+        selections = {
+            str(value) for value in profile.get("selections") or []
+        }
+
+        # A triggered guard is an explicit correction of the model pick and
+        # must outrank every later heuristic.  This prevents a demoted
+        # handicap draw from being reintroduced by the parlay builder.
+        guard_selection = None
+        guard_reason = None
+        for key in (
+            "consistency_guard",
+            "directional_precision_guard",
+            "non_cover_guard",
+        ):
+            guard = analysis.get(key) or {}
+            if guard.get("triggered"):
+                guard_selection = str(
+                    guard.get("effective_selection") or ""
+                )
+                guard_reason = str(guard.get("reason") or "")
+        if guard_selection:
+            return {
+                "eligible": guard_selection in selections,
+                "selection": guard_selection,
+                "basis": "guardrail",
+                "reason": guard_reason or "使用护栏后的最终方向",
+            }
+
+        source = row.get("input_snapshot") or {}
+        deep_cover = cls._deep_cover_parlay_signal(source)
+        if deep_cover.get("triggered"):
+            selection = str(deep_cover.get("selection") or "")
+            if selection in selections:
+                return {
+                    "eligible": True,
+                    "selection": selection,
+                    "basis": "deep-cover",
+                    "reason": deep_cover.get("reason"),
+                    "deep_cover_signal": deep_cover,
+                }
+
+        one_goal = cls._one_goal_margin_parlay_signal(source)
+        if one_goal.get("triggered") and "让平" in selections:
+            return {
+                "eligible": True,
+                "selection": "让平",
+                "basis": "one-goal-margin",
+                "reason": one_goal.get("reason"),
+                "one_goal_margin_signal": one_goal,
+            }
+
+        primary = str(analysis.get("primary_play") or "")
+        if primary in selections:
+            return {
+                "eligible": True,
+                "selection": primary,
+                "basis": "analysis-primary",
+                "reason": "使用逐场研判的最终主选",
+            }
+
+        receiving = "让负" if handicap < 0 else "让胜"
+        return {
+            "eligible": receiving in selections,
+            "selection": receiving,
+            "basis": "receiving-fallback",
+            "reason": "缺少更强分差证据，回退到双选中的受让保护方向",
+        }
+
+    @classmethod
     def _apply_receiving_two_option_parlays(
         cls,
         matches: List[Dict[str, Any]],
     ) -> List[Dict[str, Any]]:
-        """Publish the proven receiving-side view as formal two-leg tickets.
+        """Publish guard-aligned two-leg tickets from two-option coverage.
 
-        A negative Sporttery handicap contributes ``让负`` and a positive
-        handicap contributes ``让胜`` only when that outcome is already
-        covered by the match's two-option profile.  Weekends are split at
-        21:00 and each session takes its top two model-ranked candidates;
-        weekdays use one all-day ranking.  Odds never override model order.
+        The original policy always extracted the receiving-side outcome.  It
+        preserved coverage but discarded the exact-margin information that
+        made the second option useful.  Version 2 keeps the same model ranking
+        and session split, while selecting each leg in this order: triggered
+        guard, genuine deep-cover signal, narrow one-goal signal, final match
+        primary, receiving-side fallback.  Odds still never reorder matches.
         """
         rows = [dict(item or {}) for item in matches or []]
-        policy_version = "two-option-receiving-parlay-v1"
+        policy_version = "two-option-evidence-parlay-v2"
         strategy_source = "fae-two-option-receiving-parlay"
         candidates_by_session: Dict[str, List[Dict[str, Any]]] = {}
 
@@ -5133,17 +5368,21 @@ class FAEDailyAIAnalyzer:
             )
             if profile.get("market") != "竞彩让球" or not handicap:
                 continue
-            selection = "让负" if handicap < 0 else "让胜"
-            if selection not in (profile.get("selections") or []):
+            selection_profile = cls._two_option_parlay_selection(
+                row, profile, handicap
+            )
+            selection = str(selection_profile.get("selection") or "")
+            if not selection_profile.get("eligible") or not selection:
                 continue
             current = (
                 ((row.get("input_snapshot") or {}).get(
                     "sporttery_handicap"
                 ) or {}).get("current") or []
             )
+            odds_index = {"让胜": 0, "让平": 1, "让负": 2}.get(selection)
             fallback_odds = (
-                current[2] if selection == "让负" and len(current) > 2
-                else current[0] if selection == "让胜" and current
+                current[odds_index]
+                if odds_index is not None and len(current) > odds_index
                 else None
             )
             odds = _number((profile.get("odds") or {}).get(selection))
@@ -5166,6 +5405,14 @@ class FAEDailyAIAnalyzer:
                     profile.get("market_confidence")
                 ),
                 "session": session,
+                "selection_basis": selection_profile.get("basis"),
+                "selection_reason": selection_profile.get("reason"),
+                "one_goal_margin_signal": selection_profile.get(
+                    "one_goal_margin_signal"
+                ),
+                "deep_cover_signal": selection_profile.get(
+                    "deep_cover_signal"
+                ),
             })
 
         selected: Dict[int, Dict[str, Any]] = {}
@@ -5262,9 +5509,17 @@ class FAEDailyAIAnalyzer:
                         analysis_source or "fae-two-option"
                     ),
                     "reason": (
-                        f"正式受让方二串一{role}：双选覆盖包含"
-                        f"{candidate.get('selection')}，按所在时段模型分"
-                        f"排名前二；合计{combined_odds:.2f}倍"
+                        f"正式证据对齐二串一{role}：双选覆盖包含"
+                        f"{candidate.get('selection')}，选择依据为"
+                        f"{candidate.get('selection_reason') or '模型最终方向'}；"
+                        f"按所在时段模型分排名前二，合计{combined_odds:.2f}倍"
+                    ),
+                    "selection_basis": candidate.get("selection_basis"),
+                    "one_goal_margin_signal": candidate.get(
+                        "one_goal_margin_signal"
+                    ),
+                    "deep_cover_signal": candidate.get(
+                        "deep_cover_signal"
                     ),
                 }
             analysis["official_bet_recommendation"] = profile
@@ -7629,6 +7884,46 @@ class FAEDailyAIAnalyzer:
         }
 
     @classmethod
+    def _draw_candidate_guardrail_alignment(
+        cls,
+        analysis: Dict[str, Any],
+        selection: str,
+    ) -> Dict[str, Any]:
+        """Keep draw tickets aligned with deterministic match guardrails."""
+        conflicts = []
+        for key in (
+            "consistency_guard",
+            "directional_precision_guard",
+            "non_cover_guard",
+        ):
+            guard = analysis.get(key) or {}
+            if not guard.get("triggered"):
+                continue
+            effective = str(guard.get("effective_selection") or "")
+            if effective and effective != selection:
+                conflicts.append({
+                    "guard": key,
+                    "effective_selection": effective,
+                    "reason": guard.get("reason"),
+                })
+        return {
+            "aligned": not bool(conflicts),
+            "selection": selection,
+            "conflicts": conflicts,
+            "reason": (
+                ""
+                if not conflicts else
+                "护栏最终方向为{}，{}不得重新进入组票".format(
+                    "、".join(dict.fromkeys(
+                        str(item.get("effective_selection") or "")
+                        for item in conflicts
+                    )),
+                    selection,
+                )
+            ),
+        }
+
+    @classmethod
     def _draw_radar_candidate(
         cls,
         match: Dict[str, Any],
@@ -7677,6 +7972,37 @@ class FAEDailyAIAnalyzer:
                 max(0.0, min(100.0, probability + price_probability_adjustment)),
                 2,
             )
+        one_goal_margin_signal = cls._one_goal_margin_parlay_signal(source)
+        one_goal_probability_adjustment = 0.0
+        one_goal_score_adjustment = 0.0
+        one_goal_note = ""
+        if one_goal_margin_signal.get("triggered"):
+            if selection == "让平":
+                one_goal_probability_adjustment = float(
+                    one_goal_margin_signal.get(
+                        "probability_adjustment_pp"
+                    ) or 0
+                )
+                one_goal_score_adjustment = float(
+                    one_goal_margin_signal.get("score_bonus") or 0
+                )
+                one_goal_note = str(
+                    one_goal_margin_signal.get("reason") or ""
+                )
+            elif selection == "平局":
+                # The match can still draw, but low total plus a clearly
+                # aligned favourite is primarily an exact-margin path.
+                one_goal_probability_adjustment = -2.0
+                one_goal_score_adjustment = -12.0
+                one_goal_note = (
+                    "低总球一球差分流生效：热门方向仍成立，普通平局"
+                    "降级，优先检查让平"
+                )
+            if probability is not None and one_goal_probability_adjustment:
+                probability = round(max(
+                    0.0,
+                    min(100.0, probability + one_goal_probability_adjustment),
+                ), 2)
         historical_rule_key = (
             "ordinary_draw" if selection == "平局" else "handicap_draw"
         )
@@ -7717,6 +8043,15 @@ class FAEDailyAIAnalyzer:
             )
             sporttery_price_signal["odds_value_adjustment"] = round(
                 incremental_value, 2
+            )
+        if (
+            one_goal_probability_adjustment
+            and odds is not None
+        ):
+            odds_value = round(
+                (odds_value if odds_value is not None else 0.0)
+                + one_goal_probability_adjustment * odds,
+                2,
             )
         historical_rule_samples = [
             int(item.get("sample") or 0)
@@ -7759,6 +8094,11 @@ class FAEDailyAIAnalyzer:
             and analysis.get("predicted_result") == selection
         ):
             role_signals.append("赛果倾向")
+        if one_goal_margin_signal.get("triggered"):
+            role_signals.append(
+                "低总球一球差优先"
+                if selection == "让平" else "低总球一球差分流"
+            )
 
         risk_ids = [
             str(value) for value in (
@@ -7868,6 +8208,7 @@ class FAEDailyAIAnalyzer:
             + league_score_bonus
             + odds_band_score_bonus
             + float(sporttery_price_signal.get("score_bonus") or 0)
+            + one_goal_score_adjustment
         )
         if metric.get("confidence") == "高":
             score += 3
@@ -8001,6 +8342,8 @@ class FAEDailyAIAnalyzer:
             reason_parts.append(odds_band_note)
         if sporttery_price_signal.get("note"):
             reason_parts.append(str(sporttery_price_signal["note"]))
+        if one_goal_note:
+            reason_parts.append(one_goal_note)
         if matched_historical_rules:
             reason_parts.append(
                 "历史赔率规则{}项，概率修正{:+g}个百分点".format(
@@ -8031,6 +8374,9 @@ class FAEDailyAIAnalyzer:
             reason_parts.append("仅列观察，不进入组合")
         else:
             reason_parts.append("未达到展示与投注门槛")
+        guardrail_alignment = cls._draw_candidate_guardrail_alignment(
+            analysis, selection
+        )
         return {
             "match_id": str(match.get("match_id") or ""),
             "match_number": match.get("match_number"),
@@ -8059,6 +8405,11 @@ class FAEDailyAIAnalyzer:
                 historical_rule_profile.get("signals") or []
             ),
             "sporttery_draw_price_signal": sporttery_price_signal,
+            "one_goal_margin_signal": one_goal_margin_signal,
+            "guardrail_alignment": guardrail_alignment,
+            "guardrail_ticket_eligible": bool(
+                guardrail_alignment.get("aligned")
+            ),
             "confidence": (
                 metric.get("confidence")
                 if metric.get("eligible_for_adjustment")
@@ -8110,6 +8461,11 @@ class FAEDailyAIAnalyzer:
         draw_band_signal = candidate.get("draw_odds_band_signal") or {}
         if draw_band_signal.get("block_official"):
             reasons.append("历史赔率区间规则明确禁止升级正式推荐")
+        if candidate.get("guardrail_ticket_eligible") is False:
+            alignment = candidate.get("guardrail_alignment") or {}
+            reasons.append(
+                str(alignment.get("reason") or "与护栏最终方向冲突")
+            )
         odds_value = _number(candidate.get("odds_value"))
         if odds_value is None:
             reasons.append("缺少赔率价值数据，不得升级正式推荐")
@@ -8194,10 +8550,16 @@ class FAEDailyAIAnalyzer:
 
         def candidate_strength(
             value: tuple[str, Dict[str, Any]],
-        ) -> tuple[bool, float, float, float, float]:
+        ) -> tuple[bool, bool, bool, float, float, float, float]:
             _, candidate = value
+            one_goal = candidate.get("one_goal_margin_signal") or {}
             return (
                 candidate.get("tier") == "core",
+                candidate.get("guardrail_ticket_eligible") is not False,
+                bool(
+                    candidate.get("selection") == "让平"
+                    and one_goal.get("triggered")
+                ),
                 float(candidate.get("probability") or 0),
                 float(candidate.get("score") or 0),
                 float(candidate.get("odds_value") or -999),
@@ -8212,6 +8574,13 @@ class FAEDailyAIAnalyzer:
                 radar[key],
                 key=lambda item: (
                     item.get("tier") == "core",
+                    item.get("guardrail_ticket_eligible") is not False,
+                    bool(
+                        item.get("selection") == "让平"
+                        and (item.get("one_goal_margin_signal") or {}).get(
+                            "triggered"
+                        )
+                    ),
                     float(item.get("score") or 0),
                     float(item.get("probability") or 0),
                 ),
@@ -8240,7 +8609,12 @@ class FAEDailyAIAnalyzer:
             for raw in radar.get(key) or []:
                 match_id = str(raw.get("match_id") or "")
                 odds = _number(raw.get("odds"))
-                if not match_id or odds is None or odds <= 1:
+                if (
+                    not match_id
+                    or odds is None
+                    or odds <= 1
+                    or raw.get("guardrail_ticket_eligible") is False
+                ):
                     continue
                 item = dict(raw)
                 item["match_id"] = match_id
@@ -8278,6 +8652,50 @@ class FAEDailyAIAnalyzer:
                         break
             return picks
 
+        def best_available(limit: int) -> List[Dict[str, Any]]:
+            """Fill a ticket without forcing a fixed draw/let-draw ratio."""
+            ranked = []
+            for market, rows in (
+                ("ordinary_draw", ordinary),
+                ("handicap_draw", handicap),
+            ):
+                for raw in rows:
+                    item = dict(raw)
+                    item["market"] = market
+                    item["selection"] = (
+                        "平局" if market == "ordinary_draw" else "让平"
+                    )
+                    ranked.append(item)
+            ranked.sort(key=lambda item: (
+                item.get("tier") == "core",
+                float(item.get("score") or 0),
+                float(item.get("probability") or 0),
+                float(item.get("odds_value") or -999),
+            ), reverse=True)
+            picks = []
+            used = set()
+            for item in ranked:
+                match_id = str(item.get("match_id") or "")
+                if not match_id or match_id in used:
+                    continue
+                picks.append(item)
+                used.add(match_id)
+                if len(picks) >= limit:
+                    break
+            return picks
+
+        def structure_label(picks: List[Dict[str, Any]]) -> str:
+            ordinary_count = sum(
+                pick.get("market") == "ordinary_draw" for pick in picks
+            )
+            handicap_count = len(picks) - ordinary_count
+            parts = []
+            if ordinary_count:
+                parts.append(f"{ordinary_count}平")
+            if handicap_count:
+                parts.append(f"{handicap_count}让平")
+            return "+".join(parts)
+
         def line(picks: List[Dict[str, Any]], indexes: List[int], key: str):
             selected = [picks[index] for index in indexes]
             combined_odds = 1.0
@@ -8295,6 +8713,8 @@ class FAEDailyAIAnalyzer:
 
         two_three = None
         three_picks = distinct_picks(1, 2)
+        if len(three_picks) < 3:
+            three_picks = best_available(3)
         if len(three_picks) == 3:
             pair_indexes = ((0, 1), (0, 2), (1, 2))
             lines = [
@@ -8306,7 +8726,7 @@ class FAEDailyAIAnalyzer:
                 "key": "draw-two-three",
                 "title": "平/让平 3场2、3关",
                 "play": "3场2、3关",
-                "structure": "1平+2让平",
+                "structure": structure_label(three_picks),
                 "picks": three_picks,
                 "lines": lines,
                 "line_count": 4,
@@ -8315,12 +8735,14 @@ class FAEDailyAIAnalyzer:
 
         two_leg = None
         two_picks = distinct_picks(1, 1)
+        if len(two_picks) < 2:
+            two_picks = best_available(2)
         if len(two_picks) == 2:
             two_leg = {
                 "key": "draw-two-leg",
                 "title": "平/让平二串一",
                 "play": "2串1",
-                "structure": "1平+1让平",
+                "structure": structure_label(two_picks),
                 "picks": two_picks,
                 "lines": [line(two_picks, [0, 1], "pair-1")],
                 "line_count": 1,

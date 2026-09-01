@@ -141,6 +141,47 @@ class DailyAIReviewTests(unittest.TestCase):
         self.assertEqual(stats["by_play"]["2串1"]["hits"], 1)
         self.assertEqual(stats["guardrail_conflicts"], 1)
 
+    def test_settles_special_market_primary_and_two_option(self):
+        match = source("218", "主胜")
+        match["analysis"]["special_markets"] = {
+            "total_goals": {
+                "available": True,
+                "model_version": "special-test",
+                "primary": {"selection": "2", "odds": 3.6},
+                "secondary": {"selection": "3", "odds": 3.8},
+            },
+            "half_full": {
+                "available": True,
+                "model_version": "special-test",
+                "primary": {"selection": "平胜", "odds": 4.5},
+                "secondary": {"selection": "胜胜", "odds": 2.5},
+            },
+        }
+        snapshot = {
+            **self.snapshot,
+            "matches": [match],
+            "daily_summary": {"recommended_combinations": []},
+        }
+        review = FAEDailyAIReviewEngine().review(snapshot, {
+            "218": {
+                "status": 2,
+                "home_score": 2,
+                "away_score": 1,
+                "home_half_score": 0,
+                "away_half_score": 0,
+            }
+        })
+
+        rows = {row["market_key"]: row for row in review["special_market_results"]}
+        self.assertEqual(rows["total_goals"]["primary_status"], "miss")
+        self.assertEqual(rows["total_goals"]["coverage_status"], "hit")
+        self.assertEqual(rows["half_full"]["primary_status"], "hit")
+        self.assertEqual(
+            review["summary"]["special_markets"]["half_full"]
+            ["primary"]["hit_rate"],
+            100.0,
+        )
+
     def test_all_match_single_uses_probability_play_not_value_play(self):
         snapshot = {
             **self.snapshot,

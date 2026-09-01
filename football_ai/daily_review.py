@@ -6,6 +6,8 @@ from datetime import datetime, timezone
 import re
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
+from .special_markets import settle_special_markets
+
 
 SUPPORTED_SELECTIONS = (
     "主胜", "平局", "客胜", "让胜", "让平", "让负", "大球", "小球"
@@ -185,6 +187,15 @@ def summarize_two_option(rows: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
     }
 
 
+def summarize_special_primary(rows: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
+    return summarize_ai_settled([{
+        **row,
+        "status": row.get("primary_status"),
+        "return": row.get("primary_return"),
+        "profit": row.get("primary_profit"),
+    } for row in rows])
+
+
 def unique_two_option_rows(
     rows: Iterable[Dict[str, Any]],
 ) -> List[Dict[str, Any]]:
@@ -314,6 +325,13 @@ class FAEDailyAIReviewEngine:
                 item, matches_by_id.get(str(item.get("match_id"))) or {}
             )
         ]
+        special_market_results = [
+            result
+            for item in matches
+            for result in settle_special_markets(
+                item, matches_by_id.get(str(item.get("match_id"))) or {}
+            )
+        ]
         snapshot_by_id = {
             str(item.get("match_id")): item for item in matches
         }
@@ -413,9 +431,17 @@ class FAEDailyAIReviewEngine:
             matches_by_id,
         )
 
-        pending = sum(
-            1 for row in match_results if row.get("status") == "pending"
+        pending_ids = {
+            str(row.get("match_id") or "")
+            for row in match_results
+            if row.get("status") == "pending"
+        }
+        pending_ids.update(
+            str(row.get("match_id") or "")
+            for row in special_market_results
+            if row.get("status") == "pending"
         )
+        pending = len({value for value in pending_ids if value})
         selections = sorted({
             str(row.get("selection")) for row in match_results
             if row.get("selection") in SUPPORTED_SELECTIONS
@@ -444,6 +470,7 @@ class FAEDailyAIReviewEngine:
             "handicap_results": handicap_results,
             "two_option_results": two_option_results,
             "draw_radar_results": draw_radar_results,
+            "special_market_results": special_market_results,
             "combo_results": combo_results,
             "draw_ticket_results": draw_ticket_results,
             "conflicts": conflicts,
@@ -501,6 +528,19 @@ class FAEDailyAIReviewEngine:
                         row for row in draw_radar_results
                         if row.get("tier") == "watch"
                     ]),
+                },
+                "special_markets": {
+                    key: {
+                        "primary": summarize_special_primary([
+                            row for row in special_market_results
+                            if row.get("market_key") == key
+                        ]),
+                        "two_option": summarize_two_option([
+                            row for row in special_market_results
+                            if row.get("market_key") == key
+                        ]),
+                    }
+                    for key in ("total_goals", "half_full")
                 },
                 "draw_tickets": {
                     str(item.get("key") or ""): item.get("summary") or {}
@@ -1196,6 +1236,7 @@ def aggregate_daily_ai_reviews(
     handicap_results: List[Dict[str, Any]] = []
     two_option_results: List[Dict[str, Any]] = []
     draw_radar_results: List[Dict[str, Any]] = []
+    special_market_results: List[Dict[str, Any]] = []
     combos: List[Dict[str, Any]] = []
     draw_ticket_results: List[Dict[str, Any]] = []
     conflicts: List[Dict[str, Any]] = []
@@ -1225,6 +1266,10 @@ def aggregate_daily_ai_reviews(
             **row,
             "review_owner_date": owner_date,
         } for row in review.get("draw_radar_results") or [])
+        special_market_results.extend({
+            **row,
+            "review_owner_date": owner_date,
+        } for row in review.get("special_market_results") or [])
         combos.extend(review.get("combo_results") or [])
         draw_ticket_results.extend({
             **row,
@@ -1297,6 +1342,19 @@ def aggregate_daily_ai_reviews(
                 row for row in draw_radar_results
                 if row.get("tier") == "watch"
             ]),
+        },
+        "special_markets": {
+            key: {
+                "primary": summarize_special_primary([
+                    row for row in special_market_results
+                    if row.get("market_key") == key
+                ]),
+                "two_option": summarize_two_option([
+                    row for row in special_market_results
+                    if row.get("market_key") == key
+                ]),
+            }
+            for key in ("total_goals", "half_full")
         },
         "draw_tickets": {
             key: {

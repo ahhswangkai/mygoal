@@ -14,7 +14,7 @@ from .provider import ArkNarrativeClient, FAEOutputError
 from .version import ENGINE_VERSION
 
 
-AI_REVIEW_PROMPT_VERSION = "fae-deep-review-v12-draw-ticket-audit"
+AI_REVIEW_PROMPT_VERSION = "fae-deep-review-v13-special-market-audit"
 SETTLED_STATUSES = {"hit", "miss", "push"}
 LEARNING_SCOPES = {
     "euro",
@@ -26,6 +26,7 @@ LEARNING_SCOPES = {
     "guardrail",
     "combination",
     "history_calibration",
+    "special_markets",
 }
 
 
@@ -99,6 +100,7 @@ def _verified_settlement_summary(review: Dict[str, Any]) -> Dict[str, Any]:
     radar = summary.get("draw_radar") or {}
     two_option = summary.get("two_option") or {}
     draw_tickets = summary.get("draw_tickets") or {}
+    special = summary.get("special_markets") or {}
     return {
         "main_direction": _metric_snapshot(summary.get("singles")),
         "official_bets": _metric_snapshot(summary.get("official_bets")),
@@ -111,6 +113,18 @@ def _verified_settlement_summary(review: Dict[str, Any]) -> Dict[str, Any]:
         ),
         "draw_two_leg": _metric_snapshot(
             draw_tickets.get("draw-two-leg")
+        ),
+        "total_goals_primary": _metric_snapshot(
+            (special.get("total_goals") or {}).get("primary")
+        ),
+        "total_goals_two_option": _metric_snapshot(
+            (special.get("total_goals") or {}).get("two_option")
+        ),
+        "half_full_primary": _metric_snapshot(
+            (special.get("half_full") or {}).get("primary")
+        ),
+        "half_full_two_option": _metric_snapshot(
+            (special.get("half_full") or {}).get("two_option")
         ),
         "source": "deterministic-program-settlement",
     }
@@ -125,6 +139,10 @@ def _verified_settlement_text(value: Dict[str, Any]) -> str:
         ("双选", "two_option"),
         ("平/让平3场2、3关", "draw_two_three"),
         ("平/让平二串一", "draw_two_leg"),
+        ("总进球首选", "total_goals_primary"),
+        ("总进球双选", "total_goals_two_option"),
+        ("半全场首选", "half_full_primary"),
+        ("半全场双选", "half_full_two_option"),
     )
     parts = []
     for label, key in labels:
@@ -266,6 +284,11 @@ class FAEAIReviewAnalyzer:
             match_id = str(item.get("match_id") or "")
             if match_id:
                 radar_by_id.setdefault(match_id, []).append(item)
+        special_by_id: Dict[str, List[Dict[str, Any]]] = {}
+        for item in review.get("special_market_results") or []:
+            match_id = str(item.get("match_id") or "")
+            if match_id:
+                special_by_id.setdefault(match_id, []).append(item)
         matches = []
         for result in review.get("match_results") or []:
             status = result.get("status")
@@ -351,6 +374,9 @@ class FAEAIReviewAnalyzer:
                     "profit": item.get("profit"),
                     "reason": item.get("reason"),
                 } for item in radar_by_id.get(match_id, [])],
+                "special_market_predictions": [dict(item) for item in (
+                    special_by_id.get(match_id, [])
+                )],
                 "prediction_time_markets": {
                     key: input_snapshot.get(key) or {}
                     for key in (
@@ -358,6 +384,7 @@ class FAEAIReviewAnalyzer:
                         "asian",
                         "sporttery_handicap",
                         "total",
+                        "special_markets",
                     )
                 },
                 "market_risk_context": {
@@ -508,6 +535,10 @@ class FAEAIReviewAnalyzer:
                     (((((review.get("summary") or {}).get("draw_radar") or {})
                        .get("overall") or {}).get("settled")) or 0)
                 ),
+                "settled_special_market_rows": sum(
+                    1 for row in review.get("special_market_results") or []
+                    if row.get("status") in SETTLED_STATUSES
+                ),
                 "total_matches": len(snapshot.get("matches") or []),
                 "review_completed": bool(review.get("completed")),
             },
@@ -537,6 +568,7 @@ class FAEAIReviewAnalyzer:
                 "asian": "亚盘复核",
                 "sporttery": "竞彩让球复核",
                 "total": "大小球复核",
+                "special_markets": "总进球与半全场独立玩法复核",
                 "consistency": "市场一致性复核",
             },
             "matches": [{
@@ -562,6 +594,7 @@ class FAEAIReviewAnalyzer:
                     "euro/asian/sporttery/total/consistency/risk/"
                     "guardrail/combination"
                     "/history_calibration"
+                    "/special_markets"
                 ),
                 "target": "需要验证的规则或信号",
                 "action": "increase/decrease/hold",
@@ -588,6 +621,7 @@ class FAEAIReviewAnalyzer:
             "selection=观望且没有具体下注方向时，不能按命中率评价，只复核是否正确识别了数据不足、盘口冲突或风险。",
             "必须单独复核draw_radar_predictions：核心候选与观察候选分开统计；观察命中不能事后包装成正式推荐，核心未中也必须记录。",
             "必须把平/让平3场2、3关与平/让平二串一当作两张独立票复核；3场2、3关按3个2串1和1个3串1共4注结算，禁止与独立二串一合并命中率或ROI。",
+            "必须单独复核special_market_predictions中的总进球和半全场：primary_status统计首选，coverage_status统计首选+次选覆盖；半全场没有半场比分时只能标记未结算，不得用全场比分猜测半场结果。",
             "竞彩让球必须严格按保存的让球数计算：主队-1时，赢2球以上为让胜、恰好赢1球为让平、其余为让负；确定性结算结果优先于文字推断。",
             "每场result.handicap_settlement.actual_outcome是程序计算的唯一让球赛果，禁止自行重算或改写；诊断中提到让球赛果时必须逐字使用该字段。",
             "market_risk_context中的水位模式仅表示赛前风险结构；可以检验该预警是否有效，但不得把退盘、升水或欧亚背离直接写成比赛失利的真实原因。",
@@ -756,6 +790,9 @@ class FAEAIReviewAnalyzer:
                 "actual_ordinary_outcome": actual_ordinary_outcome,
                 "handicap_settlement": handicap_settlement,
                 "two_option_predictions": two_options,
+                "special_market_predictions": source.get(
+                    "special_market_predictions"
+                ) or [],
                 # Coverage is a deterministic settlement; never allow the
                 # narrative model to override it.
                 "two_option_verdict": fallback_two_option_verdict,
@@ -1017,7 +1054,8 @@ class FAEAIReviewAnalyzer:
                     ))
                 )
                 for key in (
-                    "euro", "asian", "sporttery", "total", "consistency"
+                    "euro", "asian", "sporttery", "total",
+                    "special_markets", "consistency"
                 )
             },
             "matches": normalized_matches,

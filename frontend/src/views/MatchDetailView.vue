@@ -133,6 +133,31 @@
                 </p>
                 <p><span>大小球</span><b>{{ totalTriplet(dailyAiSnapshot.total?.current) }}</b></p>
               </div>
+              <div v-if="dailySpecialMarkets.length" class="detail-special-markets">
+                <header>
+                  <strong>进球数 / 半全场</strong>
+                  <span>体彩计算器赔率 · 独立模型</span>
+                </header>
+                <article v-for="market in dailySpecialMarkets" :key="market.key">
+                  <div>
+                    <b>{{ market.title }}</b>
+                    <small>{{ market.updatedAt ? `更新 ${market.updatedAt}` : '赛前快照' }}</small>
+                  </div>
+                  <p>
+                    <span>首选</span>
+                    <strong>{{ market.primary.selection }}</strong>
+                    <em>@{{ market.primary.odds }}</em>
+                    <small>概率 {{ market.primary.model_probability }}%</small>
+                  </p>
+                  <p>
+                    <span>次选</span>
+                    <strong>{{ market.secondary.selection }}</strong>
+                    <em>@{{ market.secondary.odds }}</em>
+                    <small>概率 {{ market.secondary.model_probability }}%</small>
+                  </p>
+                </article>
+                <footer>首选与次选独立复盘；当前为观察模型，不与胜平负、让球结论混算。</footer>
+              </div>
               <div class="daily-detail-values">
                 <p><span>FAE概率</span><b>{{ dailyAiContent.prediction_probability ?? '--' }}%</b></p>
                 <p><span>市场概率</span><b>{{ dailyAiContent.market_implied_probability ?? '--' }}%</b></p>
@@ -432,6 +457,23 @@ let fetchVersion = 0
 const aiContent = computed(() => aiAnalysis.value?.analysis || null)
 const dailyAiContent = computed(() => dailyAiAnalysis.value?.analysis || null)
 const dailyAiSnapshot = computed(() => dailyAiAnalysis.value?.input_snapshot || {})
+const dailySpecialMarkets = computed(() => {
+  const source = dailyAiContent.value?.special_markets || dailyAiSnapshot.value?.special_markets || {}
+  return [
+    { key: 'total_goals', title: '总进球', data: source.total_goals },
+    { key: 'half_full', title: '半全场', data: source.half_full }
+  ].filter(row => (
+    row.data?.available
+    && row.data?.primary?.selection
+    && row.data?.secondary?.selection
+  )).map(row => ({
+    key: row.key,
+    title: row.title,
+    primary: row.data.primary,
+    secondary: row.data.secondary,
+    updatedAt: row.data.snapshot?.updated_at
+  }))
+})
 const dailyAiTwoOption = computed(() => (
   dailyAiContent.value?.two_option_recommendation || {}
 ))
@@ -1192,6 +1234,73 @@ onMounted(fetchAll)
   font-size: 13px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.detail-special-markets {
+  margin-top: 10px;
+  overflow: hidden;
+  border: 1px solid #f0e1c2;
+  border-radius: 9px;
+  background: #fffdf8;
+}
+
+.detail-special-markets > header {
+  display: flex;
+  justify-content: space-between;
+  padding: 9px 10px;
+  color: #6d4d18;
+  font-size: 12px;
+  background: #fff7e5;
+}
+
+.detail-special-markets > header span {
+  color: #ac8c55;
+  font-size: 10px;
+}
+
+.detail-special-markets article {
+  display: grid;
+  grid-template-columns: 76px repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  padding: 9px 10px;
+  border-top: 1px solid #f5ead6;
+}
+
+.detail-special-markets article > div,
+.detail-special-markets article p {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  align-content: center;
+}
+
+.detail-special-markets article > div b {
+  color: #4c4336;
+  font-size: 13px;
+}
+
+.detail-special-markets article small,
+.detail-special-markets article span {
+  color: #999;
+  font-size: 10px;
+}
+
+.detail-special-markets article p strong {
+  color: #e53955;
+  font-size: 14px;
+}
+
+.detail-special-markets article p em {
+  color: #686868;
+  font-size: 11px;
+  font-style: normal;
+}
+
+.detail-special-markets > footer {
+  padding: 7px 10px;
+  color: #a58b62;
+  font-size: 10px;
+  background: #fffaf0;
 }
 
 .daily-detail-values {

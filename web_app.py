@@ -39,6 +39,8 @@ from football_ai import (
     build_daily_match_input,
     build_training_days,
     compact_daily_ai_run,
+    normalize_match_number,
+    parse_calculator_payload,
 )
 
 from db_storage import MongoDBStorage
@@ -85,6 +87,35 @@ sporttery_calculator_session = requests.Session()
 sporttery_calculator_session.trust_env = False
 settlement_lock = threading.Lock()
 wecom_notifier = WeComNotifier(WECOM_WEBHOOK_URL)
+
+
+def _fetch_sporttery_calculator_payload(pool_code='had,hhad,crs,ttg,hafu'):
+    """Fetch the official calculator directly, bypassing machine proxies."""
+    response = sporttery_calculator_session.get(
+        'https://webapi.sporttery.cn/gateway/uniform/football/getMatchCalculatorV1.qry',
+        params={'poolCode': pool_code},
+        headers={
+            'User-Agent': (
+                'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) '
+                'AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 '
+                'Mobile/15E148 Safari/604.1'
+            ),
+            'Referer': 'https://www.sporttery.cn/',
+        },
+        timeout=15,
+    )
+    response.raise_for_status()
+    return response.json()
+
+
+def _load_calculator_special_market_snapshots():
+    try:
+        return parse_calculator_payload(
+            _fetch_sporttery_calculator_payload('ttg,hafu')
+        )
+    except (requests.RequestException, ValueError, TypeError) as exc:
+        app.logger.warning('竞彩总进球/半全场快照获取失败: %s', exc)
+        return {}
 
 
 def login_required(view):
@@ -1104,6 +1135,7 @@ def _build_daily_ai_inputs(
     goal_margin_models=None,
     draw_selection_policy=None,
     supervised_model=None,
+    special_market_snapshots=None,
 ):
     """Build current deterministic FAE snapshots without making per-match LLM calls."""
     rule_weights = (
@@ -1151,6 +1183,11 @@ def _build_daily_ai_inputs(
             ),
             source_analysis=source_analysis,
             draw_selection_policy=draw_selection_policy,
+            special_market_snapshot=(special_market_snapshots or {}).get(
+                normalize_match_number(
+                    match.get('match_number') or match.get('round_id')
+                )
+            ),
         )
         if supervised_predictor:
             try:
@@ -1276,12 +1313,14 @@ def _run_fae_daily_ai(
         if _env_enabled('FAE_SUPERVISED_SHADOW_ENABLED', True)
         else None
     )
+    special_market_snapshots = _load_calculator_special_market_snapshots()
     match_inputs = _build_daily_ai_inputs(
         matches,
         league_profiles=league_profiles,
         goal_margin_models=goal_margin_models,
         draw_selection_policy=draw_selection_policy,
         supervised_model=supervised_model,
+        special_market_snapshots=special_market_snapshots,
     )
     review_memory = mongo_storage.get_fae_review_memory(date_str)
     input_hash = fae_daily_ai_analyzer.input_hash(

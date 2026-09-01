@@ -517,6 +517,22 @@
                   </p>
                   <p><span>大小球</span><b>{{ totalTriplet(item.input_snapshot?.total?.current) }}</b></p>
                 </div>
+                <div v-if="specialMarketRows(item).length" class="special-market-panel">
+                  <header>
+                    <strong>进球数 / 半全场</strong>
+                    <span>体彩赔率 · 独立复盘</span>
+                  </header>
+                  <article v-for="market in specialMarketRows(item)" :key="market.key">
+                    <b>{{ market.title }}</b>
+                    <p>
+                      <span>首选 <strong>{{ market.primary.selection }}</strong> @{{ market.primary.odds }}</span>
+                      <span>次选 <strong>{{ market.secondary.selection }}</strong> @{{ market.secondary.odds }}</span>
+                    </p>
+                    <small>
+                      校正概率 {{ market.primary.model_probability }}% / {{ market.secondary.model_probability }}%
+                    </small>
+                  </article>
+                </div>
                 <div class="daily-value-grid">
                   <p><span>FAE概率</span><b>{{ item.analysis?.prediction_probability ?? '--' }}%</b></p>
                   <p><span>市场概率</span><b>{{ item.analysis?.market_implied_probability ?? '--' }}%</b></p>
@@ -1027,6 +1043,34 @@
                   <small>
                     {{ twoOptionHitOdds(item) ? `@${twoOptionHitOdds(item)}` : (item.market || '双选') }}
                   </small>
+                </span>
+              </button>
+            </section>
+
+            <section v-if="specialMarketReviewRows.length" class="daily-review-block special-review-block">
+              <h2>
+                <span>进球数 / 半全场复盘</span>
+                <small>首选与双选分开统计</small>
+              </h2>
+              <button
+                v-for="item in specialMarketReviewRows"
+                :key="`special-${item.match_id}-${item.market_key}`"
+                type="button"
+                @click="goToDetail(item.match_id)"
+              >
+                <span class="review-match-info">
+                  <b>{{ item.match_number }}</b>{{ item.market }}
+                </span>
+                <span class="review-pick-info">
+                  <strong>{{ item.primary_selection }} / {{ item.secondary_selection }}</strong>
+                  <i :class="item.coverage_status">
+                    {{ item.coverage_status === 'hit' ? `✓ 命中 ${item.hit_selection}` : reviewStatusLabel(item.coverage_status) }}
+                  </i>
+                  <small>首选 {{ reviewStatusLabel(item.primary_status) }}</small>
+                </span>
+                <span class="review-result-info">
+                  <em>{{ item.half_score ? `${item.half_score} / ` : '' }}{{ item.result_score || '待赛' }}</em>
+                  <small v-if="item.hit_odds">@{{ item.hit_odds }}</small>
                 </span>
               </button>
             </section>
@@ -1628,6 +1672,9 @@ const twoOptionReviewRows = computed(() => {
   }
   return Array.from(byMatch.values())
 })
+const specialMarketReviewRows = computed(() => (
+  faeReview.value?.special_market_results || []
+))
 const drawTicketReviewRows = computed(() => (
   faeReview.value?.draw_ticket_results || []
 ))
@@ -1644,6 +1691,22 @@ const dailyMarkets = [
   { key: 'total', label: '大小球' },
   { key: 'consistency', label: '市场一致性' }
 ]
+const specialMarketRows = item => {
+  const source = item?.analysis?.special_markets || item?.input_snapshot?.special_markets || {}
+  return [
+    { key: 'total_goals', title: '总进球', data: source.total_goals },
+    { key: 'half_full', title: '半全场', data: source.half_full }
+  ].filter(row => (
+    row.data?.available
+    && row.data?.primary?.selection
+    && row.data?.secondary?.selection
+  )).map(row => ({
+    key: row.key,
+    title: row.title,
+    primary: row.data.primary,
+    secondary: row.data.secondary
+  }))
+}
 const hasData = computed(() =>
   faeDailyAi.value
   || faeReview.value
@@ -3911,6 +3974,60 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 
+.special-market-panel {
+  margin: 0 0 9px;
+  overflow: hidden;
+  border: 1px solid #f0e2c4;
+  border-radius: 8px;
+  background: #fffdf8;
+}
+
+.special-market-panel > header {
+  display: flex;
+  justify-content: space-between;
+  padding: 7px 9px;
+  color: #74521b;
+  font-size: 11px;
+  background: #fff7e6;
+}
+
+.special-market-panel > header span {
+  color: #aa8b58;
+}
+
+.special-market-panel article {
+  display: grid;
+  grid-template-columns: 54px minmax(0, 1fr);
+  gap: 3px 8px;
+  padding: 8px 9px;
+  border-top: 1px solid #f5ead5;
+}
+
+.special-market-panel article > b {
+  grid-row: 1 / 3;
+  align-self: center;
+  color: #5c4a2d;
+  font-size: 12px;
+}
+
+.special-market-panel article p {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 12px;
+  margin: 0;
+  color: #666;
+  font-size: 11px;
+}
+
+.special-market-panel article p strong {
+  color: #e53955;
+}
+
+.special-market-panel article small {
+  color: #aaa;
+  font-size: 10px;
+}
+
 .daily-market-grid p {
   padding: 7px;
   background: #fff;
@@ -4774,6 +4891,14 @@ onBeforeUnmount(() => {
 
 .official-review-block > h2 small {
   color: #16875b;
+}
+
+.special-review-block {
+  border-color: #f0e2c4;
+}
+
+.special-review-block > h2 {
+  background: #fffaf0;
 }
 
 .daily-review-block > button {

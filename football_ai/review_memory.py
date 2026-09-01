@@ -8,7 +8,7 @@ import re
 from typing import Any, Dict, Iterable, List
 
 
-REVIEW_MEMORY_VERSION = "review-memory-v2-sample-governance"
+REVIEW_MEMORY_VERSION = "review-memory-v3-special-market-samples"
 
 
 def _text(value: Any, limit: int) -> str:
@@ -82,6 +82,9 @@ def build_review_memory(
         handicap_settlement = (
             ((review.get("summary") or {}).get("handicap") or {})
         )
+        special_settlement = (
+            ((review.get("summary") or {}).get("special_markets") or {})
+        )
         lessons = deep.get("market_lessons") or {}
         observations.append({
             "date": str(review.get("owner_date") or "")[:10],
@@ -98,6 +101,38 @@ def build_review_memory(
                     handicap_settlement.get("hit_rate")
                 ),
                 "handicap_roi": _number(handicap_settlement.get("roi")),
+                "total_goals_primary": {
+                    key: value for key, value in (
+                        ((special_settlement.get("total_goals") or {}).get(
+                            "primary"
+                        ) or {})
+                    ).items() if key in {"settled", "hits", "hit_rate", "roi"}
+                },
+                "total_goals_two_option": {
+                    key: value for key, value in (
+                        ((special_settlement.get("total_goals") or {}).get(
+                            "two_option"
+                        ) or {})
+                    ).items() if key in {
+                        "settled", "hits", "hit_rate", "equal_stake_roi"
+                    }
+                },
+                "half_full_primary": {
+                    key: value for key, value in (
+                        ((special_settlement.get("half_full") or {}).get(
+                            "primary"
+                        ) or {})
+                    ).items() if key in {"settled", "hits", "hit_rate", "roi"}
+                },
+                "half_full_two_option": {
+                    key: value for key, value in (
+                        ((special_settlement.get("half_full") or {}).get(
+                            "two_option"
+                        ) or {})
+                    ).items() if key in {
+                        "settled", "hits", "hit_rate", "equal_stake_roi"
+                    }
+                },
             },
             "conclusion": _text(summary.get("conclusion"), 360),
             "what_failed": _list(
@@ -112,7 +147,8 @@ def build_review_memory(
             "market_lessons": {
                 key: _text(lessons.get(key), 220)
                 for key in (
-                    "euro", "asian", "sporttery", "total", "consistency"
+                    "euro", "asian", "sporttery", "total",
+                    "special_markets", "consistency"
                 )
                 if _text(lessons.get(key), 220)
             },

@@ -30,6 +30,13 @@ from .provider import (
     FAEProviderError,
 )
 from .review_memory import REVIEW_MEMORY_VERSION, build_review_memory
+from .special_markets import (
+    SPECIAL_MARKET_MODEL_VERSION,
+    build_special_market_analysis,
+    normalize_match_number,
+    parse_calculator_payload,
+    settle_special_markets,
+)
 from .skills import (
     SKILL_DEFINITIONS,
     SKILL_SCHEMA_VERSION,
@@ -88,6 +95,11 @@ __all__ = [
     "build_training_example",
     "extract_prematch_features",
     "mine_feature_patterns",
+    "SPECIAL_MARKET_MODEL_VERSION",
+    "build_special_market_analysis",
+    "normalize_match_number",
+    "parse_calculator_payload",
+    "settle_special_markets",
     "ENGINE_CODE",
     "ENGINE_NAME",
     "ENGINE_VERSION",
