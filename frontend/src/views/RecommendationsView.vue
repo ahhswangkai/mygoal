@@ -450,6 +450,19 @@
                   <b>{{ item.match_number }}</b>
                   <span>{{ item.home_team }}<i>VS</i>{{ item.away_team }}</span>
                   <small>{{ item.league }} · {{ formatMatchTime(item.match_time) }}</small>
+                  <div
+                    v-if="specialMarketRows(item).length"
+                    class="daily-special-preview"
+                  >
+                    <span
+                      v-for="market in specialMarketRows(item)"
+                      :key="`preview-${market.key}`"
+                    >
+                      <i>{{ market.title }}</i>
+                      <strong>{{ market.primary.selection }}</strong>
+                      <em>@{{ market.primary.odds }}</em>
+                    </span>
+                  </div>
                 </span>
                 <span class="daily-selection-pair">
                   <span class="daily-choice-stack">
@@ -3794,6 +3807,40 @@ onBeforeUnmount(() => {
   margin-top: 5px;
   color: #a2a5ac;
   font-size: 10px;
+}
+
+.daily-special-preview {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 7px;
+}
+
+.daily-special-preview > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  min-width: 0;
+  padding: 3px 6px;
+  color: #85601f;
+  font-size: 9px;
+  line-height: 1.2;
+  background: #fff7e6;
+  border: 1px solid #f3e1b9;
+  border-radius: 999px;
+}
+
+.daily-special-preview i,
+.daily-special-preview em {
+  color: #a18350;
+  font-style: normal;
+  font-weight: 500;
+}
+
+.daily-special-preview strong {
+  color: #e53955;
+  font-size: 10px;
+  white-space: nowrap;
 }
 
 .daily-selection-pair {
