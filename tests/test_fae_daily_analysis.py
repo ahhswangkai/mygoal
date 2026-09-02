@@ -2769,6 +2769,12 @@ class DailyAnalysisTests(unittest.TestCase):
                         "total_goals": {
                             "available": True,
                             "market": "总进球",
+                            "regime": "low",
+                            "regime_label": "低进球结构",
+                            "baseline_only": False,
+                            "actionable": True,
+                            "recommendation_status": "结构候选",
+                            "expected_goals": 2.41,
                             "primary": {"selection": "2", "odds": 3.6},
                             "secondary": {"selection": "3", "odds": 3.8},
                             "options": [{"selection": str(i)} for i in range(8)],
@@ -2835,6 +2841,9 @@ class DailyAnalysisTests(unittest.TestCase):
         self.assertNotIn("historical_odds_rules", row["analysis"])
         special = row["analysis"]["special_markets"]["total_goals"]
         self.assertEqual(special["primary"]["selection"], "2")
+        self.assertEqual(special["regime"], "low")
+        self.assertEqual(special["recommendation_status"], "结构候选")
+        self.assertEqual(special["expected_goals"], 2.41)
         self.assertNotIn("options", special)
         self.assertEqual(
             special["snapshot"], {"updated_at": "2026-09-01 12:00:00"}

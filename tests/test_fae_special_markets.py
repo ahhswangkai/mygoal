@@ -67,6 +67,75 @@ class SpecialMarketTests(unittest.TestCase):
             result["total_goals"]["secondary"]["model_probability"],
         )
 
+    def test_total_goals_low_regime_uses_lower_tail_as_secondary(self):
+        snapshot = parse_calculator_payload(calculator_payload())["周二003"]
+        snapshot["total_goals"]["odds"] = {
+            "0": 12.0, "1": 4.35, "2": 3.0, "3": 3.9,
+            "4": 7.0, "5": 14.0, "6": 25.0, "7+": 39.0,
+        }
+        result = build_special_market_analysis(snapshot, {
+            "euro": {"current": [1.6, 3.4, 4.75]},
+            "asian": {"current": [0.95, "半球/一球", 0.86]},
+            "total": {"current": [0.82, 2.25, 1.0]},
+        })["total_goals"]
+
+        self.assertEqual(result["regime"], "low")
+        self.assertEqual(result["primary"]["selection"], "2")
+        self.assertEqual(result["secondary"]["selection"], "1")
+        self.assertTrue(result["actionable"])
+        self.assertFalse(result["baseline_only"])
+
+    def test_total_goals_high_regime_uses_upper_tail_as_secondary(self):
+        snapshot = parse_calculator_payload(calculator_payload())["周二003"]
+        result = build_special_market_analysis(snapshot, {
+            "euro": {"current": [1.75, 3.5, 4.4]},
+            "asian": {"current": [0.9, "一球", 0.95]},
+            "total": {"current": [0.82, 3.25, 1.02]},
+        })["total_goals"]
+
+        self.assertEqual(result["regime"], "high")
+        self.assertEqual(result["primary"]["selection"], "3")
+        self.assertEqual(result["secondary"]["selection"], "4")
+
+    def test_total_goals_normal_two_three_pair_is_market_baseline(self):
+        snapshot = parse_calculator_payload(calculator_payload())["周二003"]
+        result = build_special_market_analysis(snapshot, {
+            "euro": {"current": [1.75, 3.5, 4.4]},
+            "asian": {"current": [0.85, "半球", 1.0]},
+            "total": {"current": [0.92, 2.5, 0.93]},
+        })["total_goals"]
+
+        self.assertEqual(result["regime"], "standard")
+        self.assertTrue(result["baseline_only"])
+        self.assertFalse(result["actionable"])
+        self.assertEqual(result["recommendation_status"], "市场基线")
+
+    def test_half_full_strong_direction_keeps_both_paths_aligned(self):
+        snapshot = parse_calculator_payload(calculator_payload())["周二003"]
+        result = build_special_market_analysis(snapshot, {
+            "euro": {"current": [1.5, 3.8, 5.5]},
+            "asian": {"current": [0.82, "半球/一球", 1.04]},
+            "total": {"current": [0.9, 2.75, 0.95]},
+        })["half_full"]
+
+        self.assertEqual(result["direction_profile"]["tier"], "strong")
+        self.assertTrue(result["primary"]["selection"].endswith("胜"))
+        self.assertTrue(result["secondary"]["selection"].endswith("胜"))
+        self.assertTrue(result["actionable"])
+
+    def test_half_full_balanced_low_total_promotes_draw_draw(self):
+        snapshot = parse_calculator_payload(calculator_payload())["周二003"]
+        result = build_special_market_analysis(snapshot, {
+            "euro": {"current": [2.45, 3.16, 2.47]},
+            "asian": {"current": [0.89, "平手", 0.96]},
+            "total": {"current": [1.01, 2.5, 0.84]},
+        })["half_full"]
+
+        self.assertEqual(result["direction_profile"]["tier"], "balanced")
+        self.assertEqual(result["primary"]["selection"], "平平")
+        self.assertFalse(result["actionable"])
+        self.assertEqual(result["recommendation_status"], "均势观察")
+
     def test_settles_total_goals_and_half_full_from_saved_snapshot(self):
         snapshot = parse_calculator_payload(calculator_payload())["周二003"]
         special = build_special_market_analysis(snapshot, {

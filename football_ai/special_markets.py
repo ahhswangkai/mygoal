@@ -12,7 +12,7 @@ import re
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 
-SPECIAL_MARKET_MODEL_VERSION = "special-markets-v1-market-calibrated"
+SPECIAL_MARKET_MODEL_VERSION = "special-markets-v2-regime-direction"
 
 TOTAL_GOAL_KEYS = {
     "s0": "0",
@@ -135,6 +135,64 @@ def _triplet_probabilities(values: Iterable[Any]) -> List[Optional[float]]:
     return [probabilities.get(str(index)) for index in range(len(odds))]
 
 
+def _option(
+    options: List[Dict[str, Any]],
+    *,
+    selection: Optional[str] = None,
+    exclude: Iterable[str] = (),
+    predicate: Optional[Any] = None,
+) -> Optional[Dict[str, Any]]:
+    excluded = set(exclude)
+    for item in options:
+        label = str(item.get("selection") or "")
+        if not label or label in excluded:
+            continue
+        if selection is not None and label != selection:
+            continue
+        if predicate is not None and not predicate(label):
+            continue
+        return item
+    return None
+
+
+def _goal_number(label: str) -> float:
+    return 7.5 if label == "7+" else float(label)
+
+
+def _asian_home_line(value: Any) -> Optional[float]:
+    raw = str(value or "").replace(" ", "").strip()
+    if not raw:
+        return None
+    received = raw.startswith("受")
+    if received:
+        raw = raw[1:]
+    labels = {
+        "平手": 0.0,
+        "平手/半球": 0.25,
+        "平半": 0.25,
+        "半球": 0.5,
+        "半球/一球": 0.75,
+        "半一": 0.75,
+        "一球": 1.0,
+        "一球/球半": 1.25,
+        "球半": 1.5,
+        "球半/两球": 1.75,
+        "两球": 2.0,
+        "两球/两球半": 2.25,
+        "两球半": 2.5,
+    }
+    number = labels.get(raw)
+    if number is None:
+        try:
+            parts = [float(item) for item in raw.split("/")]
+        except (TypeError, ValueError):
+            return None
+        if not parts:
+            return None
+        number = sum(parts) / len(parts)
+    return -number if received else number
+
+
 def _poisson_distribution(expectation: float) -> Dict[str, float]:
     expectation = max(0.5, min(5.5, expectation))
     values = {
@@ -208,28 +266,170 @@ def _total_goal_analysis(
             line_expectation += max(-0.45, min(0.45, (over - under) / 100 * 0.9))
         expectation = market_expectation * 0.75 + line_expectation * 0.25
     poisson = _poisson_distribution(expectation)
+    over = ou_probs[0] if len(ou_probs) > 0 else None
+    under = ou_probs[1] if len(ou_probs) > 1 else None
+    water_edge = (
+        float(over) - float(under)
+        if over is not None and under is not None else 0.0
+    )
+    if expectation >= 3.05 or (total_line is not None and total_line >= 3.0):
+        regime = "high"
+        regime_label = "高进球结构"
+    elif (
+        expectation <= 2.55
+        or (
+            water_edge <= -8.0
+            and (total_line is None or total_line <= 2.75)
+        )
+    ):
+        regime = "low"
+        regime_label = "低进球结构"
+    elif water_edge >= 6.0:
+        regime = "high"
+        regime_label = "高进球结构"
+    else:
+        regime = "standard"
+        regime_label = "常规市场基线"
+    market_weight = 0.72 if regime != "standard" else 0.82
     model = {
-        label: probabilities[label] * 0.82 + poisson.get(label, 0) * 0.18
+        label: (
+            probabilities[label] * market_weight
+            + poisson.get(label, 0) * (1 - market_weight)
+        )
         for label in probabilities
     }
     options = _rank_options(market, model)
+    primary = options[0]
+    primary_number = _goal_number(str(primary.get("selection")))
+    secondary = None
+    if regime == "low":
+        secondary = _option(
+            options,
+            exclude=(str(primary.get("selection")),),
+            predicate=lambda label: _goal_number(label) < primary_number,
+        )
+    elif regime == "high":
+        secondary = _option(
+            options,
+            exclude=(str(primary.get("selection")),),
+            predicate=lambda label: _goal_number(label) > primary_number,
+        )
+    secondary = secondary or options[1]
+    baseline_only = (
+        regime == "standard"
+        and {
+            str(primary.get("selection")),
+            str(secondary.get("selection")),
+        }.issubset({"2", "3"})
+    )
+    recommendation_status = (
+        "市场基线" if baseline_only else "结构候选"
+    )
     return {
         "available": True,
         "market": "总进球",
         "model_version": SPECIAL_MARKET_MODEL_VERSION,
-        "primary": options[0],
-        "secondary": options[1],
+        "primary": primary,
+        "secondary": secondary,
         "options": options,
         "expected_goals": round(expectation, 2),
-        "confidence": "观察",
+        "regime": regime,
+        "regime_label": regime_label,
+        "baseline_only": baseline_only,
+        "actionable": not baseline_only,
+        "recommendation_status": recommendation_status,
+        "confidence": "观察" if not baseline_only else "基线",
         "reason": (
-            "以竞彩总进球8项去水概率为主，结合亚洲大小球盘口校正；"
-            "首选与次选按校正概率排序，尚未经过长期样本校准。"
+            f"{regime_label}：以竞彩总进球8项去水概率为底座，结合亚洲大小球"
+            "盘口和水位确定尾部方向；低进球结构的次选向下寻找，高进球结构"
+            "的次选向上寻找。常规2/3球只标记市场基线，不升级为结构推荐。"
         ),
     }
 
 
-def _half_full_context(match_input: Dict[str, Any]) -> Dict[str, float]:
+def _half_full_direction(match_input: Dict[str, Any]) -> Dict[str, Any]:
+    euro = ((match_input.get("euro") or {}).get("current") or [])
+    probs = _triplet_probabilities(euro)
+    if len(probs) != 3 or any(value is None for value in probs):
+        return {}
+    home, draw, away = (float(value) for value in probs)
+    direction = "home" if home >= away else "away"
+    direction_probability = home if direction == "home" else away
+    gap = abs(home - away)
+    asian_values = ((match_input.get("asian") or {}).get("current") or [])
+    asian_line = _asian_home_line(
+        asian_values[1] if len(asian_values) > 1 else None
+    )
+    home_water = _number(asian_values[0]) if len(asian_values) > 0 else None
+    away_water = _number(asian_values[2]) if len(asian_values) > 2 else None
+    asian_support = (
+        asian_line is not None
+        and (
+            (direction == "home" and asian_line >= 0.25)
+            or (direction == "away" and asian_line <= -0.25)
+        )
+    )
+    asian_conflict = (
+        asian_line is not None
+        and (
+            (direction == "home" and asian_line < 0)
+            or (direction == "away" and asian_line > 0)
+        )
+    )
+    water_conflict = False
+    if home_water is not None and away_water is not None:
+        water_conflict = (
+            (direction == "home" and home_water - away_water >= 0.12)
+            or (direction == "away" and away_water - home_water >= 0.12)
+        )
+    if (
+        direction_probability >= 50
+        and asian_support
+        and not asian_conflict
+        and not water_conflict
+    ):
+        tier = "strong"
+        label = "强方向"
+    elif (
+        direction_probability >= 55
+        and asian_support
+        and not asian_conflict
+    ):
+        tier = "directional"
+        label = "强方向但水位冲突"
+    elif gap <= 10 or asian_conflict or water_conflict:
+        tier = "balanced"
+        label = "均势/冲突"
+    else:
+        tier = "directional"
+        label = "方向观察"
+    score = max(0.0, min(100.0, (
+        direction_probability
+        + (8 if asian_support else 0)
+        - (12 if asian_conflict else 0)
+        - (8 if water_conflict else 0)
+        + min(12, gap * 0.6)
+    )))
+    return {
+        "direction": direction,
+        "direction_selection": "胜" if direction == "home" else "负",
+        "direction_probability": round(direction_probability, 2),
+        "draw_probability": round(draw, 2),
+        "gap": round(gap, 2),
+        "asian_line": asian_line,
+        "asian_support": asian_support,
+        "asian_conflict": asian_conflict,
+        "water_conflict": water_conflict,
+        "tier": tier,
+        "label": label,
+        "score": round(score, 1),
+    }
+
+
+def _half_full_context(
+    match_input: Dict[str, Any],
+    direction_profile: Optional[Dict[str, Any]] = None,
+) -> Dict[str, float]:
     euro = ((match_input.get("euro") or {}).get("current") or [])
     probs = _triplet_probabilities(euro)
     if len(probs) != 3 or any(value is None for value in probs):
@@ -251,6 +451,10 @@ def _half_full_context(match_input: Dict[str, Any]) -> Dict[str, float]:
         "平负": away * (1 - winner_hold) * 0.82,
         "胜负": away * (1 - winner_hold) * 0.18,
     }
+    if (direction_profile or {}).get("tier") == "balanced":
+        draw_boost = 1.28 if low_total else 1.16
+        for label in ("平平", "胜平", "负平"):
+            context[label] *= draw_boost
     total = sum(context.values())
     return {
         label: value / total * 100 for label, value in context.items()
@@ -268,23 +472,72 @@ def _half_full_analysis(
             "reason": "竞彩半全场赔率不完整",
             "options": [],
         }
-    context = _half_full_context(match_input)
+    direction_profile = _half_full_direction(match_input)
+    context = _half_full_context(match_input, direction_profile)
+    tier = direction_profile.get("tier") or "balanced"
+    market_weight = {
+        "strong": 0.78,
+        "directional": 0.75,
+        "balanced": 0.62,
+    }.get(tier, 0.84)
     model = {
-        label: probabilities[label] * 0.84 + context.get(label, probabilities[label]) * 0.16
+        label: (
+            probabilities[label] * market_weight
+            + context.get(label, probabilities[label]) * (1 - market_weight)
+        )
         for label in probabilities
     }
     options = _rank_options(market, model)
+    total_values = ((match_input.get("total") or {}).get("current") or [])
+    total_line = _number(total_values[1]) if len(total_values) > 1 else None
+    low_total = total_line is not None and total_line <= 2.5
+    if tier in {"strong", "directional"}:
+        final_selection = str(
+            direction_profile.get("direction_selection") or ""
+        )
+        primary = _option(
+            options,
+            predicate=lambda label: label.endswith(final_selection),
+        ) or options[0]
+        secondary = _option(
+            options,
+            exclude=(str(primary.get("selection")),),
+            predicate=lambda label: label.endswith(final_selection),
+        ) or options[1]
+    elif low_total:
+        primary = _option(options, selection="平平") or options[0]
+        secondary = _option(
+            options,
+            exclude=(str(primary.get("selection")),),
+        ) or options[1]
+    else:
+        primary = options[0]
+        secondary = _option(
+            options,
+            exclude=(str(primary.get("selection")),),
+            predicate=lambda label: label.endswith("平"),
+        ) or options[1]
+    actionable = tier == "strong"
+    recommendation_status = {
+        "strong": "方向候选",
+        "directional": "方向观察",
+        "balanced": "均势观察",
+    }.get(tier, "观察")
     return {
         "available": True,
         "market": "半全场",
         "model_version": SPECIAL_MARKET_MODEL_VERSION,
-        "primary": options[0],
-        "secondary": options[1],
+        "primary": primary,
+        "secondary": secondary,
         "options": options,
+        "direction_profile": direction_profile,
+        "actionable": actionable,
+        "recommendation_status": recommendation_status,
         "confidence": "观察",
         "reason": (
-            "以竞彩半全场9项去水概率为主，结合欧赔胜平负强弱和大小球节奏校正；"
-            "首选与次选按校正概率排序，尚未经过长期样本校准。"
+            f"{direction_profile.get('label') or '方向待定'}：先用欧赔、亚盘和水位"
+            "确认全场方向，再在同一全场方向内选择半场路径；均势或冲突盘提高"
+            "平平、胜平、负平权重，低总球均势盘优先检查平平。"
         ),
     }
 

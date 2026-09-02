@@ -141,7 +141,10 @@
                 <article v-for="market in dailySpecialMarkets" :key="market.key">
                   <div>
                     <b>{{ market.title }}</b>
-                    <small>{{ market.updatedAt ? `更新 ${market.updatedAt}` : '赛前快照' }}</small>
+                    <small>
+                      {{ market.status }} ·
+                      {{ market.updatedAt ? `更新 ${market.updatedAt}` : '赛前快照' }}
+                    </small>
                   </div>
                   <p>
                     <span>首选</span>
@@ -471,6 +474,7 @@ const dailySpecialMarkets = computed(() => {
     title: row.title,
     primary: row.data.primary,
     secondary: row.data.secondary,
+    status: row.data.recommendation_status || row.data.confidence || '观察',
     updatedAt: row.data.snapshot?.updated_at
   }))
 })

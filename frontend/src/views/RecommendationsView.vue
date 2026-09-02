@@ -461,6 +461,7 @@
                       <i>{{ market.title }}</i>
                       <strong>{{ market.primary.selection }}</strong>
                       <em>@{{ market.primary.odds }}</em>
+                      <u>{{ market.status }}</u>
                     </span>
                   </div>
                 </span>
@@ -542,7 +543,8 @@
                       <span>次选 <strong>{{ market.secondary.selection }}</strong> @{{ market.secondary.odds }}</span>
                     </p>
                     <small>
-                      校正概率 {{ market.primary.model_probability }}% / {{ market.secondary.model_probability }}%
+                      {{ market.status }} · 校正概率
+                      {{ market.primary.model_probability }}% / {{ market.secondary.model_probability }}%
                     </small>
                   </article>
                 </div>
@@ -1717,7 +1719,8 @@ const specialMarketRows = item => {
     key: row.key,
     title: row.title,
     primary: row.data.primary,
-    secondary: row.data.secondary
+    secondary: row.data.secondary,
+    status: row.data.recommendation_status || row.data.confidence || '观察'
   }))
 }
 const hasData = computed(() =>
@@ -3835,6 +3838,13 @@ onBeforeUnmount(() => {
   color: #a18350;
   font-style: normal;
   font-weight: 500;
+}
+
+.daily-special-preview u {
+  color: #aa8b58;
+  font-size: 8px;
+  text-decoration: none;
+  white-space: nowrap;
 }
 
 .daily-special-preview strong {

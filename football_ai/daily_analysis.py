@@ -16,7 +16,7 @@ from .special_markets import build_special_market_analysis
 from .version import ENGINE_VERSION
 
 
-DAILY_PROMPT_VERSION = "five-market-daily-v35-special-markets"
+DAILY_PROMPT_VERSION = "five-market-daily-v36-special-market-regimes"
 
 OFFICIAL_PLAY_SELECTIONS = {"平局", "让平"}
 OFFICIAL_MIN_BET_SCORE = 70.0
@@ -229,7 +229,9 @@ def compact_daily_ai_run(source: Optional[Dict[str, Any]]) -> Optional[Dict[str,
                 field: market.get(field)
                 for field in (
                     "available", "market", "model_version", "primary",
-                    "secondary", "confidence", "reason",
+                    "secondary", "confidence", "reason", "expected_goals",
+                    "regime", "regime_label", "baseline_only", "actionable",
+                    "recommendation_status", "direction_profile",
                 )
                 if field in market
             }
