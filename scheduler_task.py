@@ -28,7 +28,7 @@ def crawl_single_match_odds(match, logger, mongo_storage):
     crawler = FootballCrawler()
     
     try:
-        odds = crawler.crawl_match_odds(match_id)
+        odds = crawler.crawl_match_odds(match_id, match=match)
         
         if odds and (odds.get('euro_odds') or odds.get('asian_handicap') or odds.get('over_under')):
             mongo_storage.save_odds(match_id, odds)

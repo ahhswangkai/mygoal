@@ -2690,8 +2690,10 @@ def crawl_stream():
             except Exception:
                 workers = 8
             yield f"data: 并发线程数: {workers}\n\n"
-            def fetch(mid):
-                return crawler.crawl_match_odds(mid)
+            def fetch(match):
+                return crawler.crawl_match_odds(
+                    match.get('match_id'), match=match
+                )
             with ThreadPoolExecutor(max_workers=workers) as executor:
                 futures = {}
                 i = 0
@@ -2700,7 +2702,7 @@ def crawl_stream():
                     if not mid or not is_pregame_match(m):
                         continue
                     i += 1
-                    futures[executor.submit(fetch, mid)] = m
+                    futures[executor.submit(fetch, m)] = m
                     yield f"data: [{i}/{total}] 提交赔率任务 {mid} - {m.get('home_team', '')} vs {m.get('away_team', '')}\n\n"
                 completed = 0
                 for fut in as_completed(futures):
@@ -2765,11 +2767,13 @@ def crawl_new_data():
         except Exception:
             workers = 8
         
-        def fetch(mid):
+        def fetch(match):
             # 这里的 crawl_match_odds 内部并没有自动保存赔率，所以需要在这里保存
             # 如果也想改成边爬边存，需要修改 crawler.crawl_match_odds
             # 暂时保持在这里手动保存，或者修改 crawler.crawl_match_odds
-            return crawler.crawl_match_odds(mid)
+            return crawler.crawl_match_odds(
+                match.get('match_id'), match=match
+            )
             
         with ThreadPoolExecutor(max_workers=workers) as executor:
             futures = {}
@@ -2777,13 +2781,16 @@ def crawl_new_data():
                 mid = m.get('match_id')
                 if not mid or not is_pregame_match(m):
                     continue
-                futures[executor.submit(fetch, mid)] = mid
+                futures[executor.submit(fetch, m)] = m
             for fut in as_completed(futures):
-                mid = futures[fut]
+                match = futures[fut]
+                mid = match.get('match_id')
                 try:
                     odds = fut.result()
                     if odds:
+                        crawler._map_odds_details(match, odds)
                         mongo_storage.save_odds(mid, odds)
+                        mongo_storage.save_match(match)
                         odds_count += 1
                 except Exception:
                     pass
@@ -2817,10 +2824,13 @@ def crawl_match_odds(match_id):
                 'code': 'PREGAME_ODDS_LOCKED',
             }), 409
 
-        odds = crawler.crawl_match_odds(match_id)
+        odds = crawler.crawl_match_odds(match_id, match=existing_match)
         
         # 保存到MongoDB
         if mongo_storage and odds:
+            if existing_match:
+                crawler._map_odds_details(existing_match, odds)
+                mongo_storage.save_match(existing_match)
             mongo_storage.save_odds(match_id, odds)
         
         return jsonify({
@@ -3241,8 +3251,10 @@ def _crawl_latest():
         workers = 8
         odds_count = 0
         
-        def fetch(mid):
-            return crawler.crawl_match_odds(mid)
+        def fetch(match):
+            return crawler.crawl_match_odds(
+                match.get('match_id'), match=match
+            )
 
         with ThreadPoolExecutor(max_workers=workers) as executor:
             futures = {}
@@ -3250,7 +3262,7 @@ def _crawl_latest():
                 mid = m.get('match_id')
                 # 仅未开始比赛可更新；进行中和完场均保留赛前最后值。
                 if mid and is_pregame_match(m):
-                    futures[executor.submit(fetch, mid)] = m
+                    futures[executor.submit(fetch, m)] = m
             
             for fut in as_completed(futures):
                 m = futures[fut]
@@ -3258,7 +3270,9 @@ def _crawl_latest():
                 try:
                     odds = fut.result()
                     if odds and mongo_storage:
+                        crawler._map_odds_details(m, odds)
                         mongo_storage.save_odds(mid, odds)
+                        mongo_storage.save_match(m)
                         odds_count += 1
                 except Exception as e:
                     print(f"❌ 定时任务: 爬取赔率失败 {mid}: {str(e)}")

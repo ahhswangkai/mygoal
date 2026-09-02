@@ -11,11 +11,23 @@ from retry import retry
 from datetime import datetime
 from urllib.parse import urlparse
 import random
+import threading
 from utils import setup_logger
 from config import REQUEST_HEADERS, REQUEST_TIMEOUT, REQUEST_DELAY, MAX_RETRIES
 
 
 PREFERRED_ODDS_COMPANY_ID = '6'
+OKOOO_PREFERRED_ODDS_COMPANY_ID = '65'
+OKOOO_BASE_URL = 'https://m.okooo.com'
+OKOOO_LIST_URL = f'{OKOOO_BASE_URL}/jczq/'
+OKOOO_MOBILE_USER_AGENT = (
+    'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) '
+    'AppleWebKit/605.1.15 Version/17.0 Mobile/15E148 Safari/604.1'
+)
+OKOOO_LIST_CACHE_SECONDS = 300
+_OKOOO_LIST_CACHE = {'fetched_at': 0.0, 'data': None}
+_OKOOO_LIST_CACHE_LOCK = threading.Lock()
+_OKOOO_REQUEST_SEMAPHORE = threading.BoundedSemaphore(2)
 
 
 def clean_asian_handicap(value):
@@ -88,6 +100,16 @@ class FootballCrawler:
                 headers['Referer'] = 'https://live.500.com/'
                 headers['Pragma'] = 'no-cache'
                 headers['Cache-Control'] = 'no-cache'
+            elif host == 'm.okooo.com':
+                # 澳客移动页要求正常的移动端导航上下文；不依赖 Cookie 或验证码。
+                headers['User-Agent'] = OKOOO_MOBILE_USER_AGENT
+                headers['Referer'] = OKOOO_LIST_URL
+                headers['Accept-Language'] = 'zh-CN,zh;q=0.9'
+                # requests 在未安装 brotli 扩展时不会自动解压 br 响应。
+                headers['Accept-Encoding'] = 'gzip, deflate'
+            custom_headers = kwargs.pop('headers', None)
+            if custom_headers:
+                headers.update(custom_headers)
             if method.upper() == 'GET':
                 response = self.session.get(
                     url,
@@ -704,6 +726,269 @@ class FootballCrawler:
             self.logger.error(traceback.format_exc())
 
         return over_under_data
+
+    @staticmethod
+    def _normalize_match_number(value):
+        """将澳客的“三005”和本系统的“周三005”统一成同一场次号。"""
+        text = re.sub(r'\s+', '', str(value or ''))
+        matched = re.search(r'(?:周)?([一二三四五六日天])0*(\d{1,3})', text)
+        if not matched:
+            return text
+        day = '日' if matched.group(1) == '天' else matched.group(1)
+        return f"周{day}{int(matched.group(2)):03d}"
+
+    @staticmethod
+    def _normalize_team_name(value):
+        text = str(value or '').lower()
+        text = re.sub(r'[\[【（(].*?[\]】）)]', '', text)
+        text = re.sub(r'\bfc\b|足球俱乐部', '', text, flags=re.I)
+        return re.sub(r'[^0-9a-z\u4e00-\u9fff]', '', text)
+
+    @staticmethod
+    def _okooo_water_to_hk(value):
+        """澳客移动页使用欧洲式水位；转换成项目现有的香港盘水位。"""
+        text = re.sub(r'[↑↓\s]', '', str(value or ''))
+        try:
+            number = float(text)
+        except (TypeError, ValueError):
+            return ''
+        if number >= 1:
+            number -= 1
+        return f'{number:.2f}'
+
+    @staticmethod
+    def _is_okooo_preferred_company(row):
+        onclick = str(row.get('onclick') or '')
+        if re.search(r'(?:pid=|详情\W*)65(?:\D|$)', onclick):
+            return True
+        company = row.find('a')
+        name = company.get_text(strip=True) if company else ''
+        compact = name.replace('*', '').replace(' ', '')
+        return compact.startswith('伟') and compact.endswith('际')
+
+    def parse_okooo_match_list(self, html_content):
+        """解析澳客竞彩列表，建立官方场次号到澳客 MatchID 的映射。"""
+        soup = BeautifulSoup(html_content, 'lxml')
+        date_match = re.search(
+            r"var\s+lotterNo\s*=\s*['\"](\d{4}-\d{2}-\d{2})['\"]",
+            html_content or '',
+        )
+        owner_date = date_match.group(1) if date_match else ''
+        matches = []
+        for node in soup.select('.jsMatchItem'):
+            id_node = node.select_one('[matchid]')
+            okooo_match_id = str(id_node.get('matchid') or '') if id_node else ''
+            if not okooo_match_id:
+                link = node.find('a', href=re.compile(r'MatchID=\d+', re.I))
+                id_match = re.search(
+                    r'MatchID=(\d+)', str(link.get('href') or '') if link else '', re.I
+                )
+                okooo_match_id = id_match.group(1) if id_match else ''
+            number_node = node.select_one('.xuhao')
+            match_number = self._normalize_match_number(
+                number_node.get_text(strip=True) if number_node else ''
+            )
+            if not okooo_match_id or not match_number:
+                continue
+            home = node.select_one('.ctrl_homename')
+            away = node.select_one('.ctrl_awayname')
+            time_node = node.select_one('time.timetxt')
+            league = node.select_one('.liansai')
+            matches.append({
+                'okooo_match_id': okooo_match_id,
+                'match_number': match_number,
+                'owner_date': owner_date,
+                'match_time': time_node.get_text(strip=True) if time_node else '',
+                'home_team': home.get_text(strip=True) if home else '',
+                'away_team': away.get_text(strip=True) if away else '',
+                'league': league.get_text(strip=True) if league else '',
+            })
+        return {'owner_date': owner_date, 'matches': matches}
+
+    def _fetch_okooo_html(self, url, referer=OKOOO_LIST_URL):
+        # 限制并发，降低公开移动页触发限流的概率。
+        with _OKOOO_REQUEST_SEMAPHORE:
+            response = self._make_request(url, headers={'Referer': referer})
+        return self._decode_html(response)
+
+    def get_okooo_match_list(self, force=False):
+        """读取并短时缓存澳客当天竞彩列表，避免每场重复请求。"""
+        now = time.time()
+        with _OKOOO_LIST_CACHE_LOCK:
+            cached = _OKOOO_LIST_CACHE.get('data')
+            if (
+                not force and cached
+                and now - float(_OKOOO_LIST_CACHE.get('fetched_at') or 0)
+                < OKOOO_LIST_CACHE_SECONDS
+            ):
+                return cached
+            html = self._fetch_okooo_html(OKOOO_LIST_URL)
+            data = self.parse_okooo_match_list(html)
+            if data.get('matches'):
+                _OKOOO_LIST_CACHE['data'] = data
+                _OKOOO_LIST_CACHE['fetched_at'] = time.time()
+            return data
+
+    def resolve_okooo_match_id(self, match):
+        """通过日期、竞彩场次号与球队校验映射澳客 MatchID。"""
+        if not isinstance(match, dict):
+            return ''
+        stored_id = str(match.get('okooo_match_id') or '')
+        if stored_id.isdigit():
+            return stored_id
+        listing = self.get_okooo_match_list()
+        list_date = str(listing.get('owner_date') or '')[:10]
+        owner_date = str(match.get('owner_date') or '')[:10]
+        if list_date and owner_date and list_date != owner_date:
+            return ''
+
+        target_number = self._normalize_match_number(match.get('match_number'))
+        candidates = [
+            item for item in listing.get('matches', [])
+            if item.get('match_number') == target_number
+        ]
+        if not candidates:
+            return ''
+        if len(candidates) == 1 and list_date and owner_date:
+            return candidates[0].get('okooo_match_id', '')
+
+        target_home = self._normalize_team_name(match.get('home_team'))
+        target_away = self._normalize_team_name(match.get('away_team'))
+        target_time = str(match.get('match_time') or '')[-5:]
+        for item in candidates:
+            item_home = self._normalize_team_name(item.get('home_team'))
+            item_away = self._normalize_team_name(item.get('away_team'))
+            teams_match = (
+                target_home and target_away
+                and (target_home in item_home or item_home in target_home)
+                and (target_away in item_away or item_away in target_away)
+            )
+            time_match = target_time and target_time == item.get('match_time')
+            if teams_match or time_match:
+                return item.get('okooo_match_id', '')
+        return ''
+
+    def parse_okooo_asian_handicap(self, html_content):
+        """解析澳客亚盘的伟德初盘/即时盘。"""
+        soup = BeautifulSoup(html_content, 'lxml')
+        table = soup.select_one('#pankou table')
+        if not table:
+            return []
+        row = next(
+            (item for item in table.select('tbody tr')
+             if self._is_okooo_preferred_company(item)),
+            None,
+        )
+        if not row:
+            return []
+        cells = row.find_all('td', recursive=False)
+        if len(cells) < 3:
+            return []
+
+        def parse_cell(cell):
+            home = cell.find('span')
+            line = cell.find('em')
+            spans = cell.find_all('span')
+            away = spans[-1] if spans else None
+            return (
+                self._okooo_water_to_hk(home.get_text(strip=True) if home else ''),
+                clean_asian_handicap(line.get_text(strip=True) if line else ''),
+                self._okooo_water_to_hk(away.get_text(strip=True) if away else ''),
+            )
+
+        initial_home, initial_line, initial_away = parse_cell(cells[1])
+        current_home, current_line, current_away = parse_cell(cells[2])
+        if not (current_home and current_line and current_away):
+            return []
+        company = row.find('a')
+        company_name = company.get_text(strip=True) if company else '伟**际'
+        return [{
+            'current_home_odds': current_home,
+            'current_handicap': current_line,
+            'current_away_odds': current_away,
+            'initial_home_odds': initial_home,
+            'initial_handicap': initial_line,
+            'initial_away_odds': initial_away,
+            'home_odds': current_home,
+            'handicap': current_line,
+            'away_odds': current_away,
+            'source_company_id': OKOOO_PREFERRED_ODDS_COMPANY_ID,
+            'source_company_name': company_name,
+            'source_provider': 'okooo',
+            'source_fallback': True,
+        }]
+
+    def parse_okooo_over_under(self, html_content):
+        """解析澳客公开大小球接口中的伟德初盘/即时盘。"""
+        soup = BeautifulSoup(html_content, 'lxml')
+        row = next(
+            (item for item in soup.select('tr')
+             if self._is_okooo_preferred_company(item)),
+            None,
+        )
+        if not row:
+            return []
+        cells = row.find_all('td', recursive=False)
+        if len(cells) < 3:
+            return []
+
+        def parse_cell(cell, prefix):
+            over = cell.select_one(f'.sort-{prefix}-daqiu')
+            total = cell.select_one(f'.filter-{prefix}')
+            under = cell.select_one(f'.sort-{prefix}-xiaoqiu')
+            return (
+                self._okooo_water_to_hk(over.get_text(strip=True) if over else ''),
+                clean_asian_handicap(total.get_text(strip=True) if total else ''),
+                self._okooo_water_to_hk(under.get_text(strip=True) if under else ''),
+            )
+
+        initial_over, initial_total, initial_under = parse_cell(cells[1], 'chu')
+        current_over, current_total, current_under = parse_cell(cells[2], 'xin')
+        if not (current_over and current_total and current_under):
+            return []
+        company = row.find('a')
+        company_name = company.get_text(strip=True) if company else '伟**际'
+        return [{
+            'current_over_odds': current_over,
+            'current_total': current_total,
+            'current_under_odds': current_under,
+            'initial_over_odds': initial_over,
+            'initial_total': initial_total,
+            'initial_under_odds': initial_under,
+            'over_odds': current_over,
+            'total': current_total,
+            'under_odds': current_under,
+            'source_company_id': OKOOO_PREFERRED_ODDS_COMPANY_ID,
+            'source_company_name': company_name,
+            'source_provider': 'okooo',
+            'source_fallback': True,
+        }]
+
+    def crawl_okooo_odds(self, match, need_asian=True, need_over_under=True):
+        """从澳客补齐缺失的亚盘/大小球，不抓取或覆盖其他市场。"""
+        result = {'asian_handicap': [], 'over_under': []}
+        okooo_match_id = self.resolve_okooo_match_id(match)
+        if not okooo_match_id:
+            self.logger.warning(
+                f"澳客未匹配到场次: {match.get('match_number', '')} "
+                f"{match.get('home_team', '')} vs {match.get('away_team', '')}"
+            )
+            return result
+        detail_url = (
+            f'{OKOOO_BASE_URL}/match/handicap.php?MatchID={okooo_match_id}'
+            '&from=%2Fjczq%2F'
+        )
+        if need_asian:
+            detail_html = self._fetch_okooo_html(detail_url)
+            result['asian_handicap'] = self.parse_okooo_asian_handicap(detail_html)
+        if need_over_under:
+            total_url = (
+                f'{OKOOO_BASE_URL}/match/ah.php?type=daxiao&matchId={okooo_match_id}'
+            )
+            total_html = self._fetch_okooo_html(total_url, referer=detail_url)
+            result['over_under'] = self.parse_okooo_over_under(total_html)
+        result['okooo_match_id'] = okooo_match_id
+        return result
     
     def _parse_chinese_handicap(self, text):
         """解析中文亚盘盘口为数字"""
@@ -1199,7 +1484,7 @@ class FootballCrawler:
                         
                     try:
                         time.sleep(random.uniform(0.2, 0.5))
-                        odds_details = self.crawl_match_odds(match_id)
+                        odds_details = self.crawl_match_odds(match_id, match=match)
                         self._map_odds_details(match, odds_details)
                         
                         # 保存赔率数据到数据库
@@ -1332,7 +1617,7 @@ class FootballCrawler:
         
         return None
 
-    def crawl_match_odds(self, match_id):
+    def crawl_match_odds(self, match_id, match=None):
         """
         爬取指定比赛的赔率信息（包含即时盘和初盘）
         
@@ -1368,7 +1653,27 @@ class FootballCrawler:
             if over_under_data:
                 odds_data['over_under'] = over_under_data
             
-            # 4. 爬取让球指数（使用让球指数专门页面）
+            # 4. 500 缺失时才使用澳客补齐亚盘/大小球。澳客 MatchID 与
+            # 500 fid 不同，因此必须通过包含日期/场次号的 match 映射。
+            need_asian = not odds_data.get('asian_handicap')
+            need_over_under = not odds_data.get('over_under')
+            if match and (need_asian or need_over_under):
+                try:
+                    fallback = self.crawl_okooo_odds(
+                        match,
+                        need_asian=need_asian,
+                        need_over_under=need_over_under,
+                    )
+                    if need_asian and fallback.get('asian_handicap'):
+                        odds_data['asian_handicap'] = fallback['asian_handicap']
+                    if need_over_under and fallback.get('over_under'):
+                        odds_data['over_under'] = fallback['over_under']
+                    if fallback.get('okooo_match_id'):
+                        odds_data['okooo_match_id'] = fallback['okooo_match_id']
+                except Exception as exc:
+                    self.logger.warning(f'澳客赔率补源失败 {match_id}: {exc}')
+
+            # 5. 爬取让球指数（使用让球指数专门页面）
             asian_hint = None
             if odds_data.get('asian_handicap'):
                 ah_list = odds_data['asian_handicap']
@@ -1666,6 +1971,8 @@ class FootballCrawler:
     
     def _map_odds_details(self, match, odds_details):
         """将爬取的详细赔率数据映射到比赛对象"""
+        if odds_details.get('okooo_match_id'):
+            match['okooo_match_id'] = str(odds_details['okooo_match_id'])
         # 1. 欧赔
         if odds_details.get('euro_odds'):
             euro = odds_details['euro_odds'][0]
@@ -1688,6 +1995,7 @@ class FootballCrawler:
             match['asian_current_away_odds'] = asian.get('current_away_odds')
             match['asian_source_company_id'] = asian.get('source_company_id')
             match['asian_source_company_name'] = asian.get('source_company_name')
+            match['asian_source_provider'] = asian.get('source_provider', '500')
             match['asian_source_fallback'] = asian.get('source_fallback', False)
             match['asian_odds'] = f"{match['asian_current_home_odds']}/{match['asian_current_handicap']}/{match['asian_current_away_odds']}"
 
@@ -1702,6 +2010,7 @@ class FootballCrawler:
             match['ou_current_under_odds'] = ou.get('current_under_odds')
             match['ou_source_company_id'] = ou.get('source_company_id')
             match['ou_source_company_name'] = ou.get('source_company_name')
+            match['ou_source_provider'] = ou.get('source_provider', '500')
             match['ou_source_fallback'] = ou.get('source_fallback', False)
             match['ou_odds'] = f"{match['ou_current_over_odds']}/{match['ou_current_total']}/{match['ou_current_under_odds']}"
 
@@ -1726,7 +2035,7 @@ class FootballCrawler:
             return False
             
         try:
-            odds_details = self.crawl_match_odds(match_id)
+            odds_details = self.crawl_match_odds(match_id, match=match)
             self._map_odds_details(match, odds_details)
             return True
         except Exception as e:
