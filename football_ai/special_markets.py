@@ -253,21 +253,37 @@ def _total_goal_analysis(
     )
     total_values = ((match_input.get("total") or {}).get("current") or [])
     total_line = _number(total_values[1]) if len(total_values) > 1 else None
+    over_price = _number(total_values[0]) if len(total_values) > 0 else None
+    under_price = _number(total_values[2]) if len(total_values) > 2 else None
+    if total_line is None or over_price is None or under_price is None:
+        return {
+            "available": False,
+            "market": "总进球",
+            "model_version": SPECIAL_MARKET_MODEL_VERSION,
+            "data_complete": False,
+            "calculator_available": True,
+            "options": [],
+            "expected_goals": round(market_expectation, 2),
+            "baseline_only": True,
+            "actionable": False,
+            "recommendation_status": "数据不足",
+            "confidence": "不足",
+            "reason": (
+                "缺少亚洲大小球即时盘口或两侧水位；竞彩总进球赔率"
+                "只能作为原始市场数据，不生成首选、次选或复盘样本。"
+            ),
+        }
     ou_probs = _triplet_probabilities([
-        total_values[0] if len(total_values) > 0 else None,
-        total_values[2] if len(total_values) > 2 else None,
+        over_price,
+        under_price,
     ])
-    expectation = market_expectation
-    if total_line is not None:
-        over = ou_probs[0] if len(ou_probs) > 0 else None
-        under = ou_probs[1] if len(ou_probs) > 1 else None
-        line_expectation = total_line
-        if over is not None and under is not None:
-            line_expectation += max(-0.45, min(0.45, (over - under) / 100 * 0.9))
-        expectation = market_expectation * 0.75 + line_expectation * 0.25
-    poisson = _poisson_distribution(expectation)
     over = ou_probs[0] if len(ou_probs) > 0 else None
     under = ou_probs[1] if len(ou_probs) > 1 else None
+    line_expectation = total_line
+    if over is not None and under is not None:
+        line_expectation += max(-0.45, min(0.45, (over - under) / 100 * 0.9))
+    expectation = market_expectation * 0.75 + line_expectation * 0.25
+    poisson = _poisson_distribution(expectation)
     water_edge = (
         float(over) - float(under)
         if over is not None and under is not None else 0.0
@@ -335,6 +351,8 @@ def _total_goal_analysis(
         "expected_goals": round(expectation, 2),
         "regime": regime,
         "regime_label": regime_label,
+        "data_complete": True,
+        "calculator_available": True,
         "baseline_only": baseline_only,
         "actionable": not baseline_only,
         "recommendation_status": recommendation_status,

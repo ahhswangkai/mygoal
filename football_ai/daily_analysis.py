@@ -232,6 +232,7 @@ def compact_daily_ai_run(source: Optional[Dict[str, Any]]) -> Optional[Dict[str,
                     "secondary", "confidence", "reason", "expected_goals",
                     "regime", "regime_label", "baseline_only", "actionable",
                     "recommendation_status", "direction_profile",
+                    "data_complete", "calculator_available",
                 )
                 if field in market
             }
@@ -2280,8 +2281,16 @@ def build_daily_match_input(
         special_market_snapshot,
         payload,
     )
+    total_goals_model = payload["special_markets"].get("total_goals") or {}
+    if (
+        total_goals_model.get("calculator_available")
+        and not total_goals_model.get("data_complete")
+    ):
+        payload["data_warnings"].append(
+            "亚洲大小球即时盘口或两侧水位缺失，总进球模型不输出推荐"
+        )
     if not (
-        (payload["special_markets"].get("total_goals") or {}).get("available")
+        total_goals_model.get("available")
         or (payload["special_markets"].get("half_full") or {}).get("available")
     ):
         payload["data_warnings"].append("竞彩总进球/半全场赔率快照缺失")

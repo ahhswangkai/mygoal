@@ -110,6 +110,32 @@ class SpecialMarketTests(unittest.TestCase):
         self.assertFalse(result["actionable"])
         self.assertEqual(result["recommendation_status"], "市场基线")
 
+    def test_total_goals_requires_complete_asian_total_market(self):
+        snapshot = parse_calculator_payload(calculator_payload())["周二003"]
+        result = build_special_market_analysis(snapshot, {
+            "euro": {"current": [1.75, 3.5, 4.4]},
+            "total": {"current": [None, None, None]},
+        })["total_goals"]
+
+        self.assertFalse(result["available"])
+        self.assertFalse(result["data_complete"])
+        self.assertTrue(result["calculator_available"])
+        self.assertFalse(result["actionable"])
+        self.assertEqual(result["recommendation_status"], "数据不足")
+        self.assertNotIn("primary", result)
+        self.assertNotIn("secondary", result)
+        self.assertIn("亚洲大小球", result["reason"])
+
+    def test_total_goals_requires_both_asian_total_water_prices(self):
+        snapshot = parse_calculator_payload(calculator_payload())["周二003"]
+        result = build_special_market_analysis(snapshot, {
+            "total": {"current": [0.88, 2.75, None]},
+        })["total_goals"]
+
+        self.assertFalse(result["available"])
+        self.assertFalse(result["actionable"])
+        self.assertEqual(result["options"], [])
+
     def test_half_full_strong_direction_keeps_both_paths_aligned(self):
         snapshot = parse_calculator_payload(calculator_payload())["周二003"]
         result = build_special_market_analysis(snapshot, {

@@ -2,7 +2,7 @@
 
 ENGINE_NAME = "Football AI Engine"
 ENGINE_CODE = "FAE"
-ENGINE_VERSION = "2.20.0"
+ENGINE_VERSION = "2.20.1"
 SCHEMA_VERSION = "2.12"
 
 DIMENSION_WEIGHTS = {
@@ -120,6 +120,7 @@ VERSION_MANIFEST = {
         "低总球一球差分流：竞彩让1球且亚盘仅0.25-0.75、大小球不高于2.5时，优先评估让平而非把低比分机械解释为普通平局",
         "组票护栏一致性：被一致性、穿盘或热门不穿护栏降为防选的平/让平禁止重新进入正式组合",
         "竞彩总进球与半全场闭环：计算器赛前赔率快照、去水概率校正首选/次选、前端展示、确定性赛后结算及复盘记忆",
+        "总进球数据完整性硬门禁：必须同时具备竞彩总进球赔率、亚洲大小球即时盘及两侧水位才生成首选与次选",
     ],
     "learning_policy": {
         "minimum_samples": 10,
