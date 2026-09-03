@@ -47,6 +47,28 @@ OKOOO_TOTAL_HTML = r'''
 '''
 
 
+OKOOO_ASIAN_FIRST_COMPANY_HTML = r'''
+<section id="pankou"><table><tbody>
+  <tr onclick="window.location='/match/change.php?mid=1346795&amp;pid=35&amp;Type=Handicap'">
+    <td><a>易*博</a></td>
+    <td><span>1.91</span><em>平/半</em><span>1.89</span></td>
+    <td><span>1.86</span><em>半球</em><span>1.94</span></td>
+  </tr>
+</tbody></table></section>
+'''
+
+
+OKOOO_TOTAL_FIRST_COMPANY_HTML = r'''
+<table><tbody>
+  <tr class="jsContentItem" index="1">
+    <td><a>澳*门</a></td>
+    <td><span class="sort-chu-daqiu">1.85</span><span class="filter-chu">2.25</span><span class="sort-chu-xiaoqiu">1.85</span></td>
+    <td><span class="sort-xin-daqiu">1.90</span><span class="filter-xin">2.50</span><span class="sort-xin-xiaoqiu">1.80</span></td>
+  </tr>
+</tbody></table>
+'''
+
+
 class OkoooFallbackTest(unittest.TestCase):
     def setUp(self):
         self.crawler = object.__new__(FootballCrawler)
@@ -86,6 +108,19 @@ class OkoooFallbackTest(unittest.TestCase):
 
         self.assertEqual(result, '')
 
+    def test_resolves_cross_date_listing_when_teams_match(self):
+        listing = self.crawler.parse_okooo_match_list(OKOOO_LIST_HTML)
+        self.crawler.get_okooo_match_list = lambda: listing
+
+        result = self.crawler.resolve_okooo_match_id({
+            'owner_date': '2026-09-03',
+            'match_number': '周三005',
+            'home_team': '萨索洛',
+            'away_team': '弗洛西',
+        })
+
+        self.assertEqual(result, '1346795')
+
     def test_parses_weide_asian_and_converts_water(self):
         result = self.crawler.parse_okooo_asian_handicap(OKOOO_ASIAN_HTML)[0]
 
@@ -105,6 +140,26 @@ class OkoooFallbackTest(unittest.TestCase):
         self.assertEqual(result['current_over_odds'], '1.04')
         self.assertEqual(result['current_total'], '3.00')
         self.assertEqual(result['current_under_odds'], '0.67')
+
+    def test_asian_falls_back_to_first_valid_company(self):
+        result = self.crawler.parse_okooo_asian_handicap(
+            OKOOO_ASIAN_FIRST_COMPANY_HTML
+        )[0]
+
+        self.assertEqual(result['source_company_id'], '')
+        self.assertEqual(result['source_company_name'], '易*博')
+        self.assertEqual(result['initial_handicap'], '平/半')
+        self.assertEqual(result['current_handicap'], '半球')
+
+    def test_total_falls_back_to_first_valid_company(self):
+        result = self.crawler.parse_okooo_over_under(
+            OKOOO_TOTAL_FIRST_COMPANY_HTML
+        )[0]
+
+        self.assertEqual(result['source_company_id'], '')
+        self.assertEqual(result['source_company_name'], '澳*门')
+        self.assertEqual(result['initial_total'], '2.25')
+        self.assertEqual(result['current_total'], '2.50')
 
     def test_only_fills_missing_markets(self):
         existing_asian = [{'current_handicap': '半球'}]

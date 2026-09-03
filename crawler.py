@@ -839,8 +839,6 @@ class FootballCrawler:
         listing = self.get_okooo_match_list()
         list_date = str(listing.get('owner_date') or '')[:10]
         owner_date = str(match.get('owner_date') or '')[:10]
-        if list_date and owner_date and list_date != owner_date:
-            return ''
 
         target_number = self._normalize_match_number(match.get('match_number'))
         candidates = [
@@ -849,7 +847,10 @@ class FootballCrawler:
         ]
         if not candidates:
             return ''
-        if len(candidates) == 1 and list_date and owner_date:
+        # 澳客的竞彩列表会跨自然日展示下一比赛日，页面 lotterNo 仍可能是
+        # 前一天。日期一致时唯一场次号即可确认；日期不一致时继续使用
+        # 球队或开赛时间校验，避免把有效的跨日比赛直接过滤掉。
+        if len(candidates) == 1 and list_date and owner_date and list_date == owner_date:
             return candidates[0].get('okooo_match_id', '')
 
         target_home = self._normalize_team_name(match.get('home_team'))
@@ -869,20 +870,10 @@ class FootballCrawler:
         return ''
 
     def parse_okooo_asian_handicap(self, html_content):
-        """解析澳客亚盘的伟德初盘/即时盘。"""
+        """解析澳客亚盘；优先伟德，缺失时取首个有效公司。"""
         soup = BeautifulSoup(html_content, 'lxml')
         table = soup.select_one('#pankou table')
         if not table:
-            return []
-        row = next(
-            (item for item in table.select('tbody tr')
-             if self._is_okooo_preferred_company(item)),
-            None,
-        )
-        if not row:
-            return []
-        cells = row.find_all('td', recursive=False)
-        if len(cells) < 3:
             return []
 
         def parse_cell(cell):
@@ -896,41 +887,44 @@ class FootballCrawler:
                 self._okooo_water_to_hk(away.get_text(strip=True) if away else ''),
             )
 
-        initial_home, initial_line, initial_away = parse_cell(cells[1])
-        current_home, current_line, current_away = parse_cell(cells[2])
-        if not (current_home and current_line and current_away):
-            return []
-        company = row.find('a')
-        company_name = company.get_text(strip=True) if company else '伟**际'
-        return [{
-            'current_home_odds': current_home,
-            'current_handicap': current_line,
-            'current_away_odds': current_away,
-            'initial_home_odds': initial_home,
-            'initial_handicap': initial_line,
-            'initial_away_odds': initial_away,
-            'home_odds': current_home,
-            'handicap': current_line,
-            'away_odds': current_away,
-            'source_company_id': OKOOO_PREFERRED_ODDS_COMPANY_ID,
-            'source_company_name': company_name,
-            'source_provider': 'okooo',
-            'source_fallback': True,
-        }]
+        rows = table.select('tbody tr')
+        ordered_rows = sorted(
+            rows,
+            key=lambda item: 0 if self._is_okooo_preferred_company(item) else 1,
+        )
+        for row in ordered_rows:
+            cells = row.find_all('td', recursive=False)
+            if len(cells) < 3:
+                continue
+            initial_home, initial_line, initial_away = parse_cell(cells[1])
+            current_home, current_line, current_away = parse_cell(cells[2])
+            if not (current_home and current_line and current_away):
+                continue
+            preferred = self._is_okooo_preferred_company(row)
+            company = row.find('a')
+            company_name = company.get_text(strip=True) if company else '首个有效公司'
+            return [{
+                'current_home_odds': current_home,
+                'current_handicap': current_line,
+                'current_away_odds': current_away,
+                'initial_home_odds': initial_home,
+                'initial_handicap': initial_line,
+                'initial_away_odds': initial_away,
+                'home_odds': current_home,
+                'handicap': current_line,
+                'away_odds': current_away,
+                'source_company_id': (
+                    OKOOO_PREFERRED_ODDS_COMPANY_ID if preferred else ''
+                ),
+                'source_company_name': company_name,
+                'source_provider': 'okooo',
+                'source_fallback': True,
+            }]
+        return []
 
     def parse_okooo_over_under(self, html_content):
-        """解析澳客公开大小球接口中的伟德初盘/即时盘。"""
+        """解析澳客大小球；优先伟德，缺失时取首个有效公司。"""
         soup = BeautifulSoup(html_content, 'lxml')
-        row = next(
-            (item for item in soup.select('tr')
-             if self._is_okooo_preferred_company(item)),
-            None,
-        )
-        if not row:
-            return []
-        cells = row.find_all('td', recursive=False)
-        if len(cells) < 3:
-            return []
 
         def parse_cell(cell, prefix):
             over = cell.select_one(f'.sort-{prefix}-daqiu')
@@ -942,27 +936,40 @@ class FootballCrawler:
                 self._okooo_water_to_hk(under.get_text(strip=True) if under else ''),
             )
 
-        initial_over, initial_total, initial_under = parse_cell(cells[1], 'chu')
-        current_over, current_total, current_under = parse_cell(cells[2], 'xin')
-        if not (current_over and current_total and current_under):
-            return []
-        company = row.find('a')
-        company_name = company.get_text(strip=True) if company else '伟**际'
-        return [{
-            'current_over_odds': current_over,
-            'current_total': current_total,
-            'current_under_odds': current_under,
-            'initial_over_odds': initial_over,
-            'initial_total': initial_total,
-            'initial_under_odds': initial_under,
-            'over_odds': current_over,
-            'total': current_total,
-            'under_odds': current_under,
-            'source_company_id': OKOOO_PREFERRED_ODDS_COMPANY_ID,
-            'source_company_name': company_name,
-            'source_provider': 'okooo',
-            'source_fallback': True,
-        }]
+        rows = soup.select('tr')
+        ordered_rows = sorted(
+            rows,
+            key=lambda item: 0 if self._is_okooo_preferred_company(item) else 1,
+        )
+        for row in ordered_rows:
+            cells = row.find_all('td', recursive=False)
+            if len(cells) < 3:
+                continue
+            initial_over, initial_total, initial_under = parse_cell(cells[1], 'chu')
+            current_over, current_total, current_under = parse_cell(cells[2], 'xin')
+            if not (current_over and current_total and current_under):
+                continue
+            preferred = self._is_okooo_preferred_company(row)
+            company = row.find('a')
+            company_name = company.get_text(strip=True) if company else '首个有效公司'
+            return [{
+                'current_over_odds': current_over,
+                'current_total': current_total,
+                'current_under_odds': current_under,
+                'initial_over_odds': initial_over,
+                'initial_total': initial_total,
+                'initial_under_odds': initial_under,
+                'over_odds': current_over,
+                'total': current_total,
+                'under_odds': current_under,
+                'source_company_id': (
+                    OKOOO_PREFERRED_ODDS_COMPANY_ID if preferred else ''
+                ),
+                'source_company_name': company_name,
+                'source_provider': 'okooo',
+                'source_fallback': True,
+            }]
+        return []
 
     def crawl_okooo_odds(self, match, need_asian=True, need_over_under=True):
         """从澳客补齐缺失的亚盘/大小球，不抓取或覆盖其他市场。"""
