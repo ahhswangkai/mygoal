@@ -4,7 +4,7 @@
 from flask import Flask, render_template, jsonify, request, Response, stream_with_context, session
 
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import wraps
 import base64
@@ -4696,6 +4696,10 @@ def _collect_match_candidates(match_num, match_info):
             ]
             if by_window:
                 candidates = by_window
+            else:
+                # 周X编号会周期性重复。日期附近没有场次时不能退回全量
+                # 历史数据继续撞库，否则新上传票据可能被归到几个月前。
+                return []
     else:
         # 周X编号每年会重复；票据缺少日期时，优先匹配最近几天的场次，避免串到历史年份。
         try:
@@ -4709,6 +4713,8 @@ def _collect_match_candidates(match_num, match_info):
         ]
         if by_recent_window:
             candidates = by_recent_window
+        else:
+            return []
     return candidates
 
 
@@ -4730,7 +4736,7 @@ def _resolve_ticket_match(item, warnings):
     }
     candidates = _collect_match_candidates(match_num, match_info)
     if not candidates:
-        return item.get('match') if isinstance(item.get('match'), dict) else None
+        return None
 
     home_key = _normalize_match_text(match_info['home_team'])
     away_key = _normalize_match_text(match_info['away_team'])
@@ -4778,23 +4784,31 @@ def _resolve_ticket_match(item, warnings):
     scored.sort(key=lambda item: item[1], reverse=True)
     if scored:
         best, score = scored[0]
-        if score <= 0:
-            warnings.append('未能匹配到对应场次，默认保留票据中的场次字段')
-            return {
-                'match_number': match_num,
-                'owner_date': match_info.get('date'),
-                'home_team': match_info.get('home_team'),
-                'away_team': match_info.get('away_team'),
-            }
+        # A repeating 周X编号 by itself is not a reliable identity. Require
+        # either date confirmation or usable team-name evidence as well.
+        if score < 12:
+            return None
         if len(scored) > 1 and scored[1][1] == score:
-            warnings.append('存在同名场次匹配，已按最高置信度匹配，建议核对')
+            warnings.append('存在同分场次，无法可靠匹配')
+            return None
         return best
-    return {
-        'match_number': match_num,
-        'owner_date': match_info.get('date'),
-        'home_team': match_info.get('home_team'),
-        'away_team': match_info.get('away_team'),
-    }
+    return None
+
+
+def _ticket_upload_context(data):
+    """Return the original upload timestamp and its China-local calendar day."""
+    raw_value = _safe_text(data.get('uploaded_at') or data.get('created_at') or '')
+    try:
+        value = datetime.fromisoformat(raw_value.replace('Z', '+00:00'))
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=app_timezone())
+    except (TypeError, ValueError):
+        value = datetime.now(app_timezone())
+    local_value = value.astimezone(app_timezone()).replace(microsecond=0)
+    uploaded_at = (
+        local_value.astimezone(timezone.utc).replace(tzinfo=None).isoformat() + 'Z'
+    )
+    return uploaded_at, local_value.date().isoformat()
 
 
 def _normalize_ticket_payload(data):
@@ -4809,6 +4823,7 @@ def _normalize_ticket_payload(data):
     total_odds = 1.0
     warnings = list(data.get('warnings') or [])
     ticket_date = _safe_text(data.get('ticket_date') or data.get('date') or '')
+    uploaded_at, upload_date = _ticket_upload_context(data)
 
     for item in raw_items:
         if not isinstance(item, dict):
@@ -4840,6 +4855,7 @@ def _normalize_ticket_payload(data):
 
         match_info = item.get('match') if isinstance(item.get('match'), dict) else {}
         resolved = _resolve_ticket_match(item, warnings)
+        match_resolved = isinstance(resolved, dict)
         if isinstance(resolved, dict):
             date_value = (
                 resolved.get('owner_date')
@@ -4864,7 +4880,9 @@ def _normalize_ticket_payload(data):
                 )
             )
         else:
-            date_value = item.get('date') or match_info.get('date')
+            # 保留票据，但找不到可靠比赛时按上传日归档，不能相信 OCR
+            # 中可能误识别的年份，也不能跨月/跨年碰撞同一个周X编号。
+            date_value = upload_date
             handicap = item.get('handicap') or match_info.get('handicap')
             match_num = match_info.get('match_num') or item.get('match_num')
             league = match_info.get('league') or ''
@@ -4872,6 +4890,11 @@ def _normalize_ticket_payload(data):
             away_team = match_info.get('away_team') or item.get('away_team') or ''
             time_value = match_info.get('time') or ''
             match_id = ''
+            warning = '场次{}未可靠匹配，已按上传日期{}归档'.format(
+                match_num or '', upload_date
+            )
+            if warning not in warnings:
+                warnings.append(warning)
 
         if pool == 'hhad':
             handicap = _normalize_ticket_handicap_sign(handicap, item)
@@ -4899,6 +4922,8 @@ def _normalize_ticket_payload(data):
             'date': _safe_text(date_value)[:16],
             'time': _safe_text(time_value)[:16],
             'handicap': _safe_float(handicap),
+            'match_resolved': match_resolved,
+            'date_source': 'match' if match_resolved else 'upload',
             'match': {
                 'num': match_num,
                 'league': league,
@@ -4970,7 +4995,8 @@ def _normalize_ticket_payload(data):
             ),
             multiplier,
         ),
-        'created_at': datetime.utcnow().replace(microsecond=0).isoformat() + 'Z',
+        'created_at': uploaded_at,
+        'uploaded_at': uploaded_at,
         'warnings': warnings,
     }
 

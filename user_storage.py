@@ -141,6 +141,11 @@ class UserStorage:
         for item in selected_items or []:
             if not isinstance(item, dict):
                 continue
+            # OCR imports that could not be matched safely use the upload day
+            # for display only.  They must not be treated as verified fixture
+            # dates by this migration/filing helper.
+            if item.get('match_resolved') is False or item.get('date_source') == 'upload':
+                continue
             match = item.get('match') if isinstance(item.get('match'), dict) else {}
             value = str(item.get('date') or match.get('date') or '')[:10]
             try:

@@ -305,6 +305,46 @@ class BetSettlementTests(unittest.TestCase):
 
 
 class UserStorageSettlementTests(unittest.TestCase):
+    def test_unmatched_ticket_is_filed_under_upload_date(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = os.path.join(directory, 'users.db')
+            storage = UserStorage(database_path)
+            user = storage.create_user('unmatched', '未匹配票据', 'secret123')
+            selected = [{
+                **item('local-1', 'hhad', 'draw', 3.46),
+                'date': '2026-08-04',
+                'match_resolved': False,
+                'date_source': 'upload',
+                'match': {'date': '2026-08-04'},
+            }]
+            bet = {
+                'id': 'unmatched-bet',
+                'status': 'pending',
+                'multiplier': 1,
+                'pass_counts': [1],
+                'selected_items': selected,
+                'match_count': 1,
+                'option_count': 1,
+                'notes': 1,
+                'stake': 2,
+                'total_odds': 3.46,
+                'max_bonus': 0,
+                'description': '1场 · 单关 · 1倍',
+                'created_at': '2026-08-04T00:54:49Z',
+            }
+
+            saved = storage.create_bet(user['id'], bet)
+            self.assertEqual(saved['created_at'], '2026-08-04T00:54:49Z')
+
+            # Reopening storage reruns legacy repair; the upload date must
+            # remain stable rather than being interpreted as a match date.
+            repaired = UserStorage(database_path).list_bets(user['id'])[0]
+            self.assertEqual(repaired['created_at'], '2026-08-04T00:54:49Z')
+            self.assertEqual(
+                UserStorage(database_path).get_stats(user['id'])['daily'][0]['date'],
+                '2026-08-04',
+            )
+
     def test_storage_files_bet_under_dominant_match_date(self):
         with tempfile.TemporaryDirectory() as directory:
             storage = UserStorage(os.path.join(directory, 'users.db'))
