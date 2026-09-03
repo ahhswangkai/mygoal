@@ -847,15 +847,34 @@ class FootballCrawler:
         ]
         if not candidates:
             return ''
+        owner_weekday = ''
+        if owner_date:
+            try:
+                owner_weekday = '一二三四五六日'[
+                    datetime.strptime(owner_date, '%Y-%m-%d').weekday()
+                ]
+            except (TypeError, ValueError):
+                owner_weekday = ''
+        number_weekday_match = bool(
+            owner_weekday
+            and target_number.startswith(f'周{owner_weekday}')
+        )
         # 澳客的竞彩列表会跨自然日展示下一比赛日，页面 lotterNo 仍可能是
         # 前一天。日期一致时唯一场次号即可确认；日期不一致时继续使用
-        # 球队或开赛时间校验，避免把有效的跨日比赛直接过滤掉。
-        if len(candidates) == 1 and list_date and owner_date and list_date == owner_date:
+        # 比赛日期的星期、球队或开赛时间校验，避免把有效的跨日比赛过滤掉。
+        if len(candidates) == 1 and (
+            (list_date and owner_date and list_date == owner_date)
+            or number_weekday_match
+        ):
             return candidates[0].get('okooo_match_id', '')
 
         target_home = self._normalize_team_name(match.get('home_team'))
         target_away = self._normalize_team_name(match.get('away_team'))
-        target_time = str(match.get('match_time') or '')[-5:]
+        time_matches = re.findall(
+            r'(?<!\d)([01]\d|2[0-3]):[0-5]\d',
+            str(match.get('match_time') or ''),
+        )
+        target_time = time_matches[-1] if time_matches else ''
         for item in candidates:
             item_home = self._normalize_team_name(item.get('home_team'))
             item_away = self._normalize_team_name(item.get('away_team'))

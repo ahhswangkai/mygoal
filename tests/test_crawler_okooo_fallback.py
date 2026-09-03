@@ -121,6 +121,19 @@ class OkoooFallbackTest(unittest.TestCase):
 
         self.assertEqual(result, '1346795')
 
+    def test_resolves_cross_date_listing_when_owner_weekday_matches(self):
+        listing = self.crawler.parse_okooo_match_list(OKOOO_LIST_HTML)
+        self.crawler.get_okooo_match_list = lambda: listing
+
+        result = self.crawler.resolve_okooo_match_id({
+            'owner_date': '2026-09-02',
+            'match_number': '周三005',
+            'home_team': '不同译名A',
+            'away_team': '不同译名B',
+        })
+
+        self.assertEqual(result, '1346795')
+
     def test_parses_weide_asian_and_converts_water(self):
         result = self.crawler.parse_okooo_asian_handicap(OKOOO_ASIAN_HTML)[0]
 
