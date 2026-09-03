@@ -442,6 +442,15 @@ class MongoDBStorage:
         """
         try:
             update_fields = {'updated_at': datetime.now()}
+
+            if odds_data.get('sporttery_match_id'):
+                update_fields['sporttery_match_id'] = str(
+                    odds_data['sporttery_match_id']
+                )
+            if odds_data.get('okooo_match_id'):
+                update_fields['okooo_match_id'] = str(
+                    odds_data['okooo_match_id']
+                )
             
             # 更新时间字段（如果有）
             if 'euro_odds_update_time' in odds_data:
@@ -458,8 +467,14 @@ class MongoDBStorage:
                     'euro_current_lose': euro.get('current_lose', ''),
                     'euro_initial_win': euro.get('initial_win', ''),
                     'euro_initial_draw': euro.get('initial_draw', ''),
-                    'euro_initial_lose': euro.get('initial_lose', '')
+                    'euro_initial_lose': euro.get('initial_lose', ''),
+                    'euro_win_flag': euro.get('win_flag', 0),
+                    'euro_draw_flag': euro.get('draw_flag', 0),
+                    'euro_lose_flag': euro.get('lose_flag', 0),
+                    'euro_source_provider': euro.get('source_provider', ''),
                 })
+                if euro.get('updated_at'):
+                    update_fields['euro_odds_update_time'] = euro['updated_at']
             
             # 亚盘
             if odds_data.get('asian_handicap') and len(odds_data['asian_handicap']) > 0:
@@ -473,6 +488,7 @@ class MongoDBStorage:
                     'asian_initial_away_odds': asian.get('initial_away_odds', ''),
                     'asian_source_company_id': asian.get('source_company_id', ''),
                     'asian_source_company_name': asian.get('source_company_name', ''),
+                    'asian_source_provider': asian.get('source_provider', ''),
                     'asian_source_fallback': asian.get('source_fallback', False),
                 })
             
@@ -488,6 +504,7 @@ class MongoDBStorage:
                     'ou_initial_under_odds': ou.get('initial_under_odds', ''),
                     'ou_source_company_id': ou.get('source_company_id', ''),
                     'ou_source_company_name': ou.get('source_company_name', ''),
+                    'ou_source_provider': ou.get('source_provider', ''),
                     'ou_source_fallback': ou.get('source_fallback', False),
                 })
             
@@ -501,8 +518,14 @@ class MongoDBStorage:
                     'hi_current_away_odds': hi.get('current_away_odds', ''),
                     'hi_initial_home_odds': hi.get('initial_home_odds', ''),
                     'hi_initial_draw_odds': hi.get('initial_draw_odds', ''),
-                    'hi_initial_away_odds': hi.get('initial_away_odds', '')
+                    'hi_initial_away_odds': hi.get('initial_away_odds', ''),
+                    'hi_home_flag': hi.get('home_flag', 0),
+                    'hi_draw_flag': hi.get('draw_flag', 0),
+                    'hi_away_flag': hi.get('away_flag', 0),
+                    'hi_source_provider': hi.get('source_provider', ''),
                 })
+                if hi.get('updated_at'):
+                    update_fields['odds_update_time'] = hi['updated_at']
             
             # 计算盘口变动标签
             asian_label = self._calc_asian_movement_label(update_fields)

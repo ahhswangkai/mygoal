@@ -174,21 +174,20 @@ class OkoooFallbackTest(unittest.TestCase):
         self.assertEqual(result['initial_total'], '2.25')
         self.assertEqual(result['current_total'], '2.50')
 
-    def test_only_fills_missing_markets(self):
-        existing_asian = [{'current_handicap': '半球'}]
-
-        def fake_fetch(url, parser, retries=3):
-            if 'ouzhi-' in url:
-                return {'euro_odds': []}
-            if 'yazhi-' in url:
-                return existing_asian
-            return None
-
-        self.crawler._fetch_data = fake_fetch
-        self.crawler._parse_chinese_handicap = lambda value: 0.5
+    def test_uses_sporttery_and_okooo_without_500_odds_pages(self):
+        self.crawler._fetch_data = lambda *args, **kwargs: self.fail(
+            '不应再请求500赔率页面'
+        )
         calls = []
 
-        def fake_fallback(match, need_asian=True, need_over_under=True):
+        def fake_sporttery(match):
+            return {
+                'euro_odds': [{'current_win': '2.10'}],
+                'handicap_index': {'handicap_value': '-1'},
+                'sporttery_match_id': '2041234',
+            }
+
+        def fake_okooo(match, need_asian=True, need_over_under=True):
             calls.append((need_asian, need_over_under))
             return {
                 'asian_handicap': [{'current_handicap': '一球'}],
@@ -196,15 +195,20 @@ class OkoooFallbackTest(unittest.TestCase):
                 'okooo_match_id': '1346795',
             }
 
-        self.crawler.crawl_okooo_odds = fake_fallback
+        self.crawler.crawl_sporttery_odds = fake_sporttery
+        self.crawler.crawl_okooo_odds = fake_okooo
         result = self.crawler.crawl_match_odds(
             '500-id',
             match={'match_number': '周三005'},
         )
 
-        self.assertEqual(calls, [(False, True)])
-        self.assertIs(result['asian_handicap'], existing_asian)
+        self.assertEqual(calls, [(True, True)])
+        self.assertEqual(result['euro_odds'][0]['current_win'], '2.10')
+        self.assertEqual(result['handicap_index']['handicap_value'], '-1')
+        self.assertEqual(result['asian_handicap'][0]['current_handicap'], '一球')
         self.assertEqual(result['over_under'][0]['current_total'], '2.25')
+        self.assertEqual(result['sporttery_match_id'], '2041234')
+        self.assertEqual(result['okooo_match_id'], '1346795')
 
 
 if __name__ == '__main__':

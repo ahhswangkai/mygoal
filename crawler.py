@@ -28,6 +28,13 @@ OKOOO_LIST_CACHE_SECONDS = 300
 _OKOOO_LIST_CACHE = {'fetched_at': 0.0, 'data': None}
 _OKOOO_LIST_CACHE_LOCK = threading.Lock()
 _OKOOO_REQUEST_SEMAPHORE = threading.BoundedSemaphore(2)
+SPORTTERY_CALCULATOR_URL = (
+    'https://webapi.sporttery.cn/gateway/uniform/football/'
+    'getMatchCalculatorV1.qry'
+)
+SPORTTERY_CALCULATOR_CACHE_SECONDS = 60
+_SPORTTERY_CALCULATOR_CACHE = {'fetched_at': 0.0, 'data': None}
+_SPORTTERY_CALCULATOR_CACHE_LOCK = threading.Lock()
 
 
 def clean_asian_handicap(value):
@@ -61,6 +68,9 @@ class FootballCrawler:
         self.logger = setup_logger()
         self.mongo_storage = mongo_storage
         self.session = requests.Session()
+        # 体彩接口必须直连，避免服务器代理触发 WAF 或超时。
+        self.sporttery_session = requests.Session()
+        self.sporttery_session.trust_env = False
         self.ua = UserAgent()
         self.headers = REQUEST_HEADERS.copy()
         self.host_last_ts = {}
@@ -765,6 +775,207 @@ class FootballCrawler:
         name = company.get_text(strip=True) if company else ''
         compact = name.replace('*', '').replace(' ', '')
         return compact.startswith('伟') and compact.endswith('际')
+
+    @staticmethod
+    def _sporttery_update_time(market):
+        market = market if isinstance(market, dict) else {}
+        date = str(market.get('updateDate') or '').strip()
+        time_text = str(market.get('updateTime') or '').strip()
+        if date and time_text:
+            return f'{date} {time_text}'
+        return date or time_text
+
+    @staticmethod
+    def _valid_sporttery_triplet(market):
+        market = market if isinstance(market, dict) else {}
+        values = [market.get('h'), market.get('d'), market.get('a')]
+        try:
+            return all(float(value) > 0 for value in values)
+        except (TypeError, ValueError):
+            return False
+
+    def parse_sporttery_calculator(self, payload):
+        """解析体彩计算器 HAD/HHAD，并保留官方场次身份。"""
+        root = payload if isinstance(payload, dict) else {}
+        if isinstance(root.get('data'), dict):
+            root = root['data']
+        value = root.get('value') if isinstance(root.get('value'), dict) else root
+        groups = value.get('matchInfoList') if isinstance(value, dict) else []
+        matches = []
+        for group in groups or []:
+            business_date = str((group or {}).get('businessDate') or '')[:10]
+            for item in (group or {}).get('subMatchList') or []:
+                number = self._normalize_match_number(item.get('matchNumStr'))
+                if not number:
+                    continue
+                matches.append({
+                    'sporttery_match_id': str(item.get('matchId') or ''),
+                    'match_number': number,
+                    'owner_date': str(item.get('businessDate') or business_date)[:10],
+                    'match_time': str(item.get('matchTime') or '')[:5],
+                    'home_team': (
+                        item.get('homeTeamAbbName')
+                        or item.get('homeTeamAllName')
+                        or ''
+                    ),
+                    'away_team': (
+                        item.get('awayTeamAbbName')
+                        or item.get('awayTeamAllName')
+                        or ''
+                    ),
+                    'league': (
+                        item.get('leagueAbbName')
+                        or item.get('leagueAllName')
+                        or ''
+                    ),
+                    'had': item.get('had') if isinstance(item.get('had'), dict) else {},
+                    'hhad': item.get('hhad') if isinstance(item.get('hhad'), dict) else {},
+                })
+        return {'matches': matches}
+
+    def get_sporttery_calculator_list(self, force=False):
+        """获取并短时缓存体彩官方胜平负、让球胜平负数据。"""
+        now = time.time()
+        with _SPORTTERY_CALCULATOR_CACHE_LOCK:
+            cached = _SPORTTERY_CALCULATOR_CACHE.get('data')
+            if (
+                not force and cached
+                and now - float(
+                    _SPORTTERY_CALCULATOR_CACHE.get('fetched_at') or 0
+                ) < SPORTTERY_CALCULATOR_CACHE_SECONDS
+            ):
+                return cached
+            response = self.sporttery_session.get(
+                SPORTTERY_CALCULATOR_URL,
+                params={'poolCode': 'had,hhad'},
+                headers={
+                    'User-Agent': OKOOO_MOBILE_USER_AGENT,
+                    'Referer': 'https://www.sporttery.cn/',
+                },
+                timeout=REQUEST_TIMEOUT,
+            )
+            response.raise_for_status()
+            payload = response.json()
+            if not payload.get('success'):
+                raise ValueError(
+                    payload.get('errorMessage') or '体彩计算器返回失败'
+                )
+            data = self.parse_sporttery_calculator(payload)
+            if data.get('matches'):
+                _SPORTTERY_CALCULATOR_CACHE['data'] = data
+                _SPORTTERY_CALCULATOR_CACHE['fetched_at'] = time.time()
+            return data
+
+    def resolve_sporttery_match(self, match):
+        """用日期和竞彩场次号映射体彩计算器比赛。"""
+        if not isinstance(match, dict):
+            return None
+        listing = self.get_sporttery_calculator_list()
+        target_number = self._normalize_match_number(match.get('match_number'))
+        candidates = [
+            item for item in listing.get('matches', [])
+            if item.get('match_number') == target_number
+        ]
+        if not candidates:
+            return None
+        owner_date = str(match.get('owner_date') or '')[:10]
+        exact_date = [
+            item for item in candidates
+            if owner_date and item.get('owner_date') == owner_date
+        ]
+        if len(exact_date) == 1:
+            return exact_date[0]
+        if len(candidates) == 1:
+            return candidates[0]
+
+        stored_id = str(match.get('sporttery_match_id') or '')
+        if stored_id:
+            stored = next(
+                (
+                    item for item in candidates
+                    if item.get('sporttery_match_id') == stored_id
+                ),
+                None,
+            )
+            if stored:
+                return stored
+        return None
+
+    @staticmethod
+    def _initial_or_current(match, field, current):
+        existing = str((match or {}).get(field) or '').strip()
+        return existing or str(current or '').strip()
+
+    def crawl_sporttery_odds(self, match):
+        """读取官方计算器的胜平负和让球胜平负赔率。"""
+        result = {'euro_odds': [], 'handicap_index': {}}
+        item = self.resolve_sporttery_match(match)
+        if not item:
+            self.logger.warning(
+                f"体彩计算器未匹配到场次: {match.get('match_number', '')}"
+            )
+            return result
+
+        had = item.get('had') or {}
+        if self._valid_sporttery_triplet(had):
+            current_win = str(had.get('h'))
+            current_draw = str(had.get('d'))
+            current_lose = str(had.get('a'))
+            result['euro_odds'] = [{
+                'current_win': current_win,
+                'current_draw': current_draw,
+                'current_lose': current_lose,
+                'initial_win': self._initial_or_current(
+                    match, 'euro_initial_win', current_win
+                ),
+                'initial_draw': self._initial_or_current(
+                    match, 'euro_initial_draw', current_draw
+                ),
+                'initial_lose': self._initial_or_current(
+                    match, 'euro_initial_lose', current_lose
+                ),
+                'win': current_win,
+                'draw': current_draw,
+                'lose': current_lose,
+                'win_flag': int(had.get('hf') or 0),
+                'draw_flag': int(had.get('df') or 0),
+                'lose_flag': int(had.get('af') or 0),
+                'updated_at': self._sporttery_update_time(had),
+                'source_provider': 'sporttery-calculator',
+            }]
+
+        hhad = item.get('hhad') or {}
+        if self._valid_sporttery_triplet(hhad):
+            current_home = str(hhad.get('h'))
+            current_draw = str(hhad.get('d'))
+            current_away = str(hhad.get('a'))
+            result['handicap_index'] = {
+                'handicap_value': (
+                    hhad.get('goalLineValue') or hhad.get('goalLine') or ''
+                ),
+                'current_home_odds': current_home,
+                'current_draw_odds': current_draw,
+                'current_away_odds': current_away,
+                'initial_home_odds': self._initial_or_current(
+                    match, 'hi_initial_home_odds', current_home
+                ),
+                'initial_draw_odds': self._initial_or_current(
+                    match, 'hi_initial_draw_odds', current_draw
+                ),
+                'initial_away_odds': self._initial_or_current(
+                    match, 'hi_initial_away_odds', current_away
+                ),
+                'home_odds': current_home,
+                'draw_odds': current_draw,
+                'away_odds': current_away,
+                'home_flag': int(hhad.get('hf') or 0),
+                'draw_flag': int(hhad.get('df') or 0),
+                'away_flag': int(hhad.get('af') or 0),
+                'updated_at': self._sporttery_update_time(hhad),
+                'source_provider': 'sporttery-calculator',
+            }
+        result['sporttery_match_id'] = item.get('sporttery_match_id', '')
+        return result
 
     def parse_okooo_match_list(self, html_content):
         """解析澳客竞彩列表，建立官方场次号到澳客 MatchID 的映射。"""
@@ -1522,73 +1733,11 @@ class FootballCrawler:
                     except Exception as e:
                         self.logger.error(f"抓取比赛 {match_id} 详情失败: {e}")
             else:
-                # 实时模式: XML获取赔率
-                try:
-                    odds_data = self.crawl_match_odds_xml()
-                    euro_odds_data = self.crawl_euro_odds_xml()
-                    over_under_data = self.crawl_over_under_xml()
-
-                    for match in matches:
-                        order = match.get('match_number', '')
-                        if not order: continue
-
-                        # 转换场次号
-                        day_map = {'周一': '1', '周二': '2', '周三': '3', '周四': '4', '周五': '5', '周六': '6', '周日': '7'}
-                        matchnum = ''
-                        for day_cn, day_num in day_map.items():
-                            if order.startswith(day_cn):
-                                num_part = order[len(day_cn):]
-                                matchnum = day_num + num_part
-                                break
-
-                        if matchnum:
-                            if matchnum in odds_data:
-                                odd_info = odds_data[matchnum]
-                                if 'currodds' in odd_info: match['handicap_odds'] = odd_info['currodds']
-                                if 'updatetime' in odd_info: match['odds_update_time'] = odd_info['updatetime']
-                                if 'initial_win' in odd_info:
-                                    match['hi_initial_home_odds'] = odd_info['initial_win']
-                                    match['hi_initial_draw_odds'] = odd_info['initial_draw']
-                                    match['hi_initial_away_odds'] = odd_info['initial_lost']
-                                if 'current_win' in odd_info:
-                                    match['hi_current_home_odds'] = odd_info['current_win']
-                                    match['hi_current_draw_odds'] = odd_info['current_draw']
-                                    match['hi_current_away_odds'] = odd_info['current_lost']
-
-                            if matchnum in euro_odds_data:
-                                euro_info = euro_odds_data[matchnum]
-                                if 'currodds' in euro_info: match['euro_odds'] = euro_info['currodds']
-                                if 'updatetime' in euro_info: match['euro_odds_update_time'] = euro_info['updatetime']
-                                if 'initial_win' in euro_info:
-                                    match['euro_initial_win'] = euro_info['initial_win']
-                                    match['euro_initial_draw'] = euro_info['initial_draw']
-                                    match['euro_initial_lose'] = euro_info['initial_lost']
-                                if 'current_win' in euro_info:
-                                    match['euro_current_win'] = euro_info['current_win']
-                                    match['euro_current_draw'] = euro_info['current_draw']
-                                    match['euro_current_lose'] = euro_info['current_lost']
-
-                            if matchnum in over_under_data:
-                                ou_info = over_under_data[matchnum]
-                                if 'updatetime' in ou_info:
-                                    match['ou_odds_update_time'] = ou_info['updatetime']
-                                if 'initial_over' in ou_info:
-                                    match['ou_initial_over_odds'] = ou_info['initial_over']
-                                    match['ou_initial_total'] = ou_info['initial_total']
-                                    match['ou_initial_under_odds'] = ou_info['initial_under']
-                                if 'current_over' in ou_info:
-                                    match['ou_current_over_odds'] = ou_info['current_over']
-                                    match['ou_current_total'] = ou_info['current_total']
-                                    match['ou_current_under_odds'] = ou_info['current_under']
-                                if 'current_over' in ou_info and 'current_total' in ou_info and 'current_under' in ou_info:
-                                    match['ou_odds'] = f"{match['ou_current_over_odds']}/{match['ou_current_total']}/{match['ou_current_under_odds']}"
-
-                        # 保存更新后的比赛数据
-                        if self.mongo_storage:
-                            self.mongo_storage.save_match(match)
-
-                except Exception as e:
-                    self.logger.error(f"获取XML赔率数据失败: {str(e)}")
+                # 当天赔率由 crawl_match_odds 统一从体彩计算器与澳客读取。
+                # 列表解析阶段不再请求 500 的赔率 XML，避免重复和来源混用。
+                self.logger.info(
+                    '比赛列表解析完成，详细赔率交由体彩计算器/澳客流程更新'
+                )
             
             return matches
         except Exception as e:
@@ -1645,7 +1794,13 @@ class FootballCrawler:
 
     def crawl_match_odds(self, match_id, match=None):
         """
-        爬取指定比赛的赔率信息（包含即时盘和初盘）
+        爬取指定比赛的赔率信息。
+
+        数据源：
+        - 体彩计算器：胜平负、让球胜平负
+        - 澳客：亚盘、大小球
+
+        此流程不再请求 500 赔率页面。
         
         Args:
             match_id: 比赛ID
@@ -1661,63 +1816,44 @@ class FootballCrawler:
         }
         
         try:
-            # 1. 爬取欧赔（使用欧赔专门页面）
-            euro_url = f"https://odds.500.com/fenxi/ouzhi-{match_id}.shtml"
-            euro_data = self._fetch_data(euro_url, self.parse_odds)
-            if euro_data and euro_data.get('euro_odds'):
-                odds_data['euro_odds'] = euro_data['euro_odds']
-            
-            # 2. 爬取亚盘（使用亚盘专门页面）
-            asian_url = f"https://odds.500.com/fenxi/yazhi-{match_id}.shtml"
-            asian_data = self._fetch_data(asian_url, self.parse_asian_handicap)
-            if asian_data:
-                odds_data['asian_handicap'] = asian_data
-            
-            # 3. 爬取大小球（使用大小球专门页面）
-            over_under_url = f"https://odds.500.com/fenxi/daxiao-{match_id}.shtml"
-            over_under_data = self._fetch_data(over_under_url, self.parse_over_under)
-            if over_under_data:
-                odds_data['over_under'] = over_under_data
-            
-            # 4. 500 缺失时才使用澳客补齐亚盘/大小球。澳客 MatchID 与
-            # 500 fid 不同，因此必须通过包含日期/场次号的 match 映射。
-            need_asian = not odds_data.get('asian_handicap')
-            need_over_under = not odds_data.get('over_under')
-            if match and (need_asian or need_over_under):
-                try:
-                    fallback = self.crawl_okooo_odds(
-                        match,
-                        need_asian=need_asian,
-                        need_over_under=need_over_under,
-                    )
-                    if need_asian and fallback.get('asian_handicap'):
-                        odds_data['asian_handicap'] = fallback['asian_handicap']
-                    if need_over_under and fallback.get('over_under'):
-                        odds_data['over_under'] = fallback['over_under']
-                    if fallback.get('okooo_match_id'):
-                        odds_data['okooo_match_id'] = fallback['okooo_match_id']
-                except Exception as exc:
-                    self.logger.warning(f'澳客赔率补源失败 {match_id}: {exc}')
+            if not match:
+                self.logger.warning(
+                    f'缺少比赛场次信息，无法映射赔率数据源: {match_id}'
+                )
+                return odds_data
 
-            # 5. 爬取让球指数（使用让球指数专门页面）
-            asian_hint = None
-            if odds_data.get('asian_handicap'):
-                ah_list = odds_data['asian_handicap']
-                if ah_list:
-                    h_str = ah_list[0].get('initial_handicap') or ah_list[0].get('current_handicap')
-                    if h_str:
-                        asian_hint = self._parse_chinese_handicap(h_str)
+            # 1. 竞彩官方固定赔率。
+            try:
+                sporttery = self.crawl_sporttery_odds(match)
+                if sporttery.get('euro_odds'):
+                    odds_data['euro_odds'] = sporttery['euro_odds']
+                if sporttery.get('handicap_index'):
+                    odds_data['handicap_index'] = sporttery['handicap_index']
+                if sporttery.get('sporttery_match_id'):
+                    odds_data['sporttery_match_id'] = sporttery[
+                        'sporttery_match_id'
+                    ]
+            except Exception as exc:
+                self.logger.warning(f'体彩计算器赔率获取失败 {match_id}: {exc}')
 
-            handicap_index_url = f"https://odds.500.com/fenxi/rangqiu-{match_id}.shtml"
-            handicap_index_data = self._fetch_data(
-                handicap_index_url, 
-                lambda html: self.parse_handicap_index(html, asian_hint=asian_hint)
-            )
-            if handicap_index_data:
-                odds_data['handicap_index'] = handicap_index_data
-            
+            # 2. 澳客作为亚盘、大小球主数据源，不再等待其他来源失败后回退。
+            try:
+                okooo = self.crawl_okooo_odds(
+                    match,
+                    need_asian=True,
+                    need_over_under=True,
+                )
+                if okooo.get('asian_handicap'):
+                    odds_data['asian_handicap'] = okooo['asian_handicap']
+                if okooo.get('over_under'):
+                    odds_data['over_under'] = okooo['over_under']
+                if okooo.get('okooo_match_id'):
+                    odds_data['okooo_match_id'] = okooo['okooo_match_id']
+            except Exception as exc:
+                self.logger.warning(f'澳客赔率获取失败 {match_id}: {exc}')
+
             return odds_data
-            
+
         except Exception as e:
             self.logger.error(f"爬取赔率信息失败: {str(e)}")
             return {}
@@ -1999,6 +2135,10 @@ class FootballCrawler:
         """将爬取的详细赔率数据映射到比赛对象"""
         if odds_details.get('okooo_match_id'):
             match['okooo_match_id'] = str(odds_details['okooo_match_id'])
+        if odds_details.get('sporttery_match_id'):
+            match['sporttery_match_id'] = str(
+                odds_details['sporttery_match_id']
+            )
         # 1. 欧赔
         if odds_details.get('euro_odds'):
             euro = odds_details['euro_odds'][0]
@@ -2008,6 +2148,14 @@ class FootballCrawler:
             match['euro_initial_win'] = euro.get('initial_win')
             match['euro_initial_draw'] = euro.get('initial_draw')
             match['euro_initial_lose'] = euro.get('initial_lose')
+            match['euro_win_flag'] = euro.get('win_flag', 0)
+            match['euro_draw_flag'] = euro.get('draw_flag', 0)
+            match['euro_lose_flag'] = euro.get('lose_flag', 0)
+            match['euro_source_provider'] = euro.get(
+                'source_provider', 'sporttery-calculator'
+            )
+            if euro.get('updated_at'):
+                match['euro_odds_update_time'] = euro['updated_at']
             match['euro_odds'] = f"{match['euro_current_win']}/{match['euro_current_draw']}/{match['euro_current_lose']}"
             
         # 2. 亚盘
@@ -2051,6 +2199,14 @@ class FootballCrawler:
             match['hi_current_draw_odds'] = hi.get('current_draw_odds')
             match['hi_current_away_odds'] = hi.get('current_away_odds')
             match['hi_handicap_value'] = hi.get('handicap_value')
+            match['hi_home_flag'] = hi.get('home_flag', 0)
+            match['hi_draw_flag'] = hi.get('draw_flag', 0)
+            match['hi_away_flag'] = hi.get('away_flag', 0)
+            match['hi_source_provider'] = hi.get(
+                'source_provider', 'sporttery-calculator'
+            )
+            if hi.get('updated_at'):
+                match['odds_update_time'] = hi['updated_at']
 
     def update_single_match_odds(self, match):
         """
@@ -2071,4 +2227,6 @@ class FootballCrawler:
     def close(self):
         """关闭会话"""
         self.session.close()
+        if getattr(self, 'sporttery_session', None):
+            self.sporttery_session.close()
         self.logger.info("爬虫会话已关闭")

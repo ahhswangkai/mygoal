@@ -47,7 +47,7 @@ def crawl_single_match_odds(match, index, total, logger):
             logger.info(f"[{index}/{total}] 爬取比赛 {match_id} ({match.get('home_team', '')} vs {match.get('away_team', '')}) [{status_label}] 的赔率")
         
         # 爬取赔率数据
-        odds = crawler.crawl_match_odds(match_id)
+        odds = crawler.crawl_match_odds(match_id, match=match)
         
         if odds and (odds.get('euro_odds') or odds.get('asian_handicap') or odds.get('over_under')):
             # 显示赔率信息
