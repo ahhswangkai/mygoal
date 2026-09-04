@@ -5341,12 +5341,13 @@ def _calculator_draft_live_matches(draft):
     return live_matches
 
 
-def _calculator_draft_started(draft, now=None):
+def _calculator_draft_started(draft, now=None, live_matches=None):
     """A multi-match observation expires as soon as any leg has started."""
     current = now or datetime.now(app_timezone())
     if current.tzinfo is None:
         current = current.replace(tzinfo=app_timezone())
-    live_matches = _calculator_draft_live_matches(draft)
+    if live_matches is None:
+        live_matches = _calculator_draft_live_matches(draft)
     for item in draft.get('selected_items') or []:
         match_id = str(item.get('match_id') or '')
         live = live_matches.get(match_id)
@@ -5365,13 +5366,28 @@ def _calculator_draft_started(draft, now=None):
 
 def _active_calculator_drafts(user_id):
     records = user_storage.list_drafts(user_id)
-    expired_ids = [
-        draft['id'] for draft in records
-        if _calculator_draft_started(draft)
-    ]
+    expired_ids = []
+    active_records = []
+    for draft in records:
+        live_matches = _calculator_draft_live_matches(draft)
+        if _calculator_draft_started(draft, live_matches=live_matches):
+            expired_ids.append(draft['id'])
+            continue
+        # Calculator match ids and the ids used by the analysis database can
+        # differ.  Attach the resolved id for lazy loading the expandable
+        # analysis panel without changing the stored draft payload.
+        for item in draft.get('selected_items') or []:
+            match_id = str(item.get('match_id') or '')
+            live = live_matches.get(match_id) or {}
+            item['detail_match_id'] = str(
+                live.get('match_id') or match_id
+            )
+            if live.get('status') is not None:
+                item['current_status'] = live.get('status')
+        active_records.append(draft)
     if expired_ids:
         user_storage.delete_drafts(user_id, expired_ids)
-    return [draft for draft in records if draft['id'] not in expired_ids]
+    return active_records
 
 
 @app.route('/api/user/bets', methods=['POST'])

@@ -130,6 +130,48 @@ class UserDraftApiTests(unittest.TestCase):
         self.assertEqual(response.get_json()['count'], 0)
         self.assertEqual(web_app.user_storage.list_drafts(self.user['id']), [])
 
+    def test_active_draft_exposes_resolved_analysis_match_id(self):
+        draft = {
+            'id': 'resolved-draft',
+            'selected_items': [{
+                'match_id': 'calculator-1001',
+                'match_num': '周五001',
+                'date': '2026-09-04',
+                'time': '23:59',
+                'pool': 'hhad',
+                'opt': 'draw',
+                'odd': 3.55,
+            }],
+            'pass_counts': [1],
+            'multiplier': 1,
+            'match_count': 1,
+            'option_count': 1,
+        }
+        web_app.user_storage.save_draft(
+            self.user['id'], draft, '2026-09-04'
+        )
+
+        class FakeMongoStorage:
+            @staticmethod
+            def get_matches_by_ids(_match_ids):
+                return {}
+
+            @staticmethod
+            def get_matches(_filters):
+                return [{
+                    'match_id': 'analysis-9001',
+                    'match_number': '周五001',
+                    'owner_date': '2026-09-04',
+                    'status': 0,
+                }]
+
+        with patch('web_app.mongo_storage', FakeMongoStorage()):
+            records = web_app._active_calculator_drafts(self.user['id'])
+
+        item = records[0]['selected_items'][0]
+        self.assertEqual(item['detail_match_id'], 'analysis-9001')
+        self.assertEqual(item['current_status'], 0)
+
 
 if __name__ == '__main__':
     unittest.main()
