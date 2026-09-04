@@ -172,6 +172,35 @@ class UserDraftApiTests(unittest.TestCase):
         self.assertEqual(item['detail_match_id'], 'analysis-9001')
         self.assertEqual(item['current_status'], 0)
 
+    @patch('web_app._calculator_draft_started', return_value=False)
+    @patch('web_app._calculator_business_date', return_value='2026-09-04')
+    def test_update_draft_route_replaces_original(self, _business_date, _started):
+        with web_app.app.test_request_context(
+            '/api/user/drafts', method='POST', json=self.payload()
+        ):
+            web_app.session['user_id'] = self.user['id']
+            created, _status = web_app.create_user_draft()
+        draft_id = created.get_json()['data']['id']
+        changed = self.payload()
+        changed['selected_items'][0]['opt'] = 'lose'
+        changed['selected_items'][0]['label'] = '负'
+        changed['selected_items'][0]['odd'] = 2.15
+        changed['multiplier'] = 20
+
+        with web_app.app.test_request_context(
+            '/api/user/drafts/{}'.format(draft_id),
+            method='PUT',
+            json=changed,
+        ):
+            web_app.session['user_id'] = self.user['id']
+            response = web_app.update_user_draft(draft_id)
+
+        data = response.get_json()['data']
+        self.assertEqual(data['id'], draft_id)
+        self.assertEqual(data['selected_items'][0]['opt'], 'lose')
+        self.assertEqual(data['multiplier'], 20)
+        self.assertEqual(len(web_app.user_storage.list_drafts(self.user['id'])), 1)
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -5433,6 +5433,29 @@ def list_user_drafts():
     })
 
 
+@app.route('/api/user/drafts/<draft_id>', methods=['PUT'])
+@login_required
+def update_user_draft(draft_id):
+    try:
+        draft = _calculator_draft_payload(request.get_json(silent=True) or {})
+    except ValueError as exc:
+        return jsonify({'success': False, 'message': str(exc)}), 400
+    if _calculator_draft_started(draft):
+        return jsonify({
+            'success': False,
+            'message': '所选比赛已经开赛，不能保存草稿修改',
+        }), 400
+    saved = user_storage.update_draft(
+        session['user_id'],
+        str(draft_id),
+        draft,
+        draft['match_date'],
+    )
+    if not saved:
+        return jsonify({'success': False, 'message': '草稿不存在或已被清理'}), 404
+    return jsonify({'success': True, 'data': saved})
+
+
 @app.route('/api/user/drafts/<draft_id>', methods=['DELETE'])
 @login_required
 def delete_user_draft(draft_id):

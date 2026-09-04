@@ -101,6 +101,43 @@ class UserDraftStorageTests(unittest.TestCase):
         records = self.storage.list_drafts(self.user['id'])
         self.assertEqual([record['id'] for record in records], ['waiting'])
 
+    def test_update_draft_replaces_original_plan(self):
+        self.storage.save_draft(
+            self.user['id'], draft('editable', '2026-09-04'), '2026-09-04'
+        )
+        changed = draft('ignored', '2026-09-04')
+        changed['selected_items'][0]['opt'] = 'lose'
+        changed['selected_items'][0]['label'] = '负'
+        changed['selected_items'][0]['odd'] = 2.15
+        changed['multiplier'] = 20
+
+        updated = self.storage.update_draft(
+            self.user['id'], 'editable', changed, '2026-09-04'
+        )
+
+        self.assertEqual(updated['id'], 'editable')
+        self.assertTrue(updated['updated'])
+        self.assertEqual(updated['selected_items'][0]['opt'], 'lose')
+        self.assertEqual(updated['multiplier'], 20)
+        self.assertEqual(len(self.storage.list_drafts(self.user['id'])), 1)
+
+    def test_update_draft_cannot_modify_another_users_plan(self):
+        self.storage.save_draft(
+            self.user['id'], draft('private', '2026-09-04'), '2026-09-04'
+        )
+        other = self.storage.create_user(
+            'another-draft-user', '其他用户', 'secret123'
+        )
+
+        updated = self.storage.update_draft(
+            other['id'],
+            'private',
+            draft('ignored', '2026-09-04'),
+            '2026-09-04',
+        )
+
+        self.assertIsNone(updated)
+
 
 if __name__ == '__main__':
     unittest.main()

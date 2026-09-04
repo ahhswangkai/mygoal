@@ -552,6 +552,66 @@ class UserStorage:
             result['deduplicated'] = False
             return result
 
+    def update_draft(self, user_id, draft_id, draft, match_date):
+        """Replace one owned draft while preserving its id and creation time."""
+        now = utc_now()
+        content_hash = self._draft_content_hash(draft)
+        with self._connect() as conn:
+            target = conn.execute(
+                'SELECT id FROM calculator_drafts WHERE id = ? AND user_id = ?',
+                (draft_id, user_id),
+            ).fetchone()
+            if not target:
+                return None
+
+            duplicate = conn.execute(
+                """
+                SELECT id FROM calculator_drafts
+                WHERE user_id = ? AND match_date = ? AND content_hash = ?
+                  AND id != ?
+                """,
+                (user_id, match_date, content_hash, draft_id),
+            ).fetchone()
+            if duplicate:
+                # Keep the draft currently being edited and merge an identical
+                # existing plan into it before applying the unique hash.
+                conn.execute(
+                    'DELETE FROM calculator_drafts WHERE id = ? AND user_id = ?',
+                    (duplicate['id'], user_id),
+                )
+
+            conn.execute(
+                """
+                UPDATE calculator_drafts
+                SET match_date = ?, selected_items_json = ?,
+                    pass_counts_json = ?, multiplier = ?, match_count = ?,
+                    option_count = ?, content_hash = ?, updated_at = ?
+                WHERE id = ? AND user_id = ?
+                """,
+                (
+                    match_date,
+                    json.dumps(
+                        draft.get('selected_items') or [], ensure_ascii=False
+                    ),
+                    json.dumps(draft.get('pass_counts') or [], ensure_ascii=False),
+                    int(draft.get('multiplier') or 1),
+                    int(draft.get('match_count') or 0),
+                    int(draft.get('option_count') or 0),
+                    content_hash,
+                    now,
+                    draft_id,
+                    user_id,
+                ),
+            )
+            row = conn.execute(
+                'SELECT * FROM calculator_drafts WHERE id = ? AND user_id = ?',
+                (draft_id, user_id),
+            ).fetchone()
+            result = self._draft_from_row(row)
+            result['deduplicated'] = bool(duplicate)
+            result['updated'] = True
+            return result
+
     def list_drafts(self, user_id, match_date=None):
         with self._connect() as conn:
             if match_date:

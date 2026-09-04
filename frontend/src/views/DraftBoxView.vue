@@ -144,7 +144,7 @@
 
             <footer>
               <span>加入时赔率仅作观察记录</span>
-              <button type="button" @click="loadDraft(draft)">载入计算器</button>
+              <button type="button" @click="editDraft(draft)">修改</button>
             </footer>
           </article>
         </section>
@@ -377,9 +377,10 @@ const removeDraft = async draft => {
   }
 }
 
-const loadDraft = draft => {
+const editDraft = draft => {
   try {
     window.sessionStorage.setItem(CALCULATOR_DRAFT_LOAD_KEY, JSON.stringify({
+      draft_id: draft.id,
       match_date: draft.match_date,
       selected_items: draft.selected_items,
       pass_counts: draft.pass_counts,

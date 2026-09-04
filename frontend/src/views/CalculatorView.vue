@@ -373,8 +373,8 @@
               :disabled="savingDraft || selectedItems.length === 0"
               @click="saveDraft"
             >
-              <span aria-hidden="true">☆</span>
-              <span>{{ savingDraft ? '保存中' : '草稿' }}</span>
+              <span aria-hidden="true">{{ editingDraftId ? '✎' : '☆' }}</span>
+              <span>{{ savingDraft ? '保存中' : editingDraftId ? '保存修改' : '草稿' }}</span>
             </button>
           </div>
           <button class="view-btn" @click="openViewModal">查看方案</button>
@@ -607,6 +607,7 @@ const multiplier = ref(1)
 const showViewModal = ref(false)
 const savingBet = ref(false)
 const savingDraft = ref(false)
+const editingDraftId = ref('')
 const preparingPlanImage = ref(false)
 const sharingPlanImage = ref(false)
 const planImageBlob = ref(null)
@@ -955,7 +956,12 @@ const restoreDraftSelection = () => {
   passCounts.value = restoredPasses.length ? [...new Set(restoredPasses)].sort((a, b) => a - b) : [restoredMatchCount]
   multiplier.value = Math.max(1, Math.min(9999, Number(stored.multiplier) || 1))
   hasManuallySelectedPass = restoredPasses.length > 0
-  showSaveNotice(`已载入草稿，${restoredMatchCount}场比赛`)
+  editingDraftId.value = String(stored.draft_id || '')
+  showSaveNotice(
+    editingDraftId.value
+      ? `正在修改草稿，已载入${restoredMatchCount}场比赛`
+      : `已载入草稿，${restoredMatchCount}场比赛`
+  )
 }
 
 const isPoolAvailable = pool => (
@@ -1147,8 +1153,12 @@ const saveDraft = async () => {
     : [Math.max(1, selectedMatchCount.value)]
   savingDraft.value = true
   try {
-    const result = await apiRequest('/api/user/drafts', {
-      method: 'POST',
+    const isEditing = Boolean(editingDraftId.value)
+    const endpoint = isEditing
+      ? `/api/user/drafts/${encodeURIComponent(editingDraftId.value)}`
+      : '/api/user/drafts'
+    const result = await apiRequest(endpoint, {
+      method: isEditing ? 'PUT' : 'POST',
       body: JSON.stringify({
         selected_items: selectedItemsPayload(),
         pass_counts: draftPassCounts,
@@ -1156,7 +1166,11 @@ const saveDraft = async () => {
       })
     })
     const duplicate = Boolean(result.data?.deduplicated)
-    showSaveNotice(duplicate ? '该方案已在今日草稿箱' : '已加入今日草稿箱')
+    if (isEditing) {
+      showSaveNotice(duplicate ? '修改已保存，并合并相同草稿' : '草稿修改已保存')
+    } else {
+      showSaveNotice(duplicate ? '该方案已在今日草稿箱' : '已加入今日草稿箱')
+    }
   } catch (error) {
     if (error.status === 401) openAuth('login')
     else showSaveNotice(error.message || '草稿保存失败')
