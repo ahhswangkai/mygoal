@@ -32,6 +32,11 @@ OKOOO_ASIAN_HTML = r'''
     <td class="datetxt01"><span type="zhu">1.84</span><em type="chu">半球</em><span type="ke">1.83</span></td>
     <td class="datetxt01"><span type="xinzhu">1.78</span><em type="xin">半球</em><span type="xinke">1.89</span></td>
   </tr>
+  <tr onclick="window.location='/match/change.php?mid=1346795&amp;pid=27&amp;Type=Handicap'">
+    <td><a>B**365</a></td>
+    <td class="datetxt01"><span type="zhu">1.93</span><em type="chu">半/一</em><span type="ke">1.93</span></td>
+    <td class="datetxt01"><span type="xinzhu">1.83</span><em type="xin">半/一</em><span type="xinke">2.03</span></td>
+  </tr>
 </tbody></table></section>
 '''
 
@@ -42,6 +47,11 @@ OKOOO_TOTAL_HTML = r'''
     <td><a>伟**际</a></td>
     <td><span class="sort-chu-daqiu">1.76</span><span class="filter-chu">2.25</span><span class="sort-chu-xiaoqiu">1.92</span></td>
     <td><span class="sort-xin-daqiu">2.04</span><span class="filter-xin">3.00</span><span class="sort-xin-xiaoqiu">1.67</span></td>
+  </tr>
+  <tr class="jsContentItem" index="6" onclick="window.location='/match/change.php?mid=1346795&amp;pid=27&amp;Type=OverUnder'">
+    <td><a>B**365</a></td>
+    <td><span class="sort-chu-daqiu">1.90</span><span class="filter-chu">2.50</span><span class="sort-chu-xiaoqiu">1.90</span></td>
+    <td><span class="sort-xin-daqiu">1.86</span><span class="filter-xin">2.50</span><span class="sort-xin-xiaoqiu">1.94</span></td>
   </tr>
 </tbody></table>
 '''
@@ -134,25 +144,27 @@ class OkoooFallbackTest(unittest.TestCase):
 
         self.assertEqual(result, '1346795')
 
-    def test_parses_weide_asian_and_converts_water(self):
+    def test_parses_b365_asian_and_converts_water(self):
         result = self.crawler.parse_okooo_asian_handicap(OKOOO_ASIAN_HTML)[0]
 
-        self.assertEqual(result['source_company_id'], '65')
+        self.assertEqual(result['source_company_id'], '27')
+        self.assertEqual(result['source_company_name'], 'B**365')
         self.assertEqual(result['source_provider'], 'okooo')
-        self.assertEqual(result['initial_home_odds'], '0.84')
-        self.assertEqual(result['initial_handicap'], '半球')
-        self.assertEqual(result['current_home_odds'], '0.78')
-        self.assertEqual(result['current_away_odds'], '0.89')
+        self.assertEqual(result['initial_home_odds'], '0.93')
+        self.assertEqual(result['initial_handicap'], '半/一')
+        self.assertEqual(result['current_home_odds'], '0.83')
+        self.assertEqual(result['current_away_odds'], '1.03')
 
-    def test_parses_weide_total_and_preserves_quarter_line(self):
+    def test_parses_b365_total_and_preserves_quarter_line(self):
         result = self.crawler.parse_okooo_over_under(OKOOO_TOTAL_HTML)[0]
 
-        self.assertEqual(result['source_company_id'], '65')
-        self.assertEqual(result['initial_over_odds'], '0.76')
-        self.assertEqual(result['initial_total'], '2.25')
-        self.assertEqual(result['current_over_odds'], '1.04')
-        self.assertEqual(result['current_total'], '3.00')
-        self.assertEqual(result['current_under_odds'], '0.67')
+        self.assertEqual(result['source_company_id'], '27')
+        self.assertEqual(result['source_company_name'], 'B**365')
+        self.assertEqual(result['initial_over_odds'], '0.90')
+        self.assertEqual(result['initial_total'], '2.50')
+        self.assertEqual(result['current_over_odds'], '0.86')
+        self.assertEqual(result['current_total'], '2.50')
+        self.assertEqual(result['current_under_odds'], '0.94')
 
     def test_asian_falls_back_to_first_valid_company(self):
         result = self.crawler.parse_okooo_asian_handicap(

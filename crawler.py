@@ -17,7 +17,7 @@ from config import REQUEST_HEADERS, REQUEST_TIMEOUT, REQUEST_DELAY, MAX_RETRIES
 
 
 PREFERRED_ODDS_COMPANY_ID = '6'
-OKOOO_PREFERRED_ODDS_COMPANY_ID = '65'
+OKOOO_PREFERRED_ODDS_COMPANY_ID = '27'
 OKOOO_BASE_URL = 'https://m.okooo.com'
 OKOOO_LIST_URL = f'{OKOOO_BASE_URL}/jczq/'
 OKOOO_MOBILE_USER_AGENT = (
@@ -769,12 +769,13 @@ class FootballCrawler:
     @staticmethod
     def _is_okooo_preferred_company(row):
         onclick = str(row.get('onclick') or '')
-        if re.search(r'(?:pid=|详情\W*)65(?:\D|$)', onclick):
+        company_id = re.escape(OKOOO_PREFERRED_ODDS_COMPANY_ID)
+        if re.search(rf'(?:pid=|详情\W*){company_id}(?:\D|$)', onclick):
             return True
         company = row.find('a')
         name = company.get_text(strip=True) if company else ''
         compact = name.replace('*', '').replace(' ', '')
-        return compact.startswith('伟') and compact.endswith('际')
+        return compact.lower().startswith('b') and compact.endswith('365')
 
     @staticmethod
     def _sporttery_update_time(market):
@@ -1100,7 +1101,7 @@ class FootballCrawler:
         return ''
 
     def parse_okooo_asian_handicap(self, html_content):
-        """解析澳客亚盘；优先伟德，缺失时取首个有效公司。"""
+        """解析澳客亚盘；优先B365，缺失时取首个有效公司。"""
         soup = BeautifulSoup(html_content, 'lxml')
         table = soup.select_one('#pankou table')
         if not table:
@@ -1153,7 +1154,7 @@ class FootballCrawler:
         return []
 
     def parse_okooo_over_under(self, html_content):
-        """解析澳客大小球；优先伟德，缺失时取首个有效公司。"""
+        """解析澳客大小球；优先B365，缺失时取首个有效公司。"""
         soup = BeautifulSoup(html_content, 'lxml')
 
         def parse_cell(cell, prefix):
