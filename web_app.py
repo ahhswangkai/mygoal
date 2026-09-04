@@ -5206,6 +5206,174 @@ def _calculator_bet_payload(data):
     }
 
 
+def _calculator_business_date(now=None):
+    """Return the active Sporttery programme date in China local time.
+
+    A programme routinely contains fixtures after midnight.  Keeping the
+    previous date until noon avoids expiring a Friday draft while its last
+    Saturday-morning fixture is still pending.
+    """
+    current = now or datetime.now(app_timezone())
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=app_timezone())
+    try:
+        configured_hour = int(os.getenv('CALCULATOR_DRAFT_ROLLOVER_HOUR', '12'))
+    except (TypeError, ValueError):
+        configured_hour = 12
+    rollover_hour = max(0, min(23, configured_hour))
+    if current.hour < rollover_hour:
+        current -= timedelta(days=1)
+    return current.date().isoformat()
+
+
+def _normalize_calculator_date(value):
+    text = str(value or '').strip()
+    for fmt in ('%Y-%m-%d', '%Y%m%d', '%Y/%m/%d'):
+        try:
+            return datetime.strptime(text[:10], fmt).date().isoformat()
+        except ValueError:
+            continue
+    return ''
+
+
+def _calculator_draft_payload(data):
+    raw_items = data.get('selected_items') or []
+    if not isinstance(raw_items, list) or not raw_items:
+        raise ValueError('请先选择要观察的玩法')
+
+    match_ids = {
+        str(item.get('match_id') or item.get('matchId') or '').strip()
+        for item in raw_items
+        if isinstance(item, dict)
+    }
+    if not match_ids or '' in match_ids:
+        raise ValueError('草稿比赛信息不完整')
+
+    payload = dict(data)
+    if not payload.get('pass_counts'):
+        payload['pass_counts'] = [len(match_ids)]
+    normalized = _calculator_bet_payload(payload)
+
+    match_dates = {
+        _normalize_calculator_date(item.get('date'))
+        for item in normalized['selected_items']
+    }
+    match_dates.discard('')
+    if len(match_dates) != 1:
+        raise ValueError('草稿箱只能保存同一竞彩日的比赛')
+
+    match_date = next(iter(match_dates))
+    active_date = _calculator_business_date()
+    if match_date != active_date:
+        raise ValueError('草稿箱只保留当天比赛，请重新选择今日场次')
+
+    return {
+        'id': str(uuid.uuid4()),
+        'match_date': match_date,
+        'selected_items': normalized['selected_items'],
+        'pass_counts': normalized['pass_counts'],
+        'multiplier': normalized['multiplier'],
+        'match_count': normalized['match_count'],
+        'option_count': normalized['option_count'],
+    }
+
+
+def _calculator_draft_item_kickoff(item):
+    """Best-effort fallback when a calculator match is not in MongoDB yet."""
+    raw_time = str((item or {}).get('time') or '').strip()
+    if not raw_time:
+        return None
+    normalized = raw_time.replace('/', '-').replace('T', ' ')
+    for fmt in ('%Y-%m-%d %H:%M:%S', '%Y-%m-%d %H:%M'):
+        try:
+            return datetime.strptime(normalized, fmt).replace(
+                tzinfo=app_timezone()
+            )
+        except ValueError:
+            continue
+
+    match_date = _normalize_calculator_date((item or {}).get('date'))
+    if not match_date:
+        return None
+    time_match = re.search(r'(\d{1,2}):(\d{2})', normalized)
+    if not time_match:
+        return None
+    try:
+        kickoff = datetime.strptime(
+            '{} {:02d}:{:02d}'.format(
+                match_date,
+                int(time_match.group(1)),
+                int(time_match.group(2)),
+            ),
+            '%Y-%m-%d %H:%M',
+        ).replace(tzinfo=app_timezone())
+    except ValueError:
+        return None
+    # 竞彩日中的凌晨比赛属于下一自然日。
+    if kickoff.hour < 12:
+        kickoff += timedelta(days=1)
+    return kickoff
+
+
+def _calculator_draft_live_matches(draft):
+    if not mongo_storage:
+        return {}
+    items = draft.get('selected_items') or []
+    match_ids = {
+        str(item.get('match_id') or '') for item in items
+        if item.get('match_id')
+    }
+    live_matches = mongo_storage.get_matches_by_ids(match_ids)
+    for item in items:
+        match_id = str(item.get('match_id') or '')
+        if match_id in live_matches:
+            continue
+        match_num = str(item.get('match_num') or '').strip()
+        match_date = _normalize_calculator_date(item.get('date'))
+        if not match_num:
+            continue
+        filters = {'match_number': match_num}
+        if match_date:
+            filters['owner_date'] = match_date
+        candidates = mongo_storage.get_matches(filters)
+        if candidates:
+            live_matches[match_id] = candidates[0]
+    return live_matches
+
+
+def _calculator_draft_started(draft, now=None):
+    """A multi-match observation expires as soon as any leg has started."""
+    current = now or datetime.now(app_timezone())
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=app_timezone())
+    live_matches = _calculator_draft_live_matches(draft)
+    for item in draft.get('selected_items') or []:
+        match_id = str(item.get('match_id') or '')
+        live = live_matches.get(match_id)
+        if live:
+            try:
+                if int(live.get('status')) != 0:
+                    return True
+                continue
+            except (TypeError, ValueError):
+                pass
+        kickoff = _calculator_draft_item_kickoff(item)
+        if kickoff and current >= kickoff:
+            return True
+    return False
+
+
+def _active_calculator_drafts(user_id):
+    records = user_storage.list_drafts(user_id)
+    expired_ids = [
+        draft['id'] for draft in records
+        if _calculator_draft_started(draft)
+    ]
+    if expired_ids:
+        user_storage.delete_drafts(user_id, expired_ids)
+    return [draft for draft in records if draft['id'] not in expired_ids]
+
+
 @app.route('/api/user/bets', methods=['POST'])
 @login_required
 def create_user_bet():
@@ -5215,6 +5383,47 @@ def create_user_bet():
         return jsonify({'success': False, 'message': str(exc)}), 400
     saved = user_storage.create_bet(session['user_id'], bet)
     return jsonify({'success': True, 'data': saved}), 201
+
+
+@app.route('/api/user/drafts', methods=['POST'])
+@login_required
+def create_user_draft():
+    try:
+        draft = _calculator_draft_payload(request.get_json(silent=True) or {})
+    except ValueError as exc:
+        return jsonify({'success': False, 'message': str(exc)}), 400
+    if _calculator_draft_started(draft):
+        return jsonify({
+            'success': False,
+            'message': '所选比赛已经开赛，不能加入草稿箱',
+        }), 400
+    saved = user_storage.save_draft(
+        session['user_id'],
+        draft,
+        draft['match_date'],
+    )
+    return jsonify({'success': True, 'data': saved}), 201
+
+
+@app.route('/api/user/drafts', methods=['GET'])
+@login_required
+def list_user_drafts():
+    records = _active_calculator_drafts(session['user_id'])
+    return jsonify({
+        'success': True,
+        'data': records,
+        'count': len(records),
+        'match_date': _calculator_business_date(),
+    })
+
+
+@app.route('/api/user/drafts/<draft_id>', methods=['DELETE'])
+@login_required
+def delete_user_draft(draft_id):
+    deleted = user_storage.delete_draft(session['user_id'], draft_id)
+    if not deleted:
+        return jsonify({'success': False, 'message': '草稿不存在'}), 404
+    return jsonify({'success': True})
 
 
 @app.route('/api/user/bets/recognize-ticket', methods=['POST'])

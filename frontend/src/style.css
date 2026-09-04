@@ -3034,7 +3034,7 @@ a.ctrl-btn {
 
 .calculator-page .bar-row {
   display: grid;
-  grid-template-columns: 70px minmax(0, 1fr) 78px;
+  grid-template-columns: 68px minmax(0, 1fr) 108px;
   align-items: stretch;
   gap: 10px;
   padding: 6px 2px 6px 20px;
@@ -3158,6 +3158,7 @@ a.ctrl-btn {
 }
 
 .calculator-page .clear-btn,
+.calculator-page .draft-btn,
 .calculator-page .view-btn {
   display: flex;
   align-items: center;
@@ -3169,13 +3170,37 @@ a.ctrl-btn {
   border-radius: 4px;
 }
 
-.calculator-page .clear-btn {
-  height: 46px;
+.calculator-page .bar-right-tools {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 4px;
+}
+
+.calculator-page .clear-btn,
+.calculator-page .draft-btn {
+  height: 46px;
+  flex-direction: column;
+  gap: 1px;
   color: #aaa;
-  font-size: 13px;
+  font-size: 10px;
   background: #fafafa;
   border: 1px solid #e4e4e4;
+}
+
+.calculator-page .draft-btn {
+  color: #dd7c1f;
+  background: #fff9ef;
+  border-color: #f3d7af;
+}
+
+.calculator-page .draft-btn > span:first-child {
+  font-size: 16px;
+  line-height: 17px;
+}
+
+.calculator-page .draft-btn:disabled {
+  cursor: default;
+  opacity: 0.48;
 }
 
 .calculator-page .clear-icon {
@@ -3186,7 +3211,7 @@ a.ctrl-btn {
 
 .calculator-page .view-btn {
   height: 42px;
-  width: 92px;
+  width: 100%;
   justify-self: end;
   color: #fff;
   font-size: 14px;
@@ -4016,6 +4041,11 @@ a { text-decoration: none; color: inherit; }
 .mine-service-icon--records {
   color: #f04451;
   background: #fff0f1;
+}
+
+.mine-service-icon--drafts {
+  color: #d98a27;
+  background: #fff6e7;
 }
 
 .mine-service-icon--stats {

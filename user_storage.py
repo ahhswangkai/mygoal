@@ -105,6 +105,25 @@ class UserStorage:
                     ON calculator_bets(user_id, created_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_calculator_bets_user_status
                     ON calculator_bets(user_id, status);
+
+                CREATE TABLE IF NOT EXISTS calculator_drafts (
+                    id TEXT PRIMARY KEY,
+                    user_id INTEGER NOT NULL,
+                    match_date TEXT NOT NULL,
+                    selected_items_json TEXT NOT NULL,
+                    pass_counts_json TEXT NOT NULL,
+                    multiplier INTEGER NOT NULL DEFAULT 1,
+                    match_count INTEGER NOT NULL,
+                    option_count INTEGER NOT NULL,
+                    content_hash TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+                    UNIQUE(user_id, match_date, content_hash)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_calculator_drafts_user_date
+                    ON calculator_drafts(user_id, match_date, updated_at DESC);
                 """
             )
             columns = {
@@ -413,6 +432,166 @@ class UserStorage:
             cursor = conn.execute(
                 'DELETE FROM calculator_bets WHERE id = ? AND user_id = ?',
                 (bet_id, user_id),
+            )
+            return cursor.rowcount > 0
+
+    @staticmethod
+    def _draft_from_row(row):
+        if not row:
+            return None
+        return {
+            'id': row['id'],
+            'match_date': row['match_date'],
+            'selected_items': json.loads(row['selected_items_json']),
+            'pass_counts': json.loads(row['pass_counts_json']),
+            'multiplier': int(row['multiplier']),
+            'match_count': int(row['match_count']),
+            'option_count': int(row['option_count']),
+            'created_at': row['created_at'],
+            'updated_at': row['updated_at'],
+        }
+
+    @staticmethod
+    def _draft_content_hash(draft):
+        items = sorted((
+            {
+                'match_id': str(item.get('match_id') or ''),
+                'pool': str(item.get('pool') or ''),
+                'opt': str(item.get('opt') or ''),
+            }
+            for item in (draft.get('selected_items') or [])
+        ),
+            key=lambda item: (
+                str(item.get('match_id') or ''),
+                str(item.get('pool') or ''),
+                str(item.get('opt') or ''),
+            ),
+        )
+        content = {
+            'selected_items': items,
+            'pass_counts': sorted(draft.get('pass_counts') or []),
+            'multiplier': int(draft.get('multiplier') or 1),
+        }
+        encoded = json.dumps(
+            content,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(',', ':'),
+        ).encode('utf-8')
+        return hashlib.sha256(encoded).hexdigest()
+
+    def save_draft(self, user_id, draft, match_date):
+        """Save one current-day calculator plan, deduplicating identical plans."""
+        now = utc_now()
+        content_hash = self._draft_content_hash(draft)
+        with self._connect() as conn:
+            existing = conn.execute(
+                """
+                SELECT * FROM calculator_drafts
+                WHERE user_id = ? AND match_date = ? AND content_hash = ?
+                """,
+                (user_id, match_date, content_hash),
+            ).fetchone()
+            if existing:
+                conn.execute(
+                    """
+                    UPDATE calculator_drafts
+                    SET selected_items_json = ?, pass_counts_json = ?,
+                        multiplier = ?, match_count = ?, option_count = ?,
+                        updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        json.dumps(
+                            draft.get('selected_items') or [], ensure_ascii=False
+                        ),
+                        json.dumps(draft.get('pass_counts') or [], ensure_ascii=False),
+                        int(draft.get('multiplier') or 1),
+                        int(draft.get('match_count') or 0),
+                        int(draft.get('option_count') or 0),
+                        now,
+                        existing['id'],
+                    ),
+                )
+                row = conn.execute(
+                    'SELECT * FROM calculator_drafts WHERE id = ?',
+                    (existing['id'],),
+                ).fetchone()
+                result = self._draft_from_row(row)
+                result['deduplicated'] = True
+                return result
+
+            draft_id = str(draft.get('id') or secrets.token_hex(16))
+            conn.execute(
+                """
+                INSERT INTO calculator_drafts (
+                    id, user_id, match_date, selected_items_json,
+                    pass_counts_json, multiplier, match_count, option_count,
+                    content_hash, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    draft_id,
+                    user_id,
+                    match_date,
+                    json.dumps(draft.get('selected_items') or [], ensure_ascii=False),
+                    json.dumps(draft.get('pass_counts') or [], ensure_ascii=False),
+                    int(draft.get('multiplier') or 1),
+                    int(draft.get('match_count') or 0),
+                    int(draft.get('option_count') or 0),
+                    content_hash,
+                    now,
+                    now,
+                ),
+            )
+            row = conn.execute(
+                'SELECT * FROM calculator_drafts WHERE id = ?',
+                (draft_id,),
+            ).fetchone()
+            result = self._draft_from_row(row)
+            result['deduplicated'] = False
+            return result
+
+    def list_drafts(self, user_id, match_date=None):
+        with self._connect() as conn:
+            if match_date:
+                rows = conn.execute(
+                    """
+                    SELECT * FROM calculator_drafts
+                    WHERE user_id = ? AND match_date = ?
+                    ORDER BY updated_at DESC
+                    """,
+                    (user_id, match_date),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """
+                    SELECT * FROM calculator_drafts
+                    WHERE user_id = ?
+                    ORDER BY updated_at DESC
+                    """,
+                    (user_id,),
+                ).fetchall()
+            return [self._draft_from_row(row) for row in rows]
+
+    def delete_drafts(self, user_id, draft_ids):
+        ids = sorted({str(value) for value in draft_ids if value})
+        if not ids:
+            return 0
+        placeholders = ','.join('?' for _ in ids)
+        with self._connect() as conn:
+            cursor = conn.execute(
+                'DELETE FROM calculator_drafts '
+                'WHERE user_id = ? AND id IN ({})'.format(placeholders),
+                [user_id] + ids,
+            )
+            return cursor.rowcount
+
+    def delete_draft(self, user_id, draft_id):
+        with self._connect() as conn:
+            cursor = conn.execute(
+                'DELETE FROM calculator_drafts WHERE id = ? AND user_id = ?',
+                (draft_id, user_id),
             )
             return cursor.rowcount > 0
 

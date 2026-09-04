@@ -21,6 +21,20 @@
       <section class="mine-services">
         <h2>我的服务</h2>
 
+        <router-link to="/drafts" class="mine-service-card">
+          <span class="mine-service-icon mine-service-icon--drafts" aria-hidden="true">
+            <svg viewBox="0 0 24 24">
+              <path d="M6.5 3.75h8.75L19 7.5V20.25H6.5A1.75 1.75 0 0 1 4.75 18.5v-13A1.75 1.75 0 0 1 6.5 3.75Z" />
+              <path d="M14.75 3.75V8h4.25M8 12h8M8 16h5" />
+            </svg>
+          </span>
+          <span class="mine-service-copy">
+            <strong>今日草稿箱</strong>
+            <small>观察计算器中选好的当天比赛与玩法</small>
+          </span>
+          <span class="mine-service-arrow" aria-hidden="true">›</span>
+        </router-link>
+
         <router-link to="/bets" class="mine-service-card">
           <span class="mine-service-icon mine-service-icon--records" aria-hidden="true">
             <svg viewBox="0 0 24 24">

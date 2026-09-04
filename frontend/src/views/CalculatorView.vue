@@ -363,10 +363,20 @@
           </div>
         </div>
         <div class="bar-right">
-          <button class="clear-btn" @click="clearAll">
-            <span class="clear-icon">🗑</span>
-            <span>清空</span>
-          </button>
+          <div class="bar-right-tools">
+            <button class="clear-btn" @click="clearAll">
+              <span class="clear-icon">🗑</span>
+              <span>清空</span>
+            </button>
+            <button
+              class="draft-btn"
+              :disabled="savingDraft || selectedItems.length === 0"
+              @click="saveDraft"
+            >
+              <span aria-hidden="true">☆</span>
+              <span>{{ savingDraft ? '保存中' : '草稿' }}</span>
+            </button>
+          </div>
           <button class="view-btn" @click="openViewModal">查看方案</button>
         </div>
       </div>
@@ -596,6 +606,7 @@ const tempMultiplier = ref(1)
 const multiplier = ref(1)
 const showViewModal = ref(false)
 const savingBet = ref(false)
+const savingDraft = ref(false)
 const preparingPlanImage = ref(false)
 const sharingPlanImage = ref(false)
 const planImageBlob = ref(null)
@@ -737,6 +748,7 @@ const formatOdds = (obj) => {
 
 const SPORTTERY_CALCULATOR_URL = 'https://webapi.sporttery.cn/gateway/uniform/football/getMatchCalculatorV1.qry?poolCode=had%2Chhad%2Ccrs%2Cttg%2Chafu'
 const CALCULATOR_CACHE_KEY = 'mygoal-calculator-matches-v1'
+const CALCULATOR_DRAFT_LOAD_KEY = 'mygoal-calculator-draft-load-v1'
 
 const prepareMatches = sourceMatches => sourceMatches.map(source => {
   const match = { ...source }
@@ -803,6 +815,7 @@ const fetchMatches = async () => {
     if (!sourceMatches.length) throw new Error('当前没有可售比赛')
     cacheMatches(sourceMatches)
     matches.value = prepareMatches(sourceMatches)
+    restoreDraftSelection()
     calculatorDataMessage.value = ''
 
     if (!expandedScoreMatchId.value && matches.value.length > 0) {
@@ -819,6 +832,7 @@ const fetchMatches = async () => {
     const cached = readCachedMatches()
     if (cached) {
       matches.value = prepareMatches(cached.matches)
+      restoreDraftSelection()
       calculatorDataMessage.value = `官方接口暂时不可用，当前显示缓存数据（${new Date(cached.updatedAt).toLocaleString('zh-CN', { hour12: false })}）`
       return
     }
@@ -888,6 +902,60 @@ const formatHandicap = (h) => {
 const isOddsAvailable = odd => {
   const value = Number(odd)
   return Number.isFinite(value) && value > 0
+}
+
+const selectedItemOdds = (match, item) => {
+  const pool = item.pool === 'goals'
+    ? match?.goals
+    : item.pool === 'score'
+      ? match?.score
+      : item.pool === 'hafu'
+        ? match?.hafu
+        : match?.[item.pool]
+  return pool?.[item.opt]
+}
+
+const restoreDraftSelection = () => {
+  let stored
+  try {
+    stored = JSON.parse(window.sessionStorage.getItem(CALCULATOR_DRAFT_LOAD_KEY) || 'null')
+    if (stored) window.sessionStorage.removeItem(CALCULATOR_DRAFT_LOAD_KEY)
+  } catch {
+    window.sessionStorage.removeItem(CALCULATOR_DRAFT_LOAD_KEY)
+    return
+  }
+  if (!stored || !Array.isArray(stored.selected_items)) return
+
+  const restored = []
+  stored.selected_items.forEach(item => {
+    const matchId = String(item.match_id || item.matchId || '')
+    const match = matches.value.find(entry => String(entry.id) === matchId)
+    const odd = selectedItemOdds(match, item)
+    if (!match || !isOddsAvailable(odd)) return
+    restored.push({
+      // Preserve the live match id type so the calculator's strict selection
+      // checks keep working for sources that return numeric ids.
+      matchId: match.id,
+      pool: item.pool,
+      opt: item.opt,
+      odd,
+      label: item.label || item.opt
+    })
+  })
+  if (restored.length === 0) {
+    showSaveNotice('草稿场次已停售或赔率不可用')
+    return
+  }
+
+  selectedItems.value = restored
+  const restoredMatchCount = new Set(restored.map(item => item.matchId)).size
+  const restoredPasses = (stored.pass_counts || [])
+    .map(Number)
+    .filter(value => Number.isInteger(value) && value >= 1 && value <= restoredMatchCount)
+  passCounts.value = restoredPasses.length ? [...new Set(restoredPasses)].sort((a, b) => a - b) : [restoredMatchCount]
+  multiplier.value = Math.max(1, Math.min(9999, Number(stored.multiplier) || 1))
+  hasManuallySelectedPass = restoredPasses.length > 0
+  showSaveNotice(`已载入草稿，${restoredMatchCount}场比赛`)
 }
 
 const isPoolAvailable = pool => (
@@ -1051,6 +1119,52 @@ const getMatchName = (matchId) => {
   return `${m.num} ${m.homeTeam} VS ${m.awayTeam}`
 }
 
+const selectedItemsPayload = () => selectedItems.value.map(item => {
+  const match = matches.value.find(entry => entry.id === item.matchId)
+  return {
+    ...item,
+    match: match ? {
+      num: match.num,
+      league: match.league,
+      homeTeam: match.homeTeam,
+      awayTeam: match.awayTeam,
+      date: match.date,
+      time: match.time,
+      handicap: match.handicap
+    } : {}
+  }
+})
+
+const saveDraft = async () => {
+  if (savingDraft.value || selectedItems.value.length === 0) return
+  if (!authState.user) {
+    openAuth('login')
+    return
+  }
+
+  const draftPassCounts = passCounts.value.length
+    ? passCounts.value
+    : [Math.max(1, selectedMatchCount.value)]
+  savingDraft.value = true
+  try {
+    const result = await apiRequest('/api/user/drafts', {
+      method: 'POST',
+      body: JSON.stringify({
+        selected_items: selectedItemsPayload(),
+        pass_counts: draftPassCounts,
+        multiplier: multiplier.value
+      })
+    })
+    const duplicate = Boolean(result.data?.deduplicated)
+    showSaveNotice(duplicate ? '该方案已在今日草稿箱' : '已加入今日草稿箱')
+  } catch (error) {
+    if (error.status === 401) openAuth('login')
+    else showSaveNotice(error.message || '草稿保存失败')
+  } finally {
+    savingDraft.value = false
+  }
+}
+
 const validatePassSelection = () => {
   const matchCount = selectedMatchCount.value
   const currentPassCount = Math.max(0, ...passCounts.value)
@@ -1189,25 +1303,10 @@ const confirmBet = async () => {
 
   savingBet.value = true
   try {
-    const items = selectedItems.value.map(item => {
-      const match = matches.value.find(entry => entry.id === item.matchId)
-      return {
-        ...item,
-        match: match ? {
-          num: match.num,
-          league: match.league,
-          homeTeam: match.homeTeam,
-          awayTeam: match.awayTeam,
-          date: match.date,
-          time: match.time,
-          handicap: match.handicap
-        } : {}
-      }
-    })
     const result = await apiRequest('/api/user/bets', {
       method: 'POST',
       body: JSON.stringify({
-        selected_items: items,
+        selected_items: selectedItemsPayload(),
         pass_counts: passCounts.value,
         multiplier: multiplier.value
       })

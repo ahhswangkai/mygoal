@@ -8,6 +8,7 @@ import StatsView from './views/StatsView.vue'
 import ResultsView from './views/ResultsView.vue'
 import RecommendationsView from './views/RecommendationsView.vue'
 import MineView from './views/MineView.vue'
+import DraftBoxView from './views/DraftBoxView.vue'
 
 const routes = [
   { path: '/', redirect: '/calculator' },
@@ -20,6 +21,7 @@ const routes = [
   },
   { path: '/calculator', name: 'calculator', component: CalculatorView, meta: { title: '足球计算器', mainTab: true } },
   { path: '/mine', name: 'mine', component: MineView, meta: { title: '我的', mainTab: true } },
+  { path: '/drafts', name: 'drafts', component: DraftBoxView, meta: { title: '草稿箱', mainTab: true, navTab: 'mine' } },
   { path: '/bets', name: 'bets', component: BettingListView, meta: { title: '投注记录', mainTab: true, navTab: 'mine' } },
   { path: '/match/:id', name: 'match-detail', component: MatchDetailView, meta: { title: '比赛详情' } },
   { path: '/stats', name: 'stats', component: StatsView, meta: { title: '个人统计', mainTab: true, navTab: 'mine' } },
