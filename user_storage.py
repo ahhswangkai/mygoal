@@ -113,6 +113,7 @@ class UserStorage:
                     selected_items_json TEXT NOT NULL,
                     pass_counts_json TEXT NOT NULL,
                     multiplier INTEGER NOT NULL DEFAULT 1,
+                    active_tab INTEGER NOT NULL DEFAULT -1,
                     match_count INTEGER NOT NULL,
                     option_count INTEGER NOT NULL,
                     content_hash TEXT NOT NULL,
@@ -143,6 +144,17 @@ class UserStorage:
             for column, statement in migrations.items():
                 if column not in columns:
                     conn.execute(statement)
+            draft_columns = {
+                row['name']
+                for row in conn.execute(
+                    'PRAGMA table_info(calculator_drafts)'
+                ).fetchall()
+            }
+            if 'active_tab' not in draft_columns:
+                conn.execute(
+                    'ALTER TABLE calculator_drafts '
+                    'ADD COLUMN active_tab INTEGER NOT NULL DEFAULT -1'
+                )
             self._repair_bet_created_dates(conn)
             self._repair_max_bonuses(conn)
 
@@ -445,6 +457,8 @@ class UserStorage:
             'selected_items': json.loads(row['selected_items_json']),
             'pass_counts': json.loads(row['pass_counts_json']),
             'multiplier': int(row['multiplier']),
+            'active_tab': int(row['active_tab'])
+            if 'active_tab' in row.keys() else -1,
             'match_count': int(row['match_count']),
             'option_count': int(row['option_count']),
             'created_at': row['created_at'],
@@ -497,7 +511,8 @@ class UserStorage:
                     """
                     UPDATE calculator_drafts
                     SET selected_items_json = ?, pass_counts_json = ?,
-                        multiplier = ?, match_count = ?, option_count = ?,
+                        multiplier = ?, active_tab = ?, match_count = ?,
+                        option_count = ?,
                         updated_at = ?
                     WHERE id = ?
                     """,
@@ -507,6 +522,7 @@ class UserStorage:
                         ),
                         json.dumps(draft.get('pass_counts') or [], ensure_ascii=False),
                         int(draft.get('multiplier') or 1),
+                        int(draft.get('active_tab') or 0),
                         int(draft.get('match_count') or 0),
                         int(draft.get('option_count') or 0),
                         now,
@@ -526,9 +542,10 @@ class UserStorage:
                 """
                 INSERT INTO calculator_drafts (
                     id, user_id, match_date, selected_items_json,
-                    pass_counts_json, multiplier, match_count, option_count,
+                    pass_counts_json, multiplier, active_tab, match_count,
+                    option_count,
                     content_hash, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     draft_id,
@@ -537,6 +554,7 @@ class UserStorage:
                     json.dumps(draft.get('selected_items') or [], ensure_ascii=False),
                     json.dumps(draft.get('pass_counts') or [], ensure_ascii=False),
                     int(draft.get('multiplier') or 1),
+                    int(draft.get('active_tab') or 0),
                     int(draft.get('match_count') or 0),
                     int(draft.get('option_count') or 0),
                     content_hash,
@@ -584,7 +602,8 @@ class UserStorage:
                 """
                 UPDATE calculator_drafts
                 SET match_date = ?, selected_items_json = ?,
-                    pass_counts_json = ?, multiplier = ?, match_count = ?,
+                    pass_counts_json = ?, multiplier = ?, active_tab = ?,
+                    match_count = ?,
                     option_count = ?, content_hash = ?, updated_at = ?
                 WHERE id = ? AND user_id = ?
                 """,
@@ -595,6 +614,7 @@ class UserStorage:
                     ),
                     json.dumps(draft.get('pass_counts') or [], ensure_ascii=False),
                     int(draft.get('multiplier') or 1),
+                    int(draft.get('active_tab') or 0),
                     int(draft.get('match_count') or 0),
                     int(draft.get('option_count') or 0),
                     content_hash,

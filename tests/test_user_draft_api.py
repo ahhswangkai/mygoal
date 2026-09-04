@@ -44,6 +44,7 @@ class UserDraftApiTests(unittest.TestCase):
             }],
             'pass_counts': [1],
             'multiplier': 1,
+            'active_tab': 3,
         }
 
     @patch('web_app._calculator_draft_started', return_value=False)
@@ -62,6 +63,7 @@ class UserDraftApiTests(unittest.TestCase):
             listed = web_app.list_user_drafts()
         self.assertEqual(listed.get_json()['count'], 1)
         self.assertEqual(listed.get_json()['data'][0]['id'], draft_id)
+        self.assertEqual(listed.get_json()['data'][0]['active_tab'], 3)
 
         with web_app.app.test_request_context(
             '/api/user/drafts/{}'.format(draft_id), method='DELETE'
@@ -186,6 +188,7 @@ class UserDraftApiTests(unittest.TestCase):
         changed['selected_items'][0]['label'] = '负'
         changed['selected_items'][0]['odd'] = 2.15
         changed['multiplier'] = 20
+        changed['active_tab'] = 2
 
         with web_app.app.test_request_context(
             '/api/user/drafts/{}'.format(draft_id),
@@ -199,6 +202,7 @@ class UserDraftApiTests(unittest.TestCase):
         self.assertEqual(data['id'], draft_id)
         self.assertEqual(data['selected_items'][0]['opt'], 'lose')
         self.assertEqual(data['multiplier'], 20)
+        self.assertEqual(data['active_tab'], 2)
         self.assertEqual(len(web_app.user_storage.list_drafts(self.user['id'])), 1)
 
 

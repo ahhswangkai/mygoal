@@ -384,7 +384,8 @@ const editDraft = draft => {
       match_date: draft.match_date,
       selected_items: draft.selected_items,
       pass_counts: draft.pass_counts,
-      multiplier: draft.multiplier
+      multiplier: draft.multiplier,
+      active_tab: draft.active_tab
     }))
   } catch {
     showNotice('当前浏览器无法载入草稿')

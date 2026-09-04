@@ -27,6 +27,7 @@ def draft(draft_id, match_date, options=None):
         'selected_items': selected,
         'pass_counts': [1],
         'multiplier': 1,
+        'active_tab': 3,
         'match_count': 1,
         'option_count': len(selected),
     }
@@ -54,6 +55,7 @@ class UserDraftStorageTests(unittest.TestCase):
         records = self.storage.list_drafts(self.user['id'], '2026-09-04')
         self.assertEqual(len(records), 1)
         self.assertEqual(records[0]['selected_items'][0]['match_num'], '周五001')
+        self.assertEqual(records[0]['active_tab'], 3)
         self.assertTrue(self.storage.delete_draft(self.user['id'], 'draft-1'))
         self.assertEqual(self.storage.list_drafts(self.user['id'], '2026-09-04'), [])
 
@@ -110,6 +112,7 @@ class UserDraftStorageTests(unittest.TestCase):
         changed['selected_items'][0]['label'] = '负'
         changed['selected_items'][0]['odd'] = 2.15
         changed['multiplier'] = 20
+        changed['active_tab'] = 2
 
         updated = self.storage.update_draft(
             self.user['id'], 'editable', changed, '2026-09-04'
@@ -119,6 +122,7 @@ class UserDraftStorageTests(unittest.TestCase):
         self.assertTrue(updated['updated'])
         self.assertEqual(updated['selected_items'][0]['opt'], 'lose')
         self.assertEqual(updated['multiplier'], 20)
+        self.assertEqual(updated['active_tab'], 2)
         self.assertEqual(len(self.storage.list_drafts(self.user['id'])), 1)
 
     def test_update_draft_cannot_modify_another_users_plan(self):

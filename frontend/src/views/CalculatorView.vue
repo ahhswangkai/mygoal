@@ -582,12 +582,14 @@
 
 <script setup>
 import { nextTick, ref, computed, onMounted, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import AccountButton from '../components/AccountButton.vue'
 import { apiRequest, authState, openAuth } from '../auth'
 import { calculateMaxBonus } from '../utils/betMath'
 import { oddsTrend, oddsTrendArrow } from '../utils/oddsTrend'
 import { normalizeSportteryCalculatorPayload } from '../utils/sportteryCalculator'
 
+const router = useRouter()
 const currentTab = ref(0)
 const matches = ref([])
 const calculatorDataMessage = ref('正在加载比赛数据…')
@@ -949,6 +951,18 @@ const restoreDraftSelection = () => {
   }
 
   selectedItems.value = restored
+  const storedTab = Number(stored.active_tab)
+  const restoredPools = new Set(restored.map(item => item.pool))
+  const inferredTab = restoredPools.size > 1
+    ? 4
+    : ({ had: 0, hhad: 0, score: 1, goals: 2, hafu: 3 }[restored[0]?.pool] ?? 0)
+  currentTab.value = Number.isInteger(storedTab) && storedTab >= 0 && storedTab <= 4
+    ? storedTab
+    : inferredTab
+  const firstMatchId = restored[0]?.matchId
+  if (currentTab.value === 1) expandedScoreMatchId.value = firstMatchId
+  if (currentTab.value === 2) expandedGoalsMatchId.value = firstMatchId
+  if (currentTab.value === 3) expandedHafuMatchId.value = firstMatchId
   const restoredMatchCount = new Set(restored.map(item => item.matchId)).size
   const restoredPasses = (stored.pass_counts || [])
     .map(Number)
@@ -1162,7 +1176,8 @@ const saveDraft = async () => {
       body: JSON.stringify({
         selected_items: selectedItemsPayload(),
         pass_counts: draftPassCounts,
-        multiplier: multiplier.value
+        multiplier: multiplier.value,
+        active_tab: currentTab.value
       })
     })
     const duplicate = Boolean(result.data?.deduplicated)
@@ -1171,6 +1186,7 @@ const saveDraft = async () => {
     } else {
       showSaveNotice(duplicate ? '该方案已在今日草稿箱' : '已加入今日草稿箱')
     }
+    await router.push('/drafts')
   } catch (error) {
     if (error.status === 401) openAuth('login')
     else showSaveNotice(error.message || '草稿保存失败')

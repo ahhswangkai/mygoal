@@ -5254,6 +5254,13 @@ def _calculator_draft_payload(data):
         payload['pass_counts'] = [len(match_ids)]
     normalized = _calculator_bet_payload(payload)
 
+    try:
+        active_tab = int(data.get('active_tab', 0))
+    except (TypeError, ValueError):
+        raise ValueError('草稿玩法页签格式错误')
+    if active_tab < 0 or active_tab > 4:
+        raise ValueError('草稿玩法页签格式错误')
+
     match_dates = {
         _normalize_calculator_date(item.get('date'))
         for item in normalized['selected_items']
@@ -5273,6 +5280,7 @@ def _calculator_draft_payload(data):
         'selected_items': normalized['selected_items'],
         'pass_counts': normalized['pass_counts'],
         'multiplier': normalized['multiplier'],
+        'active_tab': active_tab,
         'match_count': normalized['match_count'],
         'option_count': normalized['option_count'],
     }
