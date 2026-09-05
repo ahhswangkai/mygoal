@@ -322,7 +322,7 @@
                 </button>
               </article>
             </div>
-            <p>观察项和影子候选不会自动进入正式串关；赛后命中状态按当次研判保存的选项结算。</p>
+            <p>正式雷达同场互斥；影子模型独立展示，且不会自动进入正式串关。赛后按当次研判保存的选项结算。</p>
           </section>
 
           <section v-if="drawRadarParlay" class="draw-radar-parlay">
@@ -1544,22 +1544,49 @@ const drawRadarGroups = computed(() => {
     { key: 'ordinary_draw', title: '最可能平局' },
     { key: 'handicap_draw', title: '最可能让平' }
   ]
-  const shadowCandidates = definitions.flatMap(group => (
+  const summarizedShadowCandidates = definitions.flatMap(group => (
     (supervisedShadow.value?.[group.key] || [])
       .filter(candidate => candidate?.match_id)
       .map(candidate => normalizeShadowRadarCandidate(candidate, group.key))
   ))
+  // The summary intentionally keeps only three rows per market.  Include
+  // positive-value candidates from every immutable per-match shadow snapshot
+  // as well, so useful rows just outside that display cap are not hidden.
+  const positiveValueShadowCandidates = definitions.flatMap(group => (
+    (faeDailyAi.value?.matches || []).flatMap(match => {
+      const candidate = match?.input_snapshot?.supervised_shadow?.[group.key]
+      const valueEdge = Number(candidate?.value_edge)
+      if (!candidate || !Number.isFinite(valueEdge) || valueEdge <= 0) return []
+      return [normalizeShadowRadarCandidate({
+        ...candidate,
+        match_id: match.match_id,
+        match_number: match.match_number,
+        home_team: match.home_team,
+        away_team: match.away_team,
+        league: match.league
+      }, group.key)]
+    })
+  ))
+  const shadowCandidateMap = new Map()
+  for (const candidate of [
+    ...summarizedShadowCandidates,
+    ...positiveValueShadowCandidates
+  ]) {
+    shadowCandidateMap.set(
+      `${candidate.market}:${candidate.match_id}`,
+      candidate
+    )
+  }
+  const shadowCandidates = [...shadowCandidateMap.values()]
   const shadowByMarketMatch = new Map(shadowCandidates.map(candidate => [
     `${candidate.market}:${candidate.match_id}`,
     candidate
   ]))
-  const occupiedMatchIds = new Set()
   const groups = definitions.map(group => {
     const items = (radar[group.key] || [])
       .filter(candidate => candidate?.match_id)
       .map(candidate => {
         const matchId = String(candidate.match_id)
-        occupiedMatchIds.add(matchId)
         const shadow = shadowByMarketMatch.get(`${group.key}:${matchId}`)
         return shadow
           ? { ...candidate, shadow_probability: shadow.probability }
@@ -1568,23 +1595,27 @@ const drawRadarGroups = computed(() => {
     return { ...group, items }
   })
 
-  // A fixture remains exclusive to one leaderboard.  If both shadow heads
-  // contain it, retain the market with the stronger calibrated probability.
-  const hiddenShadowByMatch = new Map()
+  // The supervised model is a separate layer from the rule radar.  It may
+  // expose a draw candidate even when the rule radar puts the same fixture in
+  // handicap-draw.  Within the shadow layer itself, keep the stronger market.
+  const bestShadowByMatch = new Map()
   for (const candidate of shadowCandidates) {
     const matchId = String(candidate.match_id)
-    if (occupiedMatchIds.has(matchId)) continue
-    const current = hiddenShadowByMatch.get(matchId)
+    const current = bestShadowByMatch.get(matchId)
     if (
       !current
       || Number(candidate.probability || 0) > Number(current.probability || 0)
     ) {
-      hiddenShadowByMatch.set(matchId, candidate)
+      bestShadowByMatch.set(matchId, candidate)
     }
   }
-  for (const candidate of hiddenShadowByMatch.values()) {
+  for (const candidate of bestShadowByMatch.values()) {
     const group = groups.find(item => item.key === candidate.market)
-    if (group) group.items.push(candidate)
+    if (!group) continue
+    const existing = group.items.find(item => (
+      String(item.match_id) === String(candidate.match_id)
+    ))
+    if (!existing) group.items.push(candidate)
   }
   for (const group of groups) {
     const regular = group.items.filter(item => !item.shadow_only)
