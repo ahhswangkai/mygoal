@@ -584,6 +584,156 @@ class DailyAnalysisTests(unittest.TestCase):
         self.assertLessEqual(candidate["rating"], 3.5)
         self.assertIn("仅列观察", candidate["reason"])
 
+    def test_deepen_high_water_routes_let_draw_to_ordinary_draw(self):
+        source = {
+            "euro": {"current": [1.35, 4.70, 5.70]},
+            "asian": {"current": [1.00, "一/球半", 0.80]},
+            "sporttery_handicap": {
+                "value": -1,
+                "current": [2.12, 3.65, 2.61],
+            },
+            "total": {"current": [0.90, 3.50, 0.90]},
+            "current_asian_risk": {
+                "pattern_ids": ["deepen_high_water"],
+            },
+            "supervised_shadow": {
+                "ordinary_draw": {
+                    "probability": 23.07,
+                    "value_edge": 8.43,
+                    "feature_pattern_count": 2,
+                },
+            },
+        }
+        ordinary = {
+            "selection": "平局",
+            "tier": "watch",
+            "probability": 17.39,
+            "odds_value": -18.30,
+        }
+        handicap = {
+            "selection": "让平",
+            "tier": "watch",
+            "probability": 26.25,
+            "odds": 3.65,
+            "odds_value": -4.20,
+            "score": 83,
+            "rating": 3.5,
+            "official_veto_reasons": [],
+        }
+
+        result = FAEDailyAIAnalyzer._route_handicap_draw_precision(
+            source, ordinary, handicap
+        )
+
+        self.assertFalse(result["ranking_eligible"])
+        self.assertFalse(result["formal_eligible"])
+        self.assertEqual(
+            result["precision_routing_guard"]["preferred_selection"],
+            "平局",
+        )
+        self.assertEqual(
+            result["precision_routing_guard"]["ordinary_signal_source"],
+            "监督影子普通平",
+        )
+        self.assertLess(result["score"], handicap["score"])
+        self.assertIn("让平退出当日排名", result["reason"])
+
+    def test_deeper_low_water_asian_routes_let_draw_to_cover(self):
+        source = {
+            "euro": {"current": [1.28, 4.75, 7.25]},
+            "asian": {"current": [0.88, "一/球半", 0.98]},
+            "sporttery_handicap": {
+                "value": -1,
+                "current": [1.91, 3.80, 2.92],
+            },
+            "total": {"current": [0.88, 3.00, 0.98]},
+            "current_asian_risk": {"pattern_ids": []},
+        }
+        handicap = {
+            "selection": "让平",
+            "tier": "watch",
+            "probability": 28.56,
+            "odds": 3.80,
+            "odds_value": 8.50,
+            "score": 71,
+            "rating": 3.5,
+            "official_veto_reasons": [],
+        }
+
+        result = FAEDailyAIAnalyzer._route_handicap_draw_precision(
+            source, {}, handicap
+        )
+
+        self.assertFalse(result["ranking_eligible"])
+        self.assertEqual(
+            result["precision_routing_guard"]["preferred_selection"],
+            "让胜",
+        )
+        self.assertLess(result["odds_value"], 0)
+        self.assertIn("穿盘路径更强", result["reason"])
+
+    def test_low_total_shallow_asian_keeps_exact_margin_candidate(self):
+        source = {
+            "euro": {"current": [3.32, 2.72, 2.17]},
+            "asian": {"current": [0.90, "受平/半", 0.90]},
+            "sporttery_handicap": {
+                "value": 1,
+                "current": [1.51, 3.65, 5.20],
+            },
+            "total": {"current": [1.05, 2.25, 0.75]},
+            "current_asian_risk": {"pattern_ids": []},
+        }
+        handicap = {
+            "selection": "让平",
+            "tier": "watch",
+            "probability": 28.47,
+            "odds": 3.65,
+            "odds_value": 6.03,
+            "score": 99,
+            "rating": 3.5,
+            "official_veto_reasons": [],
+        }
+
+        result = FAEDailyAIAnalyzer._route_handicap_draw_precision(
+            source, {}, handicap
+        )
+
+        self.assertTrue(result["ranking_eligible"])
+        self.assertNotIn("precision_routing_guard", result)
+
+    def test_precision_routing_excludes_candidate_from_daily_ranking(self):
+        summary = FAEDailyAIAnalyzer.attach_draw_radar_summary({}, [{
+            "analysis": {
+                "draw_radar": {
+                    "ordinary_draw": {
+                        "match_id": "001",
+                        "selection": "平局",
+                        "tier": "watch",
+                        "score": 70,
+                        "probability": 23,
+                    },
+                    "handicap_draw": {
+                        "match_id": "002",
+                        "selection": "让平",
+                        "tier": "watch",
+                        "score": 90,
+                        "probability": 29,
+                        "ranking_eligible": False,
+                    },
+                },
+            },
+        }])
+
+        self.assertEqual(
+            [item["match_id"] for item in summary["draw_radar"]["ordinary_draw"]],
+            ["001"],
+        )
+        self.assertEqual(summary["draw_radar"]["handicap_draw"], [])
+        self.assertEqual(
+            summary["draw_radar"]["excluded_count"]["handicap_draw"],
+            1,
+        )
+
     def test_draw_radar_hard_veto_downgrades_negative_value_core(self):
         candidate = FAEDailyAIAnalyzer._apply_draw_radar_candidate_guard({
             "match_id": "201",
@@ -1300,6 +1450,64 @@ class DailyAnalysisTests(unittest.TestCase):
             for row in decision["candidates"]
         }
         self.assertGreater(scores["让胜"], scores["让平"])
+
+    def test_weak_letdraw_cannot_replace_higher_coverage_protected_side(self):
+        """Replay the 09-04 Betis vs Real Madrid secondary selection."""
+        source = {
+            "euro": {"current": [6.10, 5.15, 1.30]},
+            "asian": {"current": [0.95, "受一/球半", 0.90]},
+            "sporttery_handicap": {
+                "value": 1,
+                "current": [2.93, 4.05, 1.85],
+            },
+            "total": {"current": [0.98, 3.50, 0.88]},
+            "fae_core": {
+                "probabilities": {
+                    "hhad": {"win": 26.1, "draw": 25.0, "lose": 48.9},
+                },
+            },
+            "supervised_shadow": {
+                "high_confidence_single": {
+                    "candidates": [
+                        {
+                            "market": "竞彩让球",
+                            "selection": "让胜",
+                            "probability": 30.87,
+                        },
+                        {
+                            "market": "竞彩让球",
+                            "selection": "让平",
+                            "probability": 20.67,
+                        },
+                        {
+                            "market": "竞彩让球",
+                            "selection": "让负",
+                            "probability": 48.46,
+                        },
+                    ],
+                },
+            },
+        }
+
+        decision = FAEDailyAIAnalyzer._secondary_play_decision(
+            source, "让负", "让平"
+        )
+
+        self.assertEqual(decision["selection"], "让胜")
+        self.assertTrue(decision["changed"])
+        self.assertEqual(
+            decision["strategy"], "hhad-model-market-coverage-v1"
+        )
+        self.assertTrue(decision["value_protection"]["blocked"])
+        self.assertEqual(
+            decision["value_protection"]["rejected_value_selection"],
+            "让平",
+        )
+        self.assertGreaterEqual(
+            decision["value_protection"]["shadow_probability_gap"],
+            5.0,
+        )
+        self.assertIn("换挡已被门禁阻止", decision["reason"])
 
     def test_handicap_value_protection_cannot_choose_below_gate_candidate(self):
         """Replay the 08-26 周三001 secondary-selection structure."""

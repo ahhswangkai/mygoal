@@ -3938,6 +3938,61 @@ class FAEDailyAIAnalyzer:
                     if selected_return is not None
                     and value_return is not None else None
                 )
+                value_veto_reasons = []
+                shadow_gap = None
+                # The higher-odds exact-margin option may only replace the
+                # coverage runner-up when no stronger model layer rejects it.
+                # Shadow probabilities remain a veto here: they never create
+                # a recommendation or make a pair actionable by themselves.
+                if value_row.get("selection") == "让平":
+                    risk_ids = {
+                        str(value) for value in (
+                            (source.get("current_asian_risk") or {}).get(
+                                "pattern_ids"
+                            ) or []
+                        )
+                    }
+                    draw_band_signal = cls._draw_odds_band_signal(
+                        source, "让平", risk_ids
+                    )
+                    if draw_band_signal.get("block_official"):
+                        value_veto_reasons.append(str(
+                            draw_band_signal.get("note")
+                            or "让平赔率区间已被历史门禁降级"
+                        ))
+                    shadow_candidates = (
+                        (((source.get("supervised_shadow") or {})
+                          .get("high_confidence_single") or {})
+                         .get("candidates") or [])
+                    )
+                    shadow_probabilities = {
+                        str(item.get("selection") or ""): _number(
+                            item.get("probability")
+                        )
+                        for item in shadow_candidates
+                        if str(item.get("market") or "") == "竞彩让球"
+                    }
+                    coverage_shadow = shadow_probabilities.get(str(
+                        selected_row.get("selection") or ""
+                    ))
+                    value_shadow = shadow_probabilities.get("让平")
+                    if (
+                        coverage_shadow is not None
+                        and value_shadow is not None
+                    ):
+                        shadow_gap = round(
+                            coverage_shadow - value_shadow, 2
+                        )
+                        if shadow_gap >= 5.0:
+                            value_veto_reasons.append(
+                                "监督模型中{}概率{:.2f}%高于让平{:.2f}%"
+                                "，影子层只用于阻止错误换挡".format(
+                                    selected_row.get("selection"),
+                                    coverage_shadow,
+                                    value_shadow,
+                                )
+                            )
+                value_protection_blocked = bool(value_veto_reasons)
                 if (
                     coverage_gap <= TWO_OPTION_SECONDARY_VALUE_MAX_GAP
                     and return_gain is not None
@@ -3948,9 +4003,11 @@ class FAEDailyAIAnalyzer:
                     # with one that fails the independent direction floor.
                     and value_coverage is not None
                     and value_coverage >= TWO_OPTION_MIN_SECONDARY_COVERAGE
+                    and not value_protection_blocked
                 ):
                     value_protection = {
                         "triggered": True,
+                        "blocked": False,
                         "coverage_selection": selected_row.get("selection"),
                         "effective_selection": value_row.get("selection"),
                         "coverage_gap": round(coverage_gap, 2),
@@ -3962,6 +4019,27 @@ class FAEDailyAIAnalyzer:
                         ),
                     }
                     selected_row = value_row
+                elif value_protection_blocked:
+                    value_protection = {
+                        "triggered": False,
+                        "blocked": True,
+                        "coverage_selection": selected_row.get("selection"),
+                        "effective_selection": selected_row.get("selection"),
+                        "rejected_value_selection": value_row.get(
+                            "selection"
+                        ),
+                        "coverage_gap": round(coverage_gap, 2),
+                        "expected_return_gain": (
+                            round(return_gain, 3)
+                            if return_gain is not None else None
+                        ),
+                        "shadow_probability_gap": shadow_gap,
+                        "veto_reasons": value_veto_reasons,
+                        "reason": (
+                            "赔率期望换挡被精确进球差门禁阻止，保留覆盖概率"
+                            "更高的防选"
+                        ),
+                    }
             proposed_row = dict(selected_row or {})
             proposed_selection = str(
                 proposed_row.get("selection") or "观望"
@@ -4018,6 +4096,14 @@ class FAEDailyAIAnalyzer:
                     f"；与{value_protection.get('coverage_selection')}仅差"
                     f"{value_protection.get('coverage_gap')}分，但赔率期望提高"
                     f"{float(value_protection.get('expected_return_gain') or 0) * 100:.1f}%"
+                )
+            elif secondary_gate["passed"] and value_protection.get("blocked"):
+                reason += (
+                    "；让平赔率期望换挡已被门禁阻止，"
+                    + "、".join(
+                        str(value) for value in
+                        value_protection.get("veto_reasons") or []
+                    )
                 )
             elif secondary_gate["passed"]:
                 reason += "，为剩余方向最高覆盖分"
@@ -8446,16 +8532,236 @@ class FAEDailyAIAnalyzer:
         for item in matches:
             row = dict(item or {})
             analysis = dict(row.get("analysis") or {})
+            ordinary_draw = cls._apply_draw_radar_candidate_guard(
+                cls._draw_radar_candidate(row, "平局")
+            )
+            handicap_draw = cls._apply_draw_radar_candidate_guard(
+                cls._draw_radar_candidate(row, "让平")
+            )
+            handicap_draw = cls._route_handicap_draw_precision(
+                row.get("input_snapshot") or {},
+                ordinary_draw,
+                handicap_draw,
+            )
             analysis["draw_radar"] = {
-                "ordinary_draw": cls._apply_draw_radar_candidate_guard(
-                    cls._draw_radar_candidate(row, "平局")
-                ),
-                "handicap_draw": cls._apply_draw_radar_candidate_guard(
-                    cls._draw_radar_candidate(row, "让平")
-                ),
+                "ordinary_draw": ordinary_draw,
+                "handicap_draw": handicap_draw,
             }
             row["analysis"] = analysis
             result.append(row)
+        return result
+
+    @classmethod
+    def _route_handicap_draw_precision(
+        cls,
+        source: Dict[str, Any],
+        ordinary_draw: Dict[str, Any],
+        handicap_draw: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Keep exact-margin picks out of the ranking when another path wins.
+
+        ``让平`` is not a generic favourite-risk outcome: the favourite must
+        still win by the exact Sporttery handicap margin.  Two recurring
+        structures need an explicit final route after both radar candidates
+        have been scored:
+
+        * deepening/high-water favourite plus a materially stronger ordinary
+          draw value is primarily a favourite-not-winning path;
+        * an Asian line a quarter-ball deeper than the Sporttery line, with
+          low favourite water and a high total, is primarily a cover path.
+
+        The candidate remains in the per-match audit payload, but it cannot
+        enter the daily ranking or a formal ticket.  This keeps the decision
+        explainable without allowing a generic odds-band bonus to overrule
+        the more specific score-margin evidence.
+        """
+        result = dict(handicap_draw or {})
+        if not result or result.get("tier") == "exclude":
+            return result
+
+        one_goal = cls._one_goal_margin_parlay_signal(source)
+        if one_goal.get("triggered"):
+            result["ranking_eligible"] = True
+            return result
+
+        handicap = _number(
+            (source.get("sporttery_handicap") or {}).get("value")
+        )
+        favorite = cls._favorite_market_profile(source)
+        favorite_side = str(favorite.get("side") or "")
+        favorite_odds = _number(favorite.get("odds"))
+        aligned = bool(
+            handicap is not None
+            and abs(handicap) == 1
+            and (
+                (favorite_side == "home" and handicap < 0)
+                or (favorite_side == "away" and handicap > 0)
+            )
+        )
+        if not aligned or favorite_odds is None:
+            result["ranking_eligible"] = True
+            return result
+
+        asian = cls._asian_favorite_depth_profile(source, favorite_side)
+        current_depth = _number(asian.get("current_depth"))
+        favorite_water = _number(asian.get("current_favorite_water"))
+        total_line = _number(cls._total_market_profile(source).get("line"))
+        hhad_values = (
+            (source.get("sporttery_handicap") or {}).get("current")
+            or (source.get("sporttery_handicap") or {}).get("initial")
+            or []
+        )
+        cover_index = 0 if favorite_side == "home" else 2
+        cover_selection = "让胜" if favorite_side == "home" else "让负"
+        cover_odds = (
+            _number(hhad_values[cover_index])
+            if len(hhad_values) > cover_index else None
+        )
+        draw_odds = (
+            _number(hhad_values[1]) if len(hhad_values) > 1 else None
+        )
+
+        risk_ids = {
+            str(value) for value in (
+                (source.get("current_asian_risk") or {}).get("pattern_ids")
+                or []
+            )
+        }
+        regular_ordinary_value = _number(
+            (ordinary_draw or {}).get("odds_value")
+        )
+        regular_ordinary_probability = _number(
+            (ordinary_draw or {}).get("probability")
+        )
+        shadow_ordinary = (
+            (source.get("supervised_shadow") or {}).get("ordinary_draw")
+            or {}
+        )
+        shadow_ordinary_value = _number(shadow_ordinary.get("value_edge"))
+        shadow_ordinary_probability = _number(
+            shadow_ordinary.get("probability")
+        )
+        shadow_pattern_count = int(
+            _number(shadow_ordinary.get("feature_pattern_count")) or 0
+        )
+        use_shadow_ordinary = bool(
+            shadow_pattern_count > 0
+            and shadow_ordinary_value is not None
+            and shadow_ordinary_value >= 0
+            and shadow_ordinary_probability is not None
+            and shadow_ordinary_probability >= 20
+            and (
+                regular_ordinary_value is None
+                or shadow_ordinary_value > regular_ordinary_value
+            )
+        )
+        ordinary_value = (
+            shadow_ordinary_value
+            if use_shadow_ordinary else regular_ordinary_value
+        )
+        ordinary_probability = (
+            shadow_ordinary_probability
+            if use_shadow_ordinary else regular_ordinary_probability
+        )
+        ordinary_signal_source = (
+            "监督影子普通平"
+            if use_shadow_ordinary else "常规普通平"
+        )
+        handicap_value = _number(result.get("odds_value"))
+        ordinary_route = bool(
+            "deepen_high_water" in risk_ids
+            and ordinary_value is not None
+            and ordinary_value >= 0
+            and ordinary_probability is not None
+            and ordinary_probability >= 20
+            and (
+                handicap_value is None
+                or ordinary_value >= handicap_value + 6
+            )
+        )
+        cover_route = bool(
+            favorite_odds <= 1.50
+            and current_depth is not None
+            and current_depth >= abs(handicap) + 0.24
+            and favorite_water is not None
+            and favorite_water <= 0.92
+            and total_line is not None
+            and total_line >= 2.75
+            and cover_odds is not None
+            and draw_odds is not None
+            and cover_odds <= 2.20
+            and draw_odds >= cover_odds + 0.65
+        )
+        if not ordinary_route and not cover_route:
+            result["ranking_eligible"] = True
+            return result
+
+        if ordinary_route:
+            kind = "ordinary_draw_over_exact_margin"
+            preferred_selection = "平局"
+            probability_adjustment = -4.0
+            score_adjustment = -22.0
+            route_reason = (
+                f"升盘高水下{ordinary_signal_source}赔率价值"
+                f"{ordinary_value:+g}%高于"
+                f"让平{(handicap_value or 0):+g}%，风险更像热门不胜，"
+                "不是刚好赢1球"
+            )
+        else:
+            kind = "asian_cover_over_exact_margin"
+            preferred_selection = cover_selection
+            probability_adjustment = -4.0
+            score_adjustment = -20.0
+            route_reason = (
+                f"亚盘热门深度{current_depth:g}球比竞彩让球"
+                f"{abs(handicap):g}球深半档，热门水位{favorite_water:g}，"
+                f"大小球{total_line:g}且{cover_selection}{cover_odds:g}"
+                f"明显低于让平{draw_odds:g}，穿盘路径更强"
+            )
+
+        probability = _number(result.get("probability"))
+        if probability is not None:
+            result["probability"] = round(max(
+                0.0, min(100.0, probability + probability_adjustment)
+            ), 2)
+        odds = _number(result.get("odds"))
+        if handicap_value is not None and odds is not None:
+            result["odds_value"] = round(
+                handicap_value + probability_adjustment * odds,
+                2,
+            )
+        result["score"] = round(max(
+            0.0,
+            float(result.get("score") or 0) + score_adjustment,
+        ))
+        result["rating"] = cls._rating(min(
+            3.0,
+            float(result.get("rating") or 3.0),
+        ))
+        result["ranking_eligible"] = False
+        result["formal_eligible"] = False
+        routing_guard = {
+            "triggered": True,
+            "kind": kind,
+            "preferred_selection": preferred_selection,
+            "probability_adjustment_pp": probability_adjustment,
+            "score_adjustment": score_adjustment,
+            "ordinary_signal_source": ordinary_signal_source,
+            "reason": route_reason,
+            "version": "handicap-draw-precision-routing-v1",
+        }
+        result["precision_routing_guard"] = routing_guard
+        veto_reasons = [
+            str(value) for value in result.get("official_veto_reasons") or []
+            if str(value).strip()
+        ]
+        veto_reasons.append(f"精确进球差分流至{preferred_selection}")
+        result["official_veto_reasons"] = list(dict.fromkeys(veto_reasons))
+        reason = str(result.get("reason") or "").rstrip("。；")
+        result["reason"] = (
+            (reason + "；" if reason else "")
+            + f"{route_reason}，让平退出当日排名。"
+        )
         return result
 
     @classmethod
@@ -8530,7 +8836,7 @@ class FAEDailyAIAnalyzer:
         """Expose core/watch radar rows even when official pools exclude them."""
         result = dict(summary or {})
         radar = {
-            "version": "draw-radar-v3-exclusive-ranking",
+            "version": "draw-radar-v4-precision-routing",
             "policy": (
                 "每天普通平局与竞彩让平分别最多展示前三；同一场只进入"
                 "概率和证据更强的一榜。只有核心且非负赔率价值候选可参与"
@@ -8550,7 +8856,10 @@ class FAEDailyAIAnalyzer:
             )
             for key in ("ordinary_draw", "handicap_draw"):
                 candidate = dict(candidates.get(key) or {})
-                if candidate.get("tier") == "exclude":
+                if (
+                    candidate.get("tier") == "exclude"
+                    or candidate.get("ranking_eligible") is False
+                ):
                     radar["excluded_count"][key] += 1
                     continue
                 if candidate.get("match_id"):
