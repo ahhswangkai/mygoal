@@ -266,7 +266,7 @@
                 <strong>平 / 让平概率排行榜</strong>
                 <small>保留最后一次研判榜单，已开赛和完场比赛仍展示</small>
               </div>
-              <span>核心 / 观察分层</span>
+              <span>核心 / 观察 / 影子分层</span>
             </header>
             <div class="draw-radar-groups">
               <article v-for="group in drawRadarGroups" :key="group.key">
@@ -294,8 +294,8 @@
                     </small>
                   </span>
                   <span class="draw-radar-decision">
-                    <i :class="item.tier">
-                      {{ item.formal_eligible ? radarTierLabel(item.tier) : '观察' }}
+                    <i :class="radarTierClass(item)">
+                      {{ radarDisplayTier(item) }}
                     </i>
                     <b>{{ item.selection }} @{{ formatPickOdds(item.odds) || '--' }}</b>
                     <em :class="radarSettlement(item, group.key).status">
@@ -303,8 +303,14 @@
                     </em>
                   </span>
                   <span class="draw-radar-metrics">
-                    <i>概率 {{ radarPercent(item.probability) }}</i>
-                    <i>雷达 {{ item.score ?? '--' }}分</i>
+                    <i>{{ item.shadow_only ? '影子概率' : '概率' }} {{ radarPercent(item.probability) }}</i>
+                    <i v-if="!item.shadow_only">雷达 {{ item.score ?? '--' }}分</i>
+                    <i v-if="item.shadow_probability && !item.shadow_only">
+                      影子 {{ radarPercent(item.shadow_probability) }}
+                    </i>
+                    <i v-if="item.shadow_only && item.market_probability != null">
+                      市场 {{ radarPercent(item.market_probability) }}
+                    </i>
                     <i :class="metricClass(item.odds_value)">
                       价值 {{ signedMetric(item.odds_value) }}%
                     </i>
@@ -316,7 +322,7 @@
                 </button>
               </article>
             </div>
-            <p>观察项不会自动进入正式串关；赛后命中状态按当次研判保存的选项结算。</p>
+            <p>观察项和影子候选不会自动进入正式串关；赛后命中状态按当次研判保存的选项结算。</p>
           </section>
 
           <section v-if="drawRadarParlay" class="draw-radar-parlay">
@@ -1494,15 +1500,102 @@ const shouldShowDailyMatchList = computed(() => (
 const dailyMatchMap = computed(() => Object.fromEntries(
   (faeDailyAi.value?.matches || []).map(item => [String(item.match_id), item])
 ))
+
+function shadowRadarOdds(match, market) {
+  const values = market === 'ordinary_draw'
+    ? match?.input_snapshot?.euro?.current
+    : match?.input_snapshot?.sporttery_handicap?.current
+  const odds = Number(Array.isArray(values) ? values[1] : null)
+  return Number.isFinite(odds) && odds > 0 ? odds : null
+}
+
+function normalizeShadowRadarCandidate(candidate, market) {
+  const match = dailyMatch(candidate?.match_id)
+  const rankingProbability = Number(candidate?.ranking_probability)
+  const modelProbability = Number(candidate?.probability)
+  const handicap = Number(
+    match?.input_snapshot?.sporttery_handicap?.value
+  )
+  return {
+    ...candidate,
+    market,
+    source: 'supervised_shadow',
+    shadow_only: true,
+    tier: 'shadow',
+    formal_eligible: false,
+    probability: Number.isFinite(rankingProbability)
+      ? rankingProbability
+      : modelProbability,
+    model_probability: Number.isFinite(modelProbability)
+      ? modelProbability
+      : null,
+    odds: shadowRadarOdds(match, market),
+    odds_value: candidate?.value_edge,
+    target_goal_difference: market === 'ordinary_draw'
+      ? 0
+      : (Number.isFinite(handicap) ? -handicap : null),
+    reason: '监督模型影子候选，尚未通过正式发布门槛'
+  }
+}
+
 const drawRadarGroups = computed(() => {
   const radar = faeDailyAi.value?.daily_summary?.draw_radar || {}
-  return [
+  const definitions = [
     { key: 'ordinary_draw', title: '最可能平局' },
     { key: 'handicap_draw', title: '最可能让平' }
-  ].map(group => ({
-    ...group,
-    items: (radar[group.key] || []).filter(candidate => candidate?.match_id)
-  })).filter(group => group.items.length)
+  ]
+  const shadowCandidates = definitions.flatMap(group => (
+    (supervisedShadow.value?.[group.key] || [])
+      .filter(candidate => candidate?.match_id)
+      .map(candidate => normalizeShadowRadarCandidate(candidate, group.key))
+  ))
+  const shadowByMarketMatch = new Map(shadowCandidates.map(candidate => [
+    `${candidate.market}:${candidate.match_id}`,
+    candidate
+  ]))
+  const occupiedMatchIds = new Set()
+  const groups = definitions.map(group => {
+    const items = (radar[group.key] || [])
+      .filter(candidate => candidate?.match_id)
+      .map(candidate => {
+        const matchId = String(candidate.match_id)
+        occupiedMatchIds.add(matchId)
+        const shadow = shadowByMarketMatch.get(`${group.key}:${matchId}`)
+        return shadow
+          ? { ...candidate, shadow_probability: shadow.probability }
+          : candidate
+      })
+    return { ...group, items }
+  })
+
+  // A fixture remains exclusive to one leaderboard.  If both shadow heads
+  // contain it, retain the market with the stronger calibrated probability.
+  const hiddenShadowByMatch = new Map()
+  for (const candidate of shadowCandidates) {
+    const matchId = String(candidate.match_id)
+    if (occupiedMatchIds.has(matchId)) continue
+    const current = hiddenShadowByMatch.get(matchId)
+    if (
+      !current
+      || Number(candidate.probability || 0) > Number(current.probability || 0)
+    ) {
+      hiddenShadowByMatch.set(matchId, candidate)
+    }
+  }
+  for (const candidate of hiddenShadowByMatch.values()) {
+    const group = groups.find(item => item.key === candidate.market)
+    if (group) group.items.push(candidate)
+  }
+  for (const group of groups) {
+    const regular = group.items.filter(item => !item.shadow_only)
+    const shadow = group.items
+      .filter(item => item.shadow_only)
+      .sort((left, right) => (
+        Number(right.probability || 0) - Number(left.probability || 0)
+      ))
+    group.items = [...regular, ...shadow]
+  }
+  return groups.filter(group => group.items.length)
 })
 const drawRadarParlay = computed(() => {
   const stored = faeDailyAi.value?.daily_summary?.draw_parlay_tickets?.two_three
@@ -2046,6 +2139,15 @@ function formatPickOdds(value) {
 
 function radarTierLabel(tier) {
   return tier === 'core' ? '核心' : tier === 'watch' ? '观察' : '排除'
+}
+
+function radarTierClass(item) {
+  return item?.shadow_only ? 'shadow' : item?.tier
+}
+
+function radarDisplayTier(item) {
+  if (item?.shadow_only) return '影子候选'
+  return item?.formal_eligible ? radarTierLabel(item?.tier) : '观察'
 }
 
 function radarPercent(value) {
@@ -2925,6 +3027,11 @@ onBeforeUnmount(() => {
 .match-draw-radar i.core {
   color: #fff;
   background: #e53955;
+}
+
+.draw-radar-decision i.shadow {
+  color: #536b94;
+  background: #eaf1fb;
 }
 
 .league-index-value i.watch {
