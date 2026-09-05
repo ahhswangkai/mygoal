@@ -10,18 +10,18 @@
       <section v-if="authState.initialized && !authState.user" class="account-gate">
         <div class="account-gate-icon">☆</div>
         <h2>登录后查看草稿箱</h2>
-        <p>当天观察方案按账号保存，其他用户无法查看。</p>
+        <p>未开赛观察方案按账号保存，其他用户无法查看。</p>
         <button type="button" @click="openAuth('login')">登录 / 注册</button>
       </section>
 
       <template v-else-if="authState.user">
         <section class="draft-day-card">
           <div>
-            <span>今日观察</span>
-            <strong>{{ matchDate || '加载中…' }}</strong>
+            <span>待赛观察</span>
+            <strong>{{ draftDateSummary }}</strong>
           </div>
           <em>{{ drafts.length }}个草稿</em>
-          <p>草稿不会按日期清空；任意一场比赛开赛后，相关方案会自动清理。</p>
+          <p>不限制比赛日期；任意一场比赛开赛后，相关方案会自动清理。</p>
         </section>
 
         <div class="draft-toolbar">
@@ -38,7 +38,7 @@
 
         <section v-else-if="drafts.length === 0" class="draft-empty">
           <div class="draft-empty-icon">☆</div>
-          <strong>今天还没有观察方案</strong>
+          <strong>暂无待赛观察方案</strong>
           <p>在计算器选好玩法后，点击底部“草稿”即可加入。</p>
           <router-link to="/calculator">去计算器选号</router-link>
         </section>
@@ -158,7 +158,7 @@
 </template>
 
 <script setup>
-import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import AccountButton from '../components/AccountButton.vue'
 import { apiRequest, authState, loadCurrentUser, openAuth } from '../auth'
@@ -166,7 +166,6 @@ import { apiRequest, authState, loadCurrentUser, openAuth } from '../auth'
 const CALCULATOR_DRAFT_LOAD_KEY = 'mygoal-calculator-draft-load-v1'
 const router = useRouter()
 const drafts = ref([])
-const matchDate = ref('')
 const loading = ref(false)
 const notice = ref('')
 const expandedMatches = ref(new Set())
@@ -175,6 +174,18 @@ const insights = ref({})
 const insightErrors = ref({})
 let noticeTimer = null
 let refreshTimer = null
+
+const draftDateSummary = computed(() => {
+  const dates = [...new Set(
+    drafts.value.flatMap(draft => (draft.selected_items || [])
+      .map(item => String(item.date || '').slice(0, 10))
+      .filter(Boolean))
+  )].sort()
+  if (loading.value && dates.length === 0) return '加载中…'
+  if (dates.length === 0) return '按比赛状态保留'
+  if (dates.length === 1) return dates[0]
+  return `${dates[0]} 至 ${dates[dates.length - 1]}`
+})
 
 const showNotice = message => {
   notice.value = message
@@ -357,7 +368,6 @@ const fetchDrafts = async () => {
   try {
     const result = await apiRequest('/api/user/drafts')
     drafts.value = result.data || []
-    matchDate.value = result.match_date || ''
   } catch (error) {
     if (error.status === 401) openAuth('login')
     else showNotice(error.message || '草稿加载失败')
@@ -396,7 +406,6 @@ const editDraft = draft => {
 
 watch(() => authState.user?.id, () => {
   drafts.value = []
-  matchDate.value = ''
   expandedMatches.value = new Set()
   insights.value = {}
   insightErrors.value = {}

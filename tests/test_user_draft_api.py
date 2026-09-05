@@ -79,16 +79,31 @@ class UserDraftApiTests(unittest.TestCase):
 
     @patch('web_app._calculator_draft_started', return_value=False)
     @patch('web_app._calculator_business_date', return_value='2026-09-04')
-    def test_rejects_non_current_match_date(self, _business_date, _started):
+    def test_accepts_non_current_and_mixed_match_dates(
+        self, _business_date, _started
+    ):
+        payload = self.payload('2026-09-03')
+        second = dict(payload['selected_items'][0])
+        second['matchId'] = '1002'
+        second['match'] = dict(second['match'])
+        second['match']['num'] = '周六002'
+        second['match']['date'] = '2026-09-05'
+        payload['selected_items'].append(second)
+        payload['pass_counts'] = [2]
         with web_app.app.test_request_context(
             '/api/user/drafts',
             method='POST',
-            json=self.payload('2026-09-03'),
+            json=payload,
         ):
             web_app.session['user_id'] = self.user['id']
             response, status = web_app.create_user_draft()
-        self.assertEqual(status, 400)
-        self.assertIn('只保留当天比赛', response.get_json()['message'])
+        self.assertEqual(status, 201)
+        saved = response.get_json()['data']
+        self.assertEqual(saved['match_date'], '2026-09-03')
+        self.assertEqual(
+            {item['date'] for item in saved['selected_items']},
+            {'2026-09-03', '2026-09-05'},
+        )
 
     @patch('web_app._calculator_business_date', return_value='2026-09-04')
     def test_started_match_is_rejected(self, _business_date):

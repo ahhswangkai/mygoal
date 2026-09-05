@@ -5261,18 +5261,17 @@ def _calculator_draft_payload(data):
     if active_tab < 0 or active_tab > 4:
         raise ValueError('草稿玩法页签格式错误')
 
-    match_dates = {
+    item_dates = [
         _normalize_calculator_date(item.get('date'))
         for item in normalized['selected_items']
-    }
-    match_dates.discard('')
-    if len(match_dates) != 1:
-        raise ValueError('草稿箱只能保存同一竞彩日的比赛')
+    ]
+    if not item_dates or any(not value for value in item_dates):
+        raise ValueError('草稿比赛日期不完整')
 
-    match_date = next(iter(match_dates))
-    active_date = _calculator_business_date()
-    if match_date != active_date:
-        raise ValueError('草稿箱只保留当天比赛，请重新选择今日场次')
+    # 草稿的生命周期只由比赛状态决定，不再受当前竞彩日限制。
+    # 跨日期方案使用最早一场的日期作为存储分组键，每个投注项仍保留
+    # 自己的真实日期，开赛清理会逐场判断。
+    match_date = min(item_dates)
 
     return {
         'id': str(uuid.uuid4()),

@@ -260,40 +260,63 @@
             <p>{{ faeDailyAi.daily_summary?.league_model_rankings?.policy }}</p>
           </section>
 
-          <section v-if="drawRadarSpotlights.length" class="draw-radar-spotlights">
+          <section v-if="drawRadarGroups.length" class="draw-radar-panel draw-radar-ranking-panel">
             <header>
               <div>
-                <strong>今日平 / 让平首选</strong>
-                <small>每天各取雷达排名最高且尚未开赛的一场</small>
+                <strong>平 / 让平概率排行榜</strong>
+                <small>保留最后一次研判榜单，已开赛和完场比赛仍展示</small>
               </div>
-              <span>观察与正式分层展示</span>
+              <span>核心 / 观察分层</span>
             </header>
-            <div>
-              <button
-                v-for="item in drawRadarSpotlights"
-                :key="`radar-spotlight-${item.key}-${item.match_id}`"
-                type="button"
-                @click="goToDetail(item.match_id)"
-              >
-                <span class="radar-spotlight-heading">
-                  <i :class="item.tier">{{ item.title }}</i>
-                  <em>{{ item.formal_eligible ? radarTierLabel(item.tier) : '观察首选' }}</em>
-                </span>
-                <strong>
-                  {{ dailyMatch(item.match_id).match_number }}
-                  {{ dailyMatch(item.match_id).home_team }} vs
-                  {{ dailyMatch(item.match_id).away_team }}
-                </strong>
-                <span class="radar-spotlight-metrics">
-                  <b>{{ item.selection }}</b>
-                  <i>概率 {{ radarPercent(item.probability) }}</i>
-                  <i>赔率 {{ formatPickOdds(item.odds) || '--' }}</i>
-                  <i>雷达 {{ item.score ?? '--' }}分</i>
-                </span>
-                <small>{{ shortRadarReason(item) }}</small>
-              </button>
+            <div class="draw-radar-groups">
+              <article v-for="group in drawRadarGroups" :key="group.key">
+                <div class="draw-radar-title">
+                  <strong>{{ group.title }}</strong>
+                  <small>Top {{ group.items.length }}</small>
+                </div>
+                <button
+                  v-for="(item, index) in group.items"
+                  :key="`draw-ranking-${group.key}-${item.match_id}`"
+                  type="button"
+                  @click="goToDetail(item.match_id)"
+                >
+                  <i class="draw-radar-rank">{{ index + 1 }}</i>
+                  <span class="draw-radar-match">
+                    <b>{{ dailyMatch(item.match_id).match_number }}</b>
+                    <span>
+                      {{ dailyMatch(item.match_id).home_team }}
+                      vs
+                      {{ dailyMatch(item.match_id).away_team }}
+                    </span>
+                    <small>
+                      {{ dailyMatch(item.match_id).league || '--' }} ·
+                      {{ dailyMatch(item.match_id).match_time || '--' }}
+                    </small>
+                  </span>
+                  <span class="draw-radar-decision">
+                    <i :class="item.tier">
+                      {{ item.formal_eligible ? radarTierLabel(item.tier) : '观察' }}
+                    </i>
+                    <b>{{ item.selection }} @{{ formatPickOdds(item.odds) || '--' }}</b>
+                    <em :class="radarSettlement(item, group.key).status">
+                      {{ radarSettlement(item, group.key).label }}
+                    </em>
+                  </span>
+                  <span class="draw-radar-metrics">
+                    <i>概率 {{ radarPercent(item.probability) }}</i>
+                    <i>雷达 {{ item.score ?? '--' }}分</i>
+                    <i :class="metricClass(item.odds_value)">
+                      价值 {{ signedMetric(item.odds_value) }}%
+                    </i>
+                    <i v-if="radarSettlement(item, group.key).score">
+                      比分 {{ radarSettlement(item, group.key).score }}
+                    </i>
+                  </span>
+                  <small class="draw-radar-reason">{{ shortRadarReason(item) }}</small>
+                </button>
+              </article>
             </div>
-            <p>观察首选只表示同类候选中排名第一；未通过正式门槛时不自动进入串关。</p>
+            <p>观察项不会自动进入正式串关；赛后命中状态按当次研判保存的选项结算。</p>
           </section>
 
           <section v-if="drawRadarParlay" class="draw-radar-parlay">
@@ -1471,18 +1494,15 @@ const shouldShowDailyMatchList = computed(() => (
 const dailyMatchMap = computed(() => Object.fromEntries(
   (faeDailyAi.value?.matches || []).map(item => [String(item.match_id), item])
 ))
-const drawRadarSpotlights = computed(() => {
+const drawRadarGroups = computed(() => {
   const radar = faeDailyAi.value?.daily_summary?.draw_radar || {}
   return [
-    { key: 'ordinary_draw', title: '平局首选' },
-    { key: 'handicap_draw', title: '让平首选' }
-  ].map(group => {
-    const item = (radar[group.key] || []).find(candidate => (
-      candidate?.match_id
-      && isVisibleDailyMatch(dailyMatch(candidate.match_id))
-    ))
-    return item ? { ...item, ...group } : null
-  }).filter(Boolean)
+    { key: 'ordinary_draw', title: '最可能平局' },
+    { key: 'handicap_draw', title: '最可能让平' }
+  ].map(group => ({
+    ...group,
+    items: (radar[group.key] || []).filter(candidate => candidate?.match_id)
+  })).filter(group => group.items.length)
 })
 const drawRadarParlay = computed(() => {
   const stored = faeDailyAi.value?.daily_summary?.draw_parlay_tickets?.two_three
@@ -1906,6 +1926,32 @@ function starText(stars) {
 
 function dailyMatch(matchId) {
   return dailyMatchMap.value[String(matchId)] || {}
+}
+
+function radarSettlement(candidate, market) {
+  const match = dailyMatch(candidate?.match_id)
+  const score = String(match?.result_score || '').trim()
+  const parsed = score.match(/^(\d+)\s*[:：-]\s*(\d+)$/)
+  if (Number(match?.current_status) !== 2 || !parsed) {
+    return {
+      status: 'pending',
+      label: Number(match?.current_status) === 1 ? '进行中' : '待赛',
+      score: parsed ? score : ''
+    }
+  }
+  const goalDifference = Number(parsed[1]) - Number(parsed[2])
+  const target = market === 'ordinary_draw'
+    ? 0
+    : Number(candidate?.target_goal_difference)
+  if (!Number.isFinite(target)) {
+    return { status: 'pending', label: '待结算', score }
+  }
+  const hit = goalDifference === target
+  return {
+    status: hit ? 'hit' : 'miss',
+    label: hit ? '✓ 命中' : '× 未中',
+    score
+  }
 }
 
 function isVisibleDailyMatch(item) {
@@ -2890,6 +2936,24 @@ onBeforeUnmount(() => {
   color: #e53955;
   font-size: 10px;
   white-space: nowrap;
+}
+
+.draw-radar-decision em {
+  font-size: 9px;
+  font-style: normal;
+  white-space: nowrap;
+}
+
+.draw-radar-decision em.hit {
+  color: #16956c;
+}
+
+.draw-radar-decision em.miss {
+  color: #e53955;
+}
+
+.draw-radar-decision em.pending {
+  color: #9992a1;
 }
 
 .league-model-panel .draw-radar-decision b {
