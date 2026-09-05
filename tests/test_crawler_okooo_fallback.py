@@ -79,6 +79,71 @@ OKOOO_TOTAL_FIRST_COMPANY_HTML = r'''
 '''
 
 
+OKOOO_HISTORY_HTML = r'''
+<div class="match-nav-content">
+  <div><a href="/team/f1/">澳客主队</a></div><div>18:00</div>
+  <div><a href="/team/f2/">澳客客队</a></div>
+</div>
+<section class="matchtabbox jsMatchTableBox" type="home">
+  <div class="titlebox"><span class="text">近10场4胜3平3负</span></div>
+  <table class="matchtable"><tbody><tr data-matchid="11">
+    <td><p>测试联赛</p><p class="gray9">26-09-02</p></td>
+    <td><div class="team-name-l"><b>澳客主队</b></div></td>
+    <td class="team-score"><a>2-1</a></td>
+    <td><div class="team-name-r"><b>对手甲</b></div></td><td class="panlu">赢</td>
+  </tr></tbody></table>
+</section>
+<section class="matchtabbox jsMatchTableBox" type="away">
+  <div class="titlebox"><span class="text">近10场3胜2平5负</span></div>
+  <table class="matchtable"><tbody><tr data-matchid="12">
+    <td><p>测试联赛</p><p class="gray9">26-08-30</p></td>
+    <td><div class="team-name-l"><b>对手乙</b></div></td>
+    <td class="team-score"><a>1-1</a></td>
+    <td><div class="team-name-r"><b>澳客客队</b></div></td><td class="panlu">赢</td>
+  </tr></tbody></table>
+</section>
+<section class="matchtabbox jsMatchTableBox" type="vs">
+  <div class="titlebox"><span class="text">主队4胜4平2负</span></div>
+  <table class="matchtable"><tbody><tr data-matchid="13">
+    <td><p>测试联赛</p><p class="gray9">25-04-01</p></td>
+    <td><div class="team-name-l"><b>澳客客队</b></div></td>
+    <td class="team-score"><a>0-1</a></td>
+    <td><div class="team-name-r"><b>澳客主队</b></div></td><td class="panlu">输</td>
+  </tr></tbody></table>
+</section>
+<section class="matchtabbox">
+  <div class="titlebox"><em>澳客主队</em>未来三场比赛</div>
+  <table class="matchtable"><tbody><tr data-matchid="14">
+    <td><p>测试杯</p><p class="gray9">26-09-12</p></td>
+    <td><div class="team-name-l"><b>澳客主队</b></div></td>
+    <td class="team-score-wl"><a>-</a></td>
+    <td><div class="team-name-r"><b>未来对手甲</b></div></td><td class="date">7天后</td>
+  </tr></tbody></table>
+</section>
+<section class="matchtabbox">
+  <div class="titlebox"><em>澳客客队</em>未来三场比赛</div>
+  <table class="matchtable"><tbody><tr data-matchid="15">
+    <td><p>测试杯</p><p class="gray9">26-09-13</p></td>
+    <td><div class="team-name-l"><b>未来对手乙</b></div></td>
+    <td class="team-score-wl"><a>-</a></td>
+    <td><div class="team-name-r"><b>澳客客队</b></div></td><td class="date">8天后</td>
+  </tr></tbody></table>
+</section>
+'''
+
+
+OKOOO_STANDINGS_HTML = r'''
+<div class="match-nav-content">
+  <div><a href="/team/f1/">澳客主队</a></div><div>18:00</div>
+  <div><a href="/team/f2/">澳客客队</a></div>
+</div>
+<div class="sai-table"><table class="table"><tbody>
+  <tr class="pinkBg"><td>2</td><td>澳客主队</td><td>8</td><td>5</td><td>2</td><td>1</td><td>15</td><td>7</td><td>17</td></tr>
+  <tr class="skyblueBg"><td>7</td><td>澳客客队</td><td>8</td><td>2</td><td>3</td><td>3</td><td>9</td><td>10</td><td>9</td></tr>
+</tbody></table></div>
+'''
+
+
 class OkoooFallbackTest(unittest.TestCase):
     def setUp(self):
         self.crawler = object.__new__(FootballCrawler)
@@ -185,6 +250,64 @@ class OkoooFallbackTest(unittest.TestCase):
         self.assertEqual(result['source_company_name'], '澳*门')
         self.assertEqual(result['initial_total'], '2.25')
         self.assertEqual(result['current_total'], '2.50')
+
+    def test_parses_public_recent_history_and_future(self):
+        result = self.crawler.parse_okooo_fundamentals_history(
+            OKOOO_HISTORY_HTML,
+            home_team='系统主队',
+            away_team='系统客队',
+        )
+
+        self.assertEqual(result['teams'], ['系统主队', '系统客队'])
+        self.assertEqual(result['recent']['home'][0]['date'], '2026-09-02')
+        self.assertEqual(result['recent']['home'][0]['home_team'], '系统主队')
+        self.assertEqual(result['recent']['away'][0]['away_team'], '系统客队')
+        self.assertEqual(result['history'][0]['away_team'], '系统主队')
+        self.assertEqual(result['history_summary'], '主队4胜4平2负')
+        self.assertEqual(result['future']['home'][0]['score'], '')
+        self.assertEqual(result['future']['away'][0]['away_team'], '系统客队')
+
+    def test_parses_public_standings_and_current_team_rankings(self):
+        result = self.crawler.parse_okooo_fundamentals_standings(
+            OKOOO_STANDINGS_HTML,
+            home_team='系统主队',
+            away_team='系统客队',
+        )
+
+        self.assertEqual(len(result['standings']), 2)
+        self.assertEqual(result['standings'][0]['goal_difference'], '8')
+        self.assertTrue(result['standings'][0]['current_match_team'])
+        home = result['team_rankings']['home']
+        self.assertEqual(home['league_rank'], '2')
+        self.assertEqual(home['records'][0]['scope'], '总成绩')
+        self.assertEqual(home['records'][0]['win_rate'], '62.5%')
+
+    def test_crawls_okooo_public_fundamentals_without_paid_ai(self):
+        urls = []
+
+        def fake_fetch(url, referer=None):
+            urls.append(url)
+            return (
+                OKOOO_HISTORY_HTML
+                if 'history.php' in url else OKOOO_STANDINGS_HTML
+            )
+
+        self.crawler._fetch_okooo_html = fake_fetch
+        result = self.crawler.crawl_okooo_fundamentals({
+            'match_id': '500-local-id',
+            'okooo_match_id': '1346795',
+            'home_team': '系统主队',
+            'away_team': '系统客队',
+        })
+
+        self.assertEqual(result['source'], '澳客')
+        self.assertEqual(result['okooo_match_id'], '1346795')
+        self.assertEqual(len(result['recent']['home']), 1)
+        self.assertEqual(len(result['history']), 1)
+        self.assertEqual(len(result['standings']), 2)
+        self.assertTrue(any('history.php' in url for url in urls))
+        self.assertTrue(any('game.php' in url for url in urls))
+        self.assertFalse(any('ai.php' in url for url in urls))
 
     def test_uses_sporttery_and_okooo_without_500_odds_pages(self):
         self.crawler._fetch_data = lambda *args, **kwargs: self.fail(

@@ -981,26 +981,27 @@ def get_sporttery_preview(match_id):
     })
 
 
+@app.route('/api/match/<match_id>/fundamentals')
 @app.route('/api/match/<match_id>/500-analysis')
-def get_500_match_analysis(match_id):
-    """500 官方数据分析页的结构化代理接口。"""
+def get_match_fundamentals(match_id):
+    """公开比赛基本面的结构化代理接口；旧路径保留前端兼容。"""
     if not re.fullmatch(r'\d+', str(match_id)):
         return jsonify({'success': False, 'message': '比赛 ID 格式错误'}), 400
     match = mongo_storage.get_match_by_id(match_id) if mongo_storage else {
         'match_id': str(match_id)
     }
     try:
-        data = _get_500_fundamentals(
+        data = _get_match_fundamentals(
             match,
             refresh=request.args.get('refresh') in ('1', 'true'),
         )
         return jsonify({'success': True, 'data': data})
     except requests.RequestException as exc:
-        app.logger.warning('500 analysis request failed for %s: %s', match_id, exc)
-        return jsonify({'success': False, 'message': '500 数据源请求失败'}), 502
+        app.logger.warning('fundamentals request failed for %s: %s', match_id, exc)
+        return jsonify({'success': False, 'message': '基本面数据源请求失败'}), 502
     except (ValueError, AttributeError, IndexError) as exc:
-        app.logger.warning('500 analysis parse failed for %s: %s', match_id, exc)
-        return jsonify({'success': False, 'message': '500 数据解析失败'}), 502
+        app.logger.warning('fundamentals parse failed for %s: %s', match_id, exc)
+        return jsonify({'success': False, 'message': '基本面数据解析失败'}), 502
 
 
 def _cache_datetime(value):
@@ -1028,18 +1029,22 @@ def _cached_fundamentals_fresh(data):
     return datetime.now() - cached_at <= timedelta(hours=ttl_hours)
 
 
-def _get_500_fundamentals(match, refresh=False, source_crawler=None):
-    """读取缓存或抓取一场 500 基本面，并回写比赛文档。"""
+def _get_match_fundamentals(match, refresh=False, source_crawler=None):
+    """读取缓存或抓取一场澳客公开基本面，并回写比赛文档。"""
     match = match or {}
     match_id = str(match.get('match_id') or '')
     cached = (
         mongo_storage.get_match_fundamentals(match_id)
         if mongo_storage else {}
     )
-    if cached and not refresh and _cached_fundamentals_fresh(cached):
+    if (
+        cached and not refresh
+        and cached.get('source') == '澳客'
+        and _cached_fundamentals_fresh(cached)
+    ):
         return cached
     try:
-        data = (source_crawler or crawler).crawl_match_analysis(match_id)
+        data = (source_crawler or crawler).crawl_okooo_fundamentals(match)
     except (
         requests.RequestException, ValueError, AttributeError, IndexError
     ):
@@ -1053,8 +1058,12 @@ def _get_500_fundamentals(match, refresh=False, source_crawler=None):
     return data
 
 
+# 兼容尚未迁移的内部调用和测试；实际数据源已经切换为澳客。
+_get_500_fundamentals = _get_match_fundamentals
+
+
 def _load_daily_fundamentals(matches):
-    """并发加载当天基本面；缓存命中时不访问 500。"""
+    """并发加载当天澳客基本面；缓存命中时不重复访问上游。"""
     results = {}
     pending = []
     cached_by_id = (
@@ -1066,7 +1075,10 @@ def _load_daily_fundamentals(matches):
     for match in matches:
         match_id = str(match.get('match_id') or '')
         cached = cached_by_id.get(match_id) or {}
-        if _cached_fundamentals_fresh(cached):
+        if (
+            cached.get('source') == '澳客'
+            and _cached_fundamentals_fresh(cached)
+        ):
             results[match_id] = cached
         else:
             pending.append(match)
@@ -1079,7 +1091,7 @@ def _load_daily_fundamentals(matches):
 
     def fetch(match):
         match_id = str(match.get('match_id') or '')
-        return match_id, FootballCrawler().crawl_match_analysis(match_id)
+        return match_id, FootballCrawler().crawl_okooo_fundamentals(match)
 
     with ThreadPoolExecutor(max_workers=min(workers, len(pending))) as executor:
         futures = {executor.submit(fetch, match): match for match in pending}
@@ -1095,7 +1107,7 @@ def _load_daily_fundamentals(matches):
                 requests.RequestException, ValueError, AttributeError, IndexError
             ) as exc:
                 app.logger.warning(
-                    '500 fundamentals unavailable for %s: %s', match_id, exc
+                    'Okooo fundamentals unavailable for %s: %s', match_id, exc
                 )
                 stale = cached_by_id.get(match_id) or {}
                 if stale:
@@ -1110,7 +1122,7 @@ def _generate_fae_for_match(match, use_ai=True):
     match_id = str(match.get('match_id') or '')
     source_analysis = {}
     try:
-        source_analysis = _get_500_fundamentals(match)
+        source_analysis = _get_match_fundamentals(match)
     except (requests.RequestException, ValueError, AttributeError, IndexError) as exc:
         app.logger.warning('FAE source unavailable for %s: %s', match_id, exc)
     predictions = mongo_storage.get_predictions(

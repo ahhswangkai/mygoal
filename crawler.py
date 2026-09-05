@@ -1227,6 +1227,230 @@ class FootballCrawler:
             result['over_under'] = self.parse_okooo_over_under(total_html)
         result['okooo_match_id'] = okooo_match_id
         return result
+
+    @staticmethod
+    def _normalize_okooo_match_date(value):
+        """将澳客的 ``26-09-05`` 日期补成项目统一的四位年份。"""
+        text = re.sub(r'\s+', '', str(value or ''))
+        if re.fullmatch(r'\d{2}-\d{2}-\d{2}', text):
+            return f'20{text}'
+        return text
+
+    @staticmethod
+    def _okooo_page_teams(soup):
+        names = [
+            node.get_text(' ', strip=True)
+            for node in soup.select('.match-nav-content a[href*="/team/"]')
+            if node.get_text(' ', strip=True)
+        ]
+        return names[:2]
+
+    def _parse_okooo_fixture_rows(self, table, team_aliases=None):
+        """解析澳客战绩/交锋/未来赛程共用的比赛行。"""
+        aliases = team_aliases or {}
+        rows = []
+        if not table:
+            return rows
+        for tr in table.select('tbody tr'):
+            cells = tr.find_all('td', recursive=False)
+            if len(cells) < 4:
+                continue
+            league_node = cells[0].find('p')
+            date_node = cells[0].select_one('.gray9')
+            home_node = cells[1].select_one('.team-name-l b, b')
+            away_node = cells[3].select_one('.team-name-r b, b')
+            score_node = cells[2].select_one('a') or cells[2]
+            home = home_node.get_text(' ', strip=True) if home_node else ''
+            away = away_node.get_text(' ', strip=True) if away_node else ''
+            score = re.sub(r'\s+', '', score_node.get_text(' ', strip=True))
+            row = {
+                'match_id': str(tr.get('data-matchid') or ''),
+                'league': league_node.get_text(' ', strip=True)
+                if league_node else '',
+                'date': self._normalize_okooo_match_date(
+                    date_node.get_text(' ', strip=True) if date_node else ''
+                ),
+                'home_team': aliases.get(home, home),
+                'away_team': aliases.get(away, away),
+                'score': score if re.fullmatch(r'\d+\s*[-:]\s*\d+', score) else '',
+            }
+            panlu = tr.select_one('td.panlu')
+            if panlu:
+                row['handicap_result'] = panlu.get_text(' ', strip=True)
+            interval = tr.select_one('td.date')
+            if interval:
+                row['interval'] = interval.get_text(' ', strip=True)
+            rows.append(row)
+        return rows
+
+    def parse_okooo_fundamentals_history(
+        self, html_content, home_team='', away_team=''
+    ):
+        """解析澳客分析页中的近期战绩、交锋记录和未来赛程。"""
+        soup = BeautifulSoup(html_content or '', 'lxml')
+        page_teams = self._okooo_page_teams(soup)
+        page_home = page_teams[0] if len(page_teams) > 0 else ''
+        page_away = page_teams[1] if len(page_teams) > 1 else ''
+        aliases = {}
+        if page_home and home_team:
+            aliases[page_home] = str(home_team)
+        if page_away and away_team:
+            aliases[page_away] = str(away_team)
+
+        recent = {'home': [], 'away': []}
+        recent_summary = {'home': '', 'away': ''}
+        history = []
+        history_summary = ''
+        for section in soup.select('section.jsMatchTableBox'):
+            side = str(section.get('type') or '').lower()
+            table = section.select_one('table.matchtable')
+            summary_node = section.select_one('.titlebox .text')
+            summary = summary_node.get_text(' ', strip=True) if summary_node else ''
+            if side in ('home', 'away'):
+                recent[side] = self._parse_okooo_fixture_rows(table, aliases)
+                recent_summary[side] = summary
+            elif side == 'vs':
+                history = self._parse_okooo_fixture_rows(table, aliases)
+                history_summary = summary
+
+        future = {'home': [], 'away': []}
+        future_sections = []
+        for section in soup.select('section.matchtabbox'):
+            title = section.select_one('.titlebox')
+            if title and '未来三场比赛' in title.get_text(' ', strip=True):
+                future_sections.append(section)
+        for side, section in zip(('home', 'away'), future_sections[:2]):
+            future[side] = self._parse_okooo_fixture_rows(
+                section.select_one('table.matchtable'), aliases
+            )
+
+        return {
+            'teams': [
+                str(home_team or page_home),
+                str(away_team or page_away),
+            ],
+            'recent': recent,
+            'recent_summary': recent_summary,
+            'history': history,
+            'history_summary': history_summary,
+            'future': future,
+        }
+
+    def parse_okooo_fundamentals_standings(
+        self, html_content, home_team='', away_team=''
+    ):
+        """解析澳客积分页，输出与现有 FAE 兼容的排名结构。"""
+        soup = BeautifulSoup(html_content or '', 'lxml')
+        page_teams = self._okooo_page_teams(soup)
+        page_home = page_teams[0] if len(page_teams) > 0 else ''
+        page_away = page_teams[1] if len(page_teams) > 1 else ''
+        aliases = {}
+        if page_home and home_team:
+            aliases[page_home] = str(home_team)
+        if page_away and away_team:
+            aliases[page_away] = str(away_team)
+
+        standings = []
+        table = soup.select_one('.sai-table table.table')
+        for tr in table.select('tbody tr') if table else []:
+            values = [cell.get_text(' ', strip=True) for cell in tr.select('td')]
+            if len(values) < 9:
+                continue
+            source_team = values[1]
+            team = aliases.get(source_team, source_team)
+            goal_difference = ''
+            try:
+                goal_difference = str(int(values[6]) - int(values[7]))
+            except (TypeError, ValueError):
+                pass
+            standings.append({
+                'rank': values[0],
+                'team': team,
+                'matches': values[2],
+                'wins': values[3],
+                'draws': values[4],
+                'losses': values[5],
+                'goals_for': values[6],
+                'goals_against': values[7],
+                'goal_difference': goal_difference,
+                'points': values[8],
+                'current_match_team': source_team in (page_home, page_away),
+            })
+
+        by_team = {str(item.get('team') or ''): item for item in standings}
+        team_rankings = {}
+        for side, team in (
+            ('home', str(home_team or page_home)),
+            ('away', str(away_team or page_away)),
+        ):
+            standing = by_team.get(team) or {}
+            if not standing:
+                continue
+            try:
+                matches = int(standing.get('matches') or 0)
+                wins = int(standing.get('wins') or 0)
+                win_rate = f'{wins / matches * 100:.1f}%' if matches else ''
+            except (TypeError, ValueError):
+                win_rate = ''
+            team_rankings[side] = {
+                'team': team,
+                'league_rank': standing.get('rank'),
+                'records': [{
+                    'scope': '总成绩',
+                    **{
+                        key: standing.get(key)
+                        for key in (
+                            'matches', 'wins', 'draws', 'losses',
+                            'goals_for', 'goals_against',
+                            'goal_difference', 'points', 'rank',
+                        )
+                    },
+                    'win_rate': win_rate,
+                }],
+            }
+        return {'standings': standings, 'team_rankings': team_rankings}
+
+    def crawl_okooo_fundamentals(self, match):
+        """抓取澳客公开基本面：近期、交锋、积分和未来赛程。"""
+        match = match or {}
+        okooo_match_id = self.resolve_okooo_match_id(match)
+        if not okooo_match_id:
+            raise ValueError('澳客未匹配到比赛 ID')
+        history_url = (
+            f'{OKOOO_BASE_URL}/match/history.php?MatchID={okooo_match_id}'
+        )
+        game_url = f'{OKOOO_BASE_URL}/match/game.php?MatchID={okooo_match_id}'
+        history_html = self._fetch_okooo_html(history_url)
+        history_data = self.parse_okooo_fundamentals_history(
+            history_html,
+            home_team=match.get('home_team') or '',
+            away_team=match.get('away_team') or '',
+        )
+        game_html = self._fetch_okooo_html(game_url, referer=history_url)
+        standings_data = self.parse_okooo_fundamentals_standings(
+            game_html,
+            home_team=match.get('home_team') or '',
+            away_team=match.get('away_team') or '',
+        )
+        has_public_data = any((
+            history_data.get('recent', {}).get('home'),
+            history_data.get('recent', {}).get('away'),
+            history_data.get('history'),
+            standings_data.get('standings'),
+        ))
+        if not has_public_data:
+            raise ValueError('澳客基本面页面未返回可用数据')
+        return {
+            'source': '澳客',
+            'source_url': history_url,
+            'match_id': str(match.get('match_id') or ''),
+            'okooo_match_id': str(okooo_match_id),
+            **history_data,
+            **standings_data,
+            # 澳客公开战绩页不稳定提供伤停和确认阵容，保持缺失，禁止推断。
+            'lineups': {},
+            'injuries': {},
+        }
     
     def _parse_chinese_handicap(self, text):
         """解析中文亚盘盘口为数字"""

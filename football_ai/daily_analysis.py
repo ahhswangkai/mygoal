@@ -1609,7 +1609,7 @@ def _team_recent_stats(rows: Iterable[Dict[str, Any]], team: Any) -> Dict[str, A
         elif team_text and team_text in away_name:
             opponent_goals, team_goals = score
         else:
-            # 500 的近期战绩表通常已按当前球队分侧展示；若无法
+            # 上游近期战绩表通常已按当前球队分侧展示；若无法
             # 识别主客，保守使用左侧比分作为该队代理。
             team_goals, opponent_goals = score
         total += 1
@@ -2055,7 +2055,7 @@ def _fundamentals_snapshot(
         "lineups": compact_lineups,
         "availability": availability,
         "note": (
-            "lineups为500预计阵容，不是官方确认首发"
+            "lineups为数据源预计阵容，不是官方确认首发"
             if compact_lineups.get("status") == "predicted" else ""
         ),
     }, missing
@@ -2129,7 +2129,7 @@ def build_daily_match_input(
             "缺少基本面：" + "、".join(missing_fundamentals)
         )
     if fundamentals.get("cache_status") == "stale":
-        warnings.append("500基本面刷新失败，当前使用过期缓存并已降权")
+        warnings.append("基本面刷新失败，当前使用过期缓存并已降权")
     rank_data = {
         "home": available_rank("home"),
         "away": available_rank("away"),
@@ -3198,7 +3198,7 @@ class FAEDailyAIAnalyzer:
             "大小球跳动达到0.75或以上时优先标记数据异常，不得据此强推方向。",
             "special_markets包含体彩计算器的总进球与半全场固定快照及程序校正结果；它们是独立玩法，只能辅助解释比分路径，不得改写胜平负/让球主次选，程序会保留其首选和次选供单独复盘。",
             "不得伪造近期状态、伤停、首发、天气、战意和赛程；输入缺失必须明确说明。",
-            "fundamentals来自500赛前页：recent、history、team_rankings、future可作基本面证据；lineups.status=predicted仅表示预计阵容，禁止称为官方首发；injuries.status=no_listed_players仅表示页面未列出球员，禁止称为确认无伤停。",
+            "fundamentals来自公开赛前数据页：recent、history、team_rankings、future可作基本面证据；lineups.status=predicted仅表示预计阵容，禁止称为官方首发；injuries.status=no_listed_players仅表示页面未列出球员，禁止称为确认无伤停。",
             "fundamentals.cache_status=stale时代表刷新失败后的过期缓存，只能低权重引用并必须提示时效风险。",
             "历史复盘记忆只用于提醒曾经出现的误判和风险，不是当前比赛事实，不得据此直接推荐。",
             "联赛历史画像来自当前比赛日期之前的完场数据并带时间衰减；只允许把eligible_for_adjustment=true且分段样本充足的内容作为低到中权重基线。",
@@ -3292,7 +3292,7 @@ class FAEDailyAIAnalyzer:
             "special_markets中的总进球与半全场是程序按体彩计算器赔率生成的独立首选/次选；只可用于比分路径解释，不得把它们输出为胜平负或让球主次选。",
             "primary_play与secondary_play只允许主胜、平局、客胜、让胜、让平、让负或观望；仅同市场两项可称双选覆盖，跨市场次选只是独立方向。大球、小球只作为market_analysis.total辅助证据。",
             "不得编造近期状态、伤停、首发、天气、战意或赛程。",
-            "fundamentals来自500赛前页；预计阵容不能写成官方首发，伤停栏目未列球员不能写成确认无伤停。",
+            "fundamentals来自公开赛前数据页；预计阵容不能写成官方首发，伤停栏目未列球员不能写成确认无伤停。",
             "fundamentals.cache_status=stale时必须降低基本面权重并提示时效风险。",
             "历史复盘记忆只是低权重风险提醒，不是当前比赛事实；不得机械套用昨天结论。",
             "联赛历史画像只在eligible_for_adjustment=true时作为低到中权重基线；赔率分段样本不足时不得使用。",

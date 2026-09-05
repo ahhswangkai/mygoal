@@ -125,7 +125,7 @@ class MongoDBStorage:
             self.odds_collection.create_index([('match_id', ASCENDING)])
             self.odds_collection.create_index([('created_at', DESCENDING)])
 
-            # 500 基本面单独存储，避免比赛列表接口携带大体积阵容/赛程。
+            # 基本面单独存储，避免比赛列表接口携带大体积战绩/赛程。
             self.match_fundamentals_collection.create_index(
                 [('match_id', ASCENDING)], unique=True
             )
@@ -330,7 +330,7 @@ class MongoDBStorage:
         return success_count
 
     def save_match_fundamentals(self, match_id, source_analysis):
-        """缓存单场 500 基本面，供详情页和全日研判复用。"""
+        """缓存单场基本面，供详情页和全日研判复用。"""
         if not match_id or not isinstance(source_analysis, dict):
             return None
         try:
@@ -342,7 +342,7 @@ class MongoDBStorage:
                 {
                     '$set': {
                         'match_id': str(match_id),
-                        'source': '500彩票网',
+                        'source': payload.get('source') or 'unknown',
                         'data': payload,
                         'updated_at': now,
                     }
@@ -350,18 +350,18 @@ class MongoDBStorage:
                 upsert=True,
             )
         except Exception as e:
-            self.logger.error(f"保存500基本面失败: {str(e)}")
+            self.logger.error(f"保存基本面失败: {str(e)}")
             return None
 
     def get_match_fundamentals(self, match_id):
-        """读取单场已缓存的 500 基本面。"""
+        """读取单场已缓存的基本面。"""
         try:
             document = self.match_fundamentals_collection.find_one(
                 {'match_id': str(match_id)}, {'_id': 0}
             )
             return (document or {}).get('data') or {}
         except Exception as e:
-            self.logger.error(f"读取500基本面失败: {str(e)}")
+            self.logger.error(f"读取基本面失败: {str(e)}")
             return {}
 
     def get_match_fundamentals_bulk(self, match_ids):
@@ -377,7 +377,7 @@ class MongoDBStorage:
                 )
             }
         except Exception as e:
-            self.logger.error(f"批量读取500基本面失败: {str(e)}")
+            self.logger.error(f"批量读取基本面失败: {str(e)}")
             return {}
     
     def save_odds(self, match_id, odds_data):

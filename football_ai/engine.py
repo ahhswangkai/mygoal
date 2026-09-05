@@ -73,6 +73,7 @@ class FootballAIEngine:
         external_data: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         source = source_analysis or {}
+        source_name = str(source.get("source") or "数据源")
         external = external_data or source.get("external") or {}
         match_data = {
             field: self._json_safe(match.get(field))
@@ -129,7 +130,8 @@ class FootballAIEngine:
             and injuries.get("status") == "no_listed_players"
         ):
             quality_issues.append(
-                "500伤病/停赛栏目未列出球员，不等同于官方确认无伤停"
+                f"{source_name}伤病/停赛栏目未列出球员，"
+                "不等同于官方确认无伤停"
             )
         if not lineups:
             quality_issues.append("缺少首发数据")
@@ -137,7 +139,9 @@ class FootballAIEngine:
             isinstance(lineups, dict)
             and lineups.get("status") == "predicted"
         ):
-            quality_issues.append("当前阵容为500预计阵容，非官方确认首发")
+            quality_issues.append(
+                f"当前阵容为{source_name}预计阵容，非官方确认首发"
+            )
         if not weather:
             quality_issues.append("缺少天气数据")
 
@@ -743,6 +747,7 @@ class FootballAIEngine:
     ) -> Dict[str, Dict[str, Any]]:
         match = context.get("match") or {}
         fundamentals = context.get("fundamentals") or {}
+        fundamentals_source = str(fundamentals.get("source") or "数据源")
         quality = context.get("data_quality") or {}
         movement = ((context.get("markets") or {}).get("movement") or {})
         favorite = max(probabilities, key=probabilities.get)
@@ -811,7 +816,9 @@ class FootballAIEngine:
         if injury_status == "no_listed_players":
             injuries_score = 45
             injuries_data_status = "partial"
-            injuries_tendency = "500伤停栏目未列出球员，尚非官方确认"
+            injuries_tendency = (
+                f"{fundamentals_source}伤停栏目未列出球员，尚非官方确认"
+            )
         elif injuries:
             injuries_score = 62
             injuries_data_status = "available"
