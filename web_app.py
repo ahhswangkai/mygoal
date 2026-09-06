@@ -17,7 +17,11 @@ from bet_settlement import (
     settle_bet,
 )
 from calculator_math import calculate_max_bonus, calculate_notes
-from crawler import FootballCrawler, is_pregame_match
+from crawler import (
+    FootballCrawler,
+    OkoooAccessVerificationError,
+    is_pregame_match,
+)
 from fae_schedule import app_timezone, prematch_analysis_due
 from match_time_utils import sort_matches_by_datetime
 from user_storage import UserStorage
@@ -57,6 +61,7 @@ import re
 import requests
 import random
 import threading
+import time
 import uuid
 from config import WECOM_WEBHOOK_URL
 from wecom_notifier import (
@@ -203,6 +208,9 @@ fae_daily_ai_analyzer.client.max_retries = max(
 )
 fae_daily_ai_lock = threading.Lock()
 fae_ai_review_lock = threading.Lock()
+fundamentals_fetch_lock = threading.Lock()
+fundamentals_cooldown_lock = threading.Lock()
+fundamentals_upstream_blocked_until = None
 
 
 # 初始化MongoDB存储（优先使用MongoDB，如果连接失败则使用文件存储）
@@ -1024,9 +1032,108 @@ def _cached_fundamentals_fresh(data):
     if not cached_at:
         return False
     ttl_hours = max(
-        1, int(os.getenv('FAE_FUNDAMENTALS_CACHE_HOURS', '4'))
+        1, int(os.getenv('FAE_FUNDAMENTALS_CACHE_HOURS', '24'))
     )
     return datetime.now() - cached_at <= timedelta(hours=ttl_hours)
+
+
+def _fundamentals_cache_usable(data):
+    """成功缓存即使超过刷新周期也比空数据更有价值。"""
+    if not isinstance(data, dict) or data.get('source') != '澳客':
+        return False
+    recent = data.get('recent') or {}
+    return any((
+        recent.get('home'),
+        recent.get('away'),
+        data.get('history'),
+        data.get('standings'),
+    ))
+
+
+def _fundamentals_entry(match_id):
+    if not mongo_storage:
+        return {}
+    if hasattr(mongo_storage, 'get_match_fundamentals_entries_bulk'):
+        return (
+            mongo_storage.get_match_fundamentals_entries_bulk([match_id]).get(
+                str(match_id)
+            ) or {}
+        )
+    data = mongo_storage.get_match_fundamentals(match_id)
+    return {'match_id': str(match_id), 'data': data} if data else {}
+
+
+def _fundamentals_retry_due(entry, now=None):
+    retry_at = _cache_datetime((entry or {}).get('next_retry_at'))
+    return not retry_at or (now or datetime.now()) >= retry_at
+
+
+def _fundamentals_upstream_available(now=None):
+    global fundamentals_upstream_blocked_until
+    with fundamentals_cooldown_lock:
+        retry_at = fundamentals_upstream_blocked_until
+    return not retry_at or (now or datetime.now()) >= retry_at
+
+
+def _block_fundamentals_upstream(minutes):
+    global fundamentals_upstream_blocked_until
+    with fundamentals_cooldown_lock:
+        fundamentals_upstream_blocked_until = (
+            datetime.now() + timedelta(minutes=max(1, int(minutes or 1)))
+        )
+
+
+def _fundamentals_failure_cooldown(entry, verification=False):
+    try:
+        failures = max(0, int((entry or {}).get('failure_count') or 0))
+    except (TypeError, ValueError):
+        failures = 0
+    base = 60 if verification else 30
+    return min(360, base * (2 ** min(failures, 3)))
+
+
+def _record_fundamentals_failure(match_id, exc, entry=None):
+    verification = isinstance(exc, OkoooAccessVerificationError)
+    cooldown = _fundamentals_failure_cooldown(
+        entry or _fundamentals_entry(match_id),
+        verification=verification,
+    )
+    if verification:
+        _block_fundamentals_upstream(cooldown)
+    if mongo_storage and hasattr(
+        mongo_storage, 'save_match_fundamentals_failure'
+    ):
+        mongo_storage.save_match_fundamentals_failure(
+            match_id, exc, cooldown_minutes=cooldown
+        )
+    return cooldown
+
+
+def _fetch_and_cache_match_fundamentals(match, source_crawler=None):
+    """串行访问澳客并统一写缓存，避免详情页与任务同时撞上游。"""
+    match = match or {}
+    match_id = str(match.get('match_id') or '')
+    entry = _fundamentals_entry(match_id)
+    if not _fundamentals_retry_due(entry):
+        raise ValueError('基本面数据处于失败冷却期')
+    if not _fundamentals_upstream_available():
+        raise ValueError('基本面数据源处于访问验证冷却期')
+    try:
+        with fundamentals_fetch_lock:
+            if not _fundamentals_upstream_available():
+                raise ValueError('基本面数据源处于访问验证冷却期')
+            data = (source_crawler or crawler).crawl_okooo_fundamentals(match)
+    except (
+        requests.RequestException,
+        ValueError,
+        AttributeError,
+        IndexError,
+    ) as exc:
+        _record_fundamentals_failure(match_id, exc, entry=entry)
+        raise
+    if mongo_storage:
+        mongo_storage.save_match_fundamentals(match_id, data)
+    return data
 
 
 def _get_match_fundamentals(match, refresh=False, source_crawler=None):
@@ -1037,24 +1144,24 @@ def _get_match_fundamentals(match, refresh=False, source_crawler=None):
         mongo_storage.get_match_fundamentals(match_id)
         if mongo_storage else {}
     )
-    if (
-        cached and not refresh
-        and cached.get('source') == '澳客'
-        and _cached_fundamentals_fresh(cached)
-    ):
-        return cached
+    if cached and not refresh and _fundamentals_cache_usable(cached):
+        result = dict(cached)
+        result['cache_status'] = (
+            'fresh' if _cached_fundamentals_fresh(cached) else 'stale'
+        )
+        return result
     try:
-        data = (source_crawler or crawler).crawl_okooo_fundamentals(match)
+        data = _fetch_and_cache_match_fundamentals(
+            match, source_crawler=source_crawler
+        )
     except (
         requests.RequestException, ValueError, AttributeError, IndexError
     ):
-        if cached:
+        if _fundamentals_cache_usable(cached):
             stale = dict(cached)
             stale['cache_status'] = 'stale'
             return stale
         raise
-    if mongo_storage:
-        mongo_storage.save_match_fundamentals(match_id, data)
     return data
 
 
@@ -1063,9 +1170,8 @@ _get_500_fundamentals = _get_match_fundamentals
 
 
 def _load_daily_fundamentals(matches):
-    """并发加载当天澳客基本面；缓存命中时不重复访问上游。"""
+    """全日研判只读缓存；网络补齐由低频后台任务负责。"""
     results = {}
-    pending = []
     cached_by_id = (
         mongo_storage.get_match_fundamentals_bulk([
             match.get('match_id') for match in matches
@@ -1075,54 +1181,27 @@ def _load_daily_fundamentals(matches):
     for match in matches:
         match_id = str(match.get('match_id') or '')
         cached = cached_by_id.get(match_id) or {}
-        if (
-            cached.get('source') == '澳客'
-            and _cached_fundamentals_fresh(cached)
-        ):
-            results[match_id] = cached
-        else:
-            pending.append(match)
-    if not pending:
-        return results
-
-    workers = max(
-        1, min(3, int(os.getenv('FAE_FUNDAMENTALS_WORKERS', '2')))
-    )
-
-    def fetch(match):
-        match_id = str(match.get('match_id') or '')
-        return match_id, FootballCrawler().crawl_okooo_fundamentals(match)
-
-    with ThreadPoolExecutor(max_workers=min(workers, len(pending))) as executor:
-        futures = {executor.submit(fetch, match): match for match in pending}
-        for future in as_completed(futures):
-            match = futures[future]
-            match_id = str(match.get('match_id') or '')
-            try:
-                _, data = future.result()
-                results[match_id] = data
-                if mongo_storage:
-                    mongo_storage.save_match_fundamentals(match_id, data)
-            except (
-                requests.RequestException, ValueError, AttributeError, IndexError
-            ) as exc:
-                app.logger.warning(
-                    'Okooo fundamentals unavailable for %s: %s', match_id, exc
-                )
-                stale = cached_by_id.get(match_id) or {}
-                if stale:
-                    stale = dict(stale)
-                    stale['cache_status'] = 'stale'
-                results[match_id] = stale
+        if not _fundamentals_cache_usable(cached):
+            continue
+        item = dict(cached)
+        item['cache_status'] = (
+            'fresh' if _cached_fundamentals_fresh(cached) else 'stale'
+        )
+        results[match_id] = item
     return results
 
 
-def _generate_fae_for_match(match, use_ai=True):
+def _generate_fae_for_match(match, use_ai=True, fetch_fundamentals=True):
     """组装数据并运行 FAE；核心计算不依赖大模型。"""
     match_id = str(match.get('match_id') or '')
     source_analysis = {}
     try:
-        source_analysis = _get_match_fundamentals(match)
+        if fetch_fundamentals:
+            source_analysis = _get_match_fundamentals(match)
+        else:
+            source_analysis = _load_daily_fundamentals([match]).get(
+                match_id, {}
+            )
     except (requests.RequestException, ValueError, AttributeError, IndexError) as exc:
         app.logger.warning('FAE source unavailable for %s: %s', match_id, exc)
     predictions = mongo_storage.get_predictions(
@@ -2624,7 +2703,9 @@ def run_daily_fae_analysis():
         if cached and cached.get('engine') and not force:
             results.append({'match_id': match.get('match_id'), 'cache_hit': True})
             continue
-        analysis = _generate_fae_for_match(match, use_ai=use_ai)
+        analysis = _generate_fae_for_match(
+            match, use_ai=use_ai, fetch_fundamentals=False
+        )
         mongo_storage.save_ai_analysis(analysis)
         results.append({
             'match_id': match.get('match_id'),
@@ -3184,6 +3265,117 @@ def _run_scheduled_fae_prematch_ai():
                 f"{owner_date} ({','.join(due_ids)}): {str(exc)}"
             )
 
+
+def _run_scheduled_fundamentals_prefetch():
+    """低频分批补齐基本面，避免全日研判并发请求触发澳客 WAF。"""
+    if not _env_enabled('FAE_FUNDAMENTALS_PREFETCH_ENABLED', True):
+        return {'status': 'disabled', 'fetched': 0, 'failed': 0}
+    if not mongo_storage:
+        return {'status': 'storage_unavailable', 'fetched': 0, 'failed': 0}
+    if not _fundamentals_upstream_available():
+        return {'status': 'upstream_cooldown', 'fetched': 0, 'failed': 0}
+
+    now = datetime.now()
+    owner_dates = sorted({
+        now.strftime('%Y-%m-%d'),
+        (now - timedelta(days=1)).strftime('%Y-%m-%d'),
+    })
+    matches = mongo_storage.get_matches(filters={
+        'owner_date': {'$in': owner_dates},
+        'status': 0,
+    })
+    entries = (
+        mongo_storage.get_match_fundamentals_entries_bulk([
+            match.get('match_id') for match in matches
+        ])
+        if hasattr(mongo_storage, 'get_match_fundamentals_entries_bulk')
+        else {}
+    )
+    pending = []
+    for match in matches:
+        match_id = str(match.get('match_id') or '')
+        if not match_id:
+            continue
+        entry = entries.get(match_id) or {}
+        cached = entry.get('data') or (
+            mongo_storage.get_match_fundamentals(match_id)
+            if not entries else {}
+        )
+        if (
+            _fundamentals_cache_usable(cached)
+            and _cached_fundamentals_fresh(cached)
+        ):
+            continue
+        if not _fundamentals_retry_due(entry, now=now):
+            continue
+        pending.append((not _fundamentals_cache_usable(cached), match))
+
+    # 缺失数据优先，其次才刷新超过24小时的旧缓存；同级按开赛时间排序。
+    pending.sort(key=lambda item: (
+        0 if item[0] else 1,
+        str(item[1].get('match_time') or ''),
+        str(item[1].get('match_number') or ''),
+    ))
+    try:
+        batch_size = max(
+            1, min(5, int(os.getenv('FAE_FUNDAMENTALS_BATCH_SIZE', '2')))
+        )
+    except ValueError:
+        batch_size = 2
+    try:
+        request_interval = max(
+            0.0,
+            min(
+                10.0,
+                float(os.getenv('FAE_FUNDAMENTALS_REQUEST_INTERVAL_SECONDS', '3')),
+            ),
+        )
+    except ValueError:
+        request_interval = 3.0
+
+    fetched = 0
+    failed = 0
+    batch_crawler = FootballCrawler()
+    try:
+        for index, (_, match) in enumerate(pending[:batch_size]):
+            match_id = str(match.get('match_id') or '')
+            try:
+                _fetch_and_cache_match_fundamentals(
+                    match, source_crawler=batch_crawler
+                )
+                fetched += 1
+            except OkoooAccessVerificationError as exc:
+                failed += 1
+                app.logger.warning(
+                    '澳客基本面触发访问验证，后台预取进入冷却: %s', exc
+                )
+                break
+            except (
+                requests.RequestException, ValueError, AttributeError, IndexError
+            ) as exc:
+                failed += 1
+                app.logger.warning(
+                    '澳客基本面后台预取失败 %s: %s', match_id, exc
+                )
+            if request_interval and index + 1 < min(len(pending), batch_size):
+                time.sleep(request_interval)
+    finally:
+        batch_crawler.close()
+
+    remaining = max(0, len(pending) - fetched)
+    status = 'completed' if pending else 'cache_complete'
+    if fetched or failed:
+        print(
+            f"✅ 澳客基本面低频预取: 成功 {fetched} 场，"
+            f"失败 {failed} 场，待处理 {remaining} 场"
+        )
+    return {
+        'status': status,
+        'fetched': fetched,
+        'failed': failed,
+        'pending': remaining,
+    }
+
 def _crawl_latest():
     try:
         print(f"⏰ 开始定时爬取任务: {datetime.now()}")
@@ -3315,7 +3507,9 @@ def _crawl_latest():
                         pass
                 try:
                     fae_analysis = _generate_fae_for_match(
-                        fresh_match, use_ai=use_ai_narrative
+                        fresh_match,
+                        use_ai=use_ai_narrative,
+                        fetch_fundamentals=False,
                     )
                     if mongo_storage.save_ai_analysis(fae_analysis):
                         fae_count += 1
@@ -3414,6 +3608,15 @@ def _start_scheduler():
                 scheduler = BackgroundScheduler()
                 scheduler.add_job(_crawl_latest, CronTrigger(minute='*/15'), id='crawl_every_15m', replace_existing=True)
                 scheduler.add_job(
+                    _run_scheduled_fundamentals_prefetch,
+                    CronTrigger(minute='*/10'),
+                    id='fundamentals_prefetch_every_10m',
+                    replace_existing=True,
+                    coalesce=True,
+                    max_instances=1,
+                    next_run_time=datetime.now() + timedelta(seconds=30),
+                )
+                scheduler.add_job(
                     _settle_pending_calculator_bets,
                     CronTrigger(minute='*/5'),
                     id='settle_calculator_bets_every_5m',
@@ -3477,7 +3680,8 @@ def _start_scheduler():
                 scheduler.start()
                 print(
                     "✅ 定时任务调度器已启动 "
-                    f"(每15分钟刷新，每5分钟结算投注，"
+                    f"(每15分钟刷新赔率，每10分钟低频补齐基本面，"
+                    f"每5分钟结算投注，"
                     f"每{prematch_check_minutes}分钟检查开赛前30分钟研判，"
                     f"每2小时刷新影子回测，每日06:23训练监督模型，"
                     f"固定全日研判{baseline_label})"

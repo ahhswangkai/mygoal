@@ -8532,16 +8532,24 @@ class FAEDailyAIAnalyzer:
         for item in matches:
             row = dict(item or {})
             analysis = dict(row.get("analysis") or {})
+            ordinary_draw = cls._apply_draw_radar_structure_gate(
+                row.get("input_snapshot") or {},
+                cls._draw_radar_candidate(row, "平局"),
+            )
             ordinary_draw = cls._apply_draw_radar_candidate_guard(
-                cls._draw_radar_candidate(row, "平局")
+                ordinary_draw
             )
-            handicap_draw = cls._apply_draw_radar_candidate_guard(
-                cls._draw_radar_candidate(row, "让平")
-            )
+            handicap_draw = cls._draw_radar_candidate(row, "让平")
             handicap_draw = cls._route_handicap_draw_precision(
                 row.get("input_snapshot") or {},
                 ordinary_draw,
                 handicap_draw,
+            )
+            handicap_draw = cls._apply_draw_radar_structure_gate(
+                row.get("input_snapshot") or {}, handicap_draw
+            )
+            handicap_draw = cls._apply_draw_radar_candidate_guard(
+                handicap_draw
             )
             analysis["draw_radar"] = {
                 "ordinary_draw": ordinary_draw,
@@ -8549,6 +8557,198 @@ class FAEDailyAIAnalyzer:
             }
             row["analysis"] = analysis
             result.append(row)
+        return result
+
+    @classmethod
+    def _draw_radar_structure_profile(
+        cls,
+        source: Dict[str, Any],
+        selection: str,
+    ) -> Dict[str, Any]:
+        """Confirm the market structure before a row enters the radar.
+
+        A high model score is not sufficient for a shortlist.  Ordinary draws
+        need either a genuinely balanced quarter-ball market or a clearly
+        weakening favourite in a restrained scoring environment.  Handicap
+        draws first need evidence that the favourite can still win; a retreat,
+        rising favourite water or falling total is a non-win warning rather
+        than evidence of an exact one-goal margin.
+
+        Older snapshots without complete Euro/Asian data remain auditable and
+        are left unchanged, but cannot use this gate as positive evidence.
+        """
+        favorite = cls._favorite_market_profile(source)
+        favorite_side = str(favorite.get("side") or "")
+        favorite_odds = _number(favorite.get("odds"))
+        draw_odds = _number(favorite.get("draw_odds"))
+        if (
+            favorite_side not in {"home", "away"}
+            or favorite_odds is None
+            or draw_odds is None
+        ):
+            return {
+                "data_complete": False,
+                "eligible": True,
+                "kind": "insufficient_market_data",
+                "reason": "欧赔数据不完整，仅保留逐场审计",
+            }
+
+        asian = cls._asian_favorite_depth_profile(source, favorite_side)
+        current_depth = _number(asian.get("current_depth"))
+        line_change = _number(asian.get("line_change"))
+        favorite_water = _number(asian.get("current_favorite_water"))
+        water_change = _number(asian.get("favorite_water_change"))
+        total = cls._total_market_profile(source)
+        total_line = _number(total.get("line"))
+        total_change = _number(total.get("line_change"))
+        if current_depth is None:
+            return {
+                "data_complete": False,
+                "eligible": True,
+                "kind": "insufficient_market_data",
+                "reason": "亚盘深度数据不完整，仅保留逐场审计",
+            }
+
+        common = {
+            "data_complete": True,
+            "favorite_side": favorite_side,
+            "favorite_odds": round(favorite_odds, 3),
+            "draw_odds": round(draw_odds, 3),
+            "asian_depth": round(current_depth, 3),
+            "asian_line_change": (
+                round(line_change, 3) if line_change is not None else None
+            ),
+            "favorite_water": (
+                round(favorite_water, 3)
+                if favorite_water is not None else None
+            ),
+            "favorite_water_change": (
+                round(water_change, 3) if water_change is not None else None
+            ),
+            "total_line": (
+                round(total_line, 3) if total_line is not None else None
+            ),
+            "total_line_change": (
+                round(total_change, 3) if total_change is not None else None
+            ),
+        }
+
+        if selection == "平局":
+            balanced_path = bool(
+                favorite_odds >= 1.75
+                and current_depth <= 0.25
+                and draw_odds <= 3.55
+                and (total_line is None or total_line <= 3.0)
+            )
+            trapped_favorite_path = bool(
+                1.45 <= favorite_odds <= 1.90
+                and 0.25 <= current_depth <= 0.75
+                and draw_odds <= 3.85
+                and (
+                    (line_change is not None and line_change <= -0.24)
+                    or (water_change is not None and water_change >= 0.05)
+                )
+                and (total_line is None or total_line <= 2.75)
+                and (total_change is None or total_change <= 0.01)
+            )
+            if balanced_path:
+                return {
+                    **common,
+                    "eligible": True,
+                    "kind": "balanced_quarter_ball_draw",
+                    "reason": "欧赔均衡、亚盘不深于平半，满足均势平结构",
+                }
+            if trapped_favorite_path:
+                return {
+                    **common,
+                    "eligible": True,
+                    "kind": "weakening_favorite_draw",
+                    "reason": (
+                        "热门方退盘或升水且大小球未升，风险优先路由普通平"
+                    ),
+                }
+            return {
+                **common,
+                "eligible": False,
+                "kind": "ordinary_draw_structure_unconfirmed",
+                "reason": "既非均势浅盘，也未形成热门方不胜的低比分结构",
+            }
+
+        handicap = _number(
+            (source.get("sporttery_handicap") or {}).get("value")
+        )
+        aligned = bool(
+            handicap is not None
+            and abs(handicap) == 1
+            and (
+                (favorite_side == "home" and handicap < 0)
+                or (favorite_side == "away" and handicap > 0)
+            )
+        )
+        reasons = []
+        if not aligned:
+            reasons.append("竞彩让1球方向与欧赔热门方不一致")
+        if not 0.50 <= current_depth <= 1.00:
+            reasons.append("亚盘热门深度不在半球至一球区间")
+        if favorite_odds > 2.00:
+            reasons.append("热门胜赔不足以确认赢球方向")
+        if line_change is not None and line_change < -0.01:
+            reasons.append("亚盘退盘更接近热门不胜，不按一球小胜解释")
+        if water_change is not None and water_change > 0.05:
+            reasons.append("热门方升水，赢球前提未确认")
+        if total_change is not None and total_change < -0.01:
+            reasons.append("大小球降盘，热门进球能力缺少确认")
+        return {
+            **common,
+            "eligible": not bool(reasons),
+            "kind": (
+                "favorite_win_exact_margin_confirmed"
+                if not reasons else "favorite_win_unconfirmed"
+            ),
+            "reason": (
+                "热门方仍获半球至一球支持且大小球未降，可继续评估一球胜"
+                if not reasons else "；".join(reasons)
+            ),
+        }
+
+    @classmethod
+    def _apply_draw_radar_structure_gate(
+        cls,
+        source: Dict[str, Any],
+        candidate: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Exclude structurally unconfirmed rows from ranking and review."""
+        result = dict(candidate or {})
+        if not result or result.get("tier") == "exclude":
+            return result
+        profile = cls._draw_radar_structure_profile(
+            source, str(result.get("selection") or "")
+        )
+        result["market_structure_gate"] = profile
+        if profile.get("data_complete") is False:
+            return result
+        if profile.get("eligible"):
+            result["ranking_eligible"] = True
+            return result
+
+        result["original_tier"] = result.get("tier")
+        result["tier"] = "exclude"
+        result["rating"] = cls._rating(min(
+            2.5, float(result.get("rating") or 2.5)
+        ))
+        result["ranking_eligible"] = False
+        result["formal_eligible"] = False
+        veto_reasons = [
+            str(value) for value in result.get("official_veto_reasons") or []
+            if str(value).strip()
+        ]
+        veto_reasons.append(str(profile.get("reason") or "盘口结构未确认"))
+        result["official_veto_reasons"] = list(dict.fromkeys(veto_reasons))
+        reason = str(result.get("reason") or "").rstrip("。；")
+        result["reason"] = (
+            (reason + "；" if reason else "")
+            + f"结构门禁：{profile.get('reason')}，退出当日雷达。"
+        )
         return result
 
     @classmethod
@@ -8836,11 +9036,12 @@ class FAEDailyAIAnalyzer:
         """Expose core/watch radar rows even when official pools exclude them."""
         result = dict(summary or {})
         radar = {
-            "version": "draw-radar-v4-precision-routing",
+            "version": "draw-radar-v5-structure-gated",
             "policy": (
                 "每天普通平局与竞彩让平分别最多展示前三；同一场只进入"
-                "概率和证据更强的一榜。只有核心且非负赔率价值候选可参与"
-                "组合，观察层和高风险赔率区间只复盘。"
+                "概率和证据更强的一榜。普通平必须满足均势浅盘或热门失效"
+                "结构；让平必须先确认热门仍能赢，再判断恰好赢一球。只有"
+                "核心且非负赔率价值候选可参与组合。"
             ),
             "ordinary_draw": [],
             "handicap_draw": [],

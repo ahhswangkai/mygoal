@@ -132,6 +132,9 @@ class MongoDBStorage:
             self.match_fundamentals_collection.create_index([
                 ('updated_at', DESCENDING)
             ])
+            self.match_fundamentals_collection.create_index([
+                ('next_retry_at', ASCENDING)
+            ])
             
             # 预测表索引
             self.predictions_collection.create_index([('match_id', ASCENDING)], unique=True)
@@ -345,6 +348,12 @@ class MongoDBStorage:
                         'source': payload.get('source') or 'unknown',
                         'data': payload,
                         'updated_at': now,
+                        'failure_count': 0,
+                    },
+                    '$unset': {
+                        'last_failure_at': '',
+                        'last_error': '',
+                        'next_retry_at': '',
                     }
                 },
                 upsert=True,
@@ -379,6 +388,52 @@ class MongoDBStorage:
         except Exception as e:
             self.logger.error(f"批量读取基本面失败: {str(e)}")
             return {}
+
+    def get_match_fundamentals_entries_bulk(self, match_ids):
+        """读取基本面缓存及失败冷却元数据。"""
+        ids = [str(value) for value in match_ids if value not in (None, '')]
+        if not ids:
+            return {}
+        try:
+            return {
+                str(document.get('match_id')): document
+                for document in self.match_fundamentals_collection.find(
+                    {'match_id': {'$in': ids}}, {'_id': 0}
+                )
+            }
+        except Exception as e:
+            self.logger.error(f"批量读取基本面缓存状态失败: {str(e)}")
+            return {}
+
+    def save_match_fundamentals_failure(
+        self, match_id, error, cooldown_minutes=60
+    ):
+        """记录上游失败并设置持久冷却，避免定时任务反复撞 WAF。"""
+        if not match_id:
+            return None
+        try:
+            now = datetime.now()
+            cooldown = max(1, int(cooldown_minutes or 1))
+            return self.match_fundamentals_collection.update_one(
+                {'match_id': str(match_id)},
+                {
+                    '$set': {
+                        'match_id': str(match_id),
+                        'last_failure_at': now,
+                        'last_error': str(error or '')[:300],
+                        'next_retry_at': now + timedelta(minutes=cooldown),
+                    },
+                    '$inc': {'failure_count': 1},
+                    '$setOnInsert': {
+                        'source': '澳客',
+                        'created_at': now,
+                    },
+                },
+                upsert=True,
+            )
+        except Exception as e:
+            self.logger.error(f"保存基本面失败冷却状态失败: {str(e)}")
+            return None
     
     def save_odds(self, match_id, odds_data):
         """

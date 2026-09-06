@@ -325,6 +325,30 @@ class FAEDailyAIReviewEngine:
                 item, matches_by_id.get(str(item.get("match_id"))) or {}
             )
         ]
+        radar_summary = (snapshot.get("daily_summary") or {}).get(
+            "draw_radar"
+        )
+        if isinstance(radar_summary, dict):
+            shortlist_refs = {
+                (str(item.get("match_id") or ""), selection)
+                for key, selection in (
+                    ("ordinary_draw", "平局"),
+                    ("handicap_draw", "让平"),
+                )
+                for item in radar_summary.get(key) or []
+                if item.get("match_id")
+            }
+            draw_radar_shortlist_results = [
+                row for row in draw_radar_results
+                if (
+                    str(row.get("match_id") or ""),
+                    str(row.get("selection") or ""),
+                ) in shortlist_refs
+            ]
+        else:
+            # Backward compatibility for snapshots created before the daily
+            # top-three radar summary was persisted.
+            draw_radar_shortlist_results = list(draw_radar_results)
         special_market_results = [
             result
             for item in matches
@@ -470,6 +494,9 @@ class FAEDailyAIReviewEngine:
             "handicap_results": handicap_results,
             "two_option_results": two_option_results,
             "draw_radar_results": draw_radar_results,
+            "draw_radar_shortlist_results": (
+                draw_radar_shortlist_results
+            ),
             "special_market_results": special_market_results,
             "combo_results": combo_results,
             "draw_ticket_results": draw_ticket_results,
@@ -511,23 +538,40 @@ class FAEDailyAIReviewEngine:
                     },
                 },
                 "draw_radar": {
-                    "overall": summarize_ai_settled(draw_radar_results),
+                    "scope": "daily_shortlist",
+                    "policy": "普通平与让平分别只统计当日排行榜前三",
+                    "overall": summarize_ai_settled(
+                        draw_radar_shortlist_results
+                    ),
                     "ordinary_draw": summarize_ai_settled([
-                        row for row in draw_radar_results
+                        row for row in draw_radar_shortlist_results
                         if row.get("selection") == "平局"
                     ]),
                     "handicap_draw": summarize_ai_settled([
-                        row for row in draw_radar_results
+                        row for row in draw_radar_shortlist_results
                         if row.get("selection") == "让平"
                     ]),
                     "core": summarize_ai_settled([
-                        row for row in draw_radar_results
+                        row for row in draw_radar_shortlist_results
                         if row.get("tier") == "core"
                     ]),
                     "watch": summarize_ai_settled([
-                        row for row in draw_radar_results
+                        row for row in draw_radar_shortlist_results
                         if row.get("tier") == "watch"
                     ]),
+                    "scan": {
+                        "overall": summarize_ai_settled(
+                            draw_radar_results
+                        ),
+                        "ordinary_draw": summarize_ai_settled([
+                            row for row in draw_radar_results
+                            if row.get("selection") == "平局"
+                        ]),
+                        "handicap_draw": summarize_ai_settled([
+                            row for row in draw_radar_results
+                            if row.get("selection") == "让平"
+                        ]),
+                    },
                 },
                 "special_markets": {
                     key: {
@@ -1236,6 +1280,7 @@ def aggregate_daily_ai_reviews(
     handicap_results: List[Dict[str, Any]] = []
     two_option_results: List[Dict[str, Any]] = []
     draw_radar_results: List[Dict[str, Any]] = []
+    draw_radar_scan_results: List[Dict[str, Any]] = []
     special_market_results: List[Dict[str, Any]] = []
     combos: List[Dict[str, Any]] = []
     draw_ticket_results: List[Dict[str, Any]] = []
@@ -1262,10 +1307,20 @@ def aggregate_daily_ai_reviews(
             **row,
             "review_owner_date": owner_date,
         } for row in review.get("two_option_results") or [])
+        review_draw_scan = list(review.get("draw_radar_results") or [])
+        review_draw_shortlist = review.get(
+            "draw_radar_shortlist_results"
+        )
+        if review_draw_shortlist is None:
+            review_draw_shortlist = review_draw_scan
         draw_radar_results.extend({
             **row,
             "review_owner_date": owner_date,
-        } for row in review.get("draw_radar_results") or [])
+        } for row in review_draw_shortlist)
+        draw_radar_scan_results.extend({
+            **row,
+            "review_owner_date": owner_date,
+        } for row in review_draw_scan)
         special_market_results.extend({
             **row,
             "review_owner_date": owner_date,
@@ -1325,6 +1380,8 @@ def aggregate_daily_ai_reviews(
             },
         },
         "draw_radar": {
+            "scope": "daily_shortlist",
+            "policy": "普通平与让平分别只统计每日排行榜前三",
             "overall": summarize_ai_settled(draw_radar_results),
             "ordinary_draw": summarize_ai_settled([
                 row for row in draw_radar_results
@@ -1342,6 +1399,19 @@ def aggregate_daily_ai_reviews(
                 row for row in draw_radar_results
                 if row.get("tier") == "watch"
             ]),
+            "scan": {
+                "overall": summarize_ai_settled(
+                    draw_radar_scan_results
+                ),
+                "ordinary_draw": summarize_ai_settled([
+                    row for row in draw_radar_scan_results
+                    if row.get("selection") == "平局"
+                ]),
+                "handicap_draw": summarize_ai_settled([
+                    row for row in draw_radar_scan_results
+                    if row.get("selection") == "让平"
+                ]),
+            },
         },
         "special_markets": {
             key: {

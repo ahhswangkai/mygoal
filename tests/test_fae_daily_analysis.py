@@ -701,6 +701,85 @@ class DailyAnalysisTests(unittest.TestCase):
         self.assertTrue(result["ranking_eligible"])
         self.assertNotIn("precision_routing_guard", result)
 
+    def test_draw_structure_accepts_balanced_quarter_ball_market(self):
+        profile = FAEDailyAIAnalyzer._draw_radar_structure_profile({
+            "euro": {"current": [2.42, 3.30, 2.42]},
+            "asian": {
+                "initial": [0.95, "平手", 0.90],
+                "current": [0.90, "平手", 0.95],
+            },
+            "total": {
+                "initial": [0.90, 2.50, 0.95],
+                "current": [0.90, 2.50, 0.95],
+            },
+        }, "平局")
+
+        self.assertTrue(profile["eligible"])
+        self.assertEqual(profile["kind"], "balanced_quarter_ball_draw")
+
+    def test_draw_structure_routes_weakening_favorite_to_ordinary_draw(self):
+        profile = FAEDailyAIAnalyzer._draw_radar_structure_profile({
+            "euro": {"current": [1.50, 3.75, 5.10]},
+            "asian": {
+                "initial": [0.83, "半/一", 1.03],
+                "current": [0.90, "半/一", 0.95],
+            },
+            "total": {
+                "initial": [0.98, 2.75, 0.88],
+                "current": [0.83, 2.50, 1.03],
+            },
+        }, "平局")
+
+        self.assertTrue(profile["eligible"])
+        self.assertEqual(profile["kind"], "weakening_favorite_draw")
+
+    def test_handicap_draw_requires_favorite_win_before_exact_margin(self):
+        source = {
+            "euro": {"current": [1.72, 3.75, 3.55]},
+            "sporttery_handicap": {"value": -1},
+            "asian": {
+                "initial": [1.00, "一球", 0.85],
+                "current": [0.88, "半球", 0.98],
+            },
+            "total": {
+                "initial": [0.95, 3.00, 0.90],
+                "current": [0.95, 3.25, 0.90],
+            },
+        }
+        result = FAEDailyAIAnalyzer._apply_draw_radar_structure_gate(
+            source,
+            {
+                "selection": "让平",
+                "tier": "core",
+                "rating": 4.5,
+                "score": 88,
+                "reason": "原始模型高分。",
+            },
+        )
+
+        self.assertEqual(result["tier"], "exclude")
+        self.assertFalse(result["ranking_eligible"])
+        self.assertIn("亚盘退盘", result["reason"])
+
+    def test_handicap_draw_accepts_supported_favorite_and_rising_total(self):
+        profile = FAEDailyAIAnalyzer._draw_radar_structure_profile({
+            "euro": {"current": [1.49, 3.65, 5.45]},
+            "sporttery_handicap": {"value": -1},
+            "asian": {
+                "initial": [1.03, "半/一", 0.83],
+                "current": [0.85, "半/一", 1.00],
+            },
+            "total": {
+                "initial": [0.85, 2.25, 1.00],
+                "current": [0.90, 2.75, 0.95],
+            },
+        }, "让平")
+
+        self.assertTrue(profile["eligible"])
+        self.assertEqual(
+            profile["kind"], "favorite_win_exact_margin_confirmed"
+        )
+
     def test_precision_routing_excludes_candidate_from_daily_ranking(self):
         summary = FAEDailyAIAnalyzer.attach_draw_radar_summary({}, [{
             "analysis": {

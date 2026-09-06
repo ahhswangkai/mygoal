@@ -56,11 +56,15 @@
                   <strong v-else-if="dailyAiContent.no_bet" class="daily-no-bet"><small>结论</small>不下注</strong>
                   <span v-if="dailyAiPrimaryRadar"><small>总盘结论</small>{{ dailyAiContent.decision || '观望' }}</span>
                   <span><small>赛果预测</small>{{ dailyAiContent.predicted_result || '观望' }}</span>
-                  <strong v-if="dailyAiTwoOptionText" class="daily-two-option">
+                  <strong v-if="dailyAiOfficialSingle" class="daily-official-single">
+                    <small>{{ dailyAiOfficialSingleLabel }}</small>{{ dailyAiOfficialSingle.selection }}
+                    <template v-if="dailyAiOfficialSingle.odds"> @{{ dailyAiOfficialSingle.odds }}</template>
+                  </strong>
+                  <strong v-else-if="dailyAiTwoOptionText" class="daily-two-option">
                     <small>{{ dailyAiTwoOption.actionable ? '正式双选' : '观察双选' }}</small>{{ dailyAiTwoOptionText }}
                   </strong>
                   <strong v-else>
-                    <small>单选</small>{{ dailyAiContent.single_play || dailyAiContent.primary_play || '观望' }}
+                    <small>方向首选</small>{{ dailyAiContent.single_play || dailyAiContent.primary_play || '观望' }}
                     <template v-if="dailyAiContent.single_odds"> @{{ dailyAiContent.single_odds }}</template>
                   </strong>
                   <span
@@ -480,6 +484,23 @@ const dailySpecialMarkets = computed(() => {
 })
 const dailyAiTwoOption = computed(() => (
   dailyAiContent.value?.two_option_recommendation || {}
+))
+const OFFICIAL_PARLAY_SOURCES = new Set([
+  'fae-supervised-profit-parlay',
+  'fae-ark-target-3-parlay',
+  'fae-two-option-receiving-parlay'
+])
+const dailyAiOfficialSingle = computed(() => {
+  const profile = dailyAiContent.value?.official_bet_recommendation || {}
+  const selection = String(profile.selection || '').trim()
+  if (!profile.actionable || !selection || selection === '观望') return null
+  if (OFFICIAL_PARLAY_SOURCES.has(String(profile.strategy_source || ''))) return null
+  return profile
+})
+const dailyAiOfficialSingleLabel = computed(() => (
+  ['主胜', '平局', '客胜'].includes(String(dailyAiOfficialSingle.value?.selection || ''))
+    ? '正式胜平负单选'
+    : '正式让球单选'
 ))
 const dailyAiTwoOptionSelections = computed(() => {
   if (!['胜平负', '竞彩让球'].includes(dailyAiTwoOption.value?.market)) return []
@@ -1057,6 +1078,19 @@ onMounted(fetchAll)
 .daily-detail-picks .daily-two-option {
   color: var(--detail-accent);
   font-size: 19px;
+}
+
+.daily-detail-picks .daily-official-single {
+  padding: 5px 9px;
+  color: #fff;
+  font-size: 18px;
+  background: linear-gradient(135deg, #ff5962, #e92747);
+  border-radius: 7px;
+  box-shadow: 0 3px 10px rgb(229 57 85 / 18%);
+}
+
+.daily-detail-picks .daily-official-single small {
+  color: #ffe4e9;
 }
 
 .daily-detail-picks .daily-radar-main small {

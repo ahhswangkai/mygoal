@@ -37,6 +37,23 @@ _SPORTTERY_CALCULATOR_CACHE = {'fetched_at': 0.0, 'data': None}
 _SPORTTERY_CALCULATOR_CACHE_LOCK = threading.Lock()
 
 
+class OkoooAccessVerificationError(ValueError):
+    """澳客返回访问验证页，而不是比赛数据页。"""
+
+
+def is_okooo_access_verification(html_content):
+    """识别 HTTP 200 下伪装成正常响应的阿里云 WAF 验证页。"""
+    html = str(html_content or '')
+    markers = (
+        'aliyun_waf_aa',
+        'initAliyunCaptcha',
+        'captcha-content-container',
+        '访问验证',
+        'Access Verification',
+    )
+    return any(marker in html for marker in markers)
+
+
 def clean_asian_handicap(value):
     """去掉盘口单元格末尾的升降走势标记，保留真正的盘口名称。"""
     if value is None:
@@ -1421,17 +1438,23 @@ class FootballCrawler:
         )
         game_url = f'{OKOOO_BASE_URL}/match/game.php?MatchID={okooo_match_id}'
         history_html = self._fetch_okooo_html(history_url)
+        if is_okooo_access_verification(history_html):
+            raise OkoooAccessVerificationError('澳客要求滑动访问验证')
         history_data = self.parse_okooo_fundamentals_history(
             history_html,
             home_team=match.get('home_team') or '',
             away_team=match.get('away_team') or '',
         )
         game_html = self._fetch_okooo_html(game_url, referer=history_url)
-        standings_data = self.parse_okooo_fundamentals_standings(
-            game_html,
-            home_team=match.get('home_team') or '',
-            away_team=match.get('away_team') or '',
-        )
+        if is_okooo_access_verification(game_html):
+            # 战绩和交锋已经成功时，积分页被限流不应丢弃整场基本面。
+            standings_data = {'standings': [], 'team_rankings': {}}
+        else:
+            standings_data = self.parse_okooo_fundamentals_standings(
+                game_html,
+                home_team=match.get('home_team') or '',
+                away_team=match.get('away_team') or '',
+            )
         has_public_data = any((
             history_data.get('recent', {}).get('home'),
             history_data.get('recent', {}).get('away'),

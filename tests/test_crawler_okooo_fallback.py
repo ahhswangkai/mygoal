@@ -1,7 +1,7 @@
 import logging
 import unittest
 
-from crawler import FootballCrawler
+from crawler import FootballCrawler, OkoooAccessVerificationError
 
 
 OKOOO_LIST_HTML = r'''
@@ -308,6 +308,35 @@ class OkoooFallbackTest(unittest.TestCase):
         self.assertTrue(any('history.php' in url for url in urls))
         self.assertTrue(any('game.php' in url for url in urls))
         self.assertFalse(any('ai.php' in url for url in urls))
+
+    def test_detects_okooo_waf_verification_in_history_page(self):
+        self.crawler._fetch_okooo_html = lambda *args, **kwargs: (
+            '<meta name="aliyun_waf_aa"><script>initAliyunCaptcha()</script>'
+        )
+
+        with self.assertRaises(OkoooAccessVerificationError):
+            self.crawler.crawl_okooo_fundamentals({
+                'match_id': '500-local-id',
+                'okooo_match_id': '1346795',
+            })
+
+    def test_keeps_history_when_standings_page_hits_waf(self):
+        def fake_fetch(url, referer=None):
+            if 'history.php' in url:
+                return OKOOO_HISTORY_HTML
+            return '<div class="captcha-content-container"></div>'
+
+        self.crawler._fetch_okooo_html = fake_fetch
+        result = self.crawler.crawl_okooo_fundamentals({
+            'match_id': '500-local-id',
+            'okooo_match_id': '1346795',
+            'home_team': '系统主队',
+            'away_team': '系统客队',
+        })
+
+        self.assertEqual(len(result['recent']['home']), 1)
+        self.assertEqual(len(result['history']), 1)
+        self.assertEqual(result['standings'], [])
 
     def test_uses_sporttery_and_okooo_without_500_odds_pages(self):
         self.crawler._fetch_data = lambda *args, **kwargs: self.fail(

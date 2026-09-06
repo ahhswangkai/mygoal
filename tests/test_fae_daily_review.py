@@ -413,6 +413,50 @@ class DailyAIReviewTests(unittest.TestCase):
             review["summary"]["draw_radar"]["watch"]["hits"], 1
         )
 
+    def test_draw_radar_headline_only_counts_daily_shortlist(self):
+        first = source("202", "主胜")
+        second = source("203", "主胜")
+        for item in (first, second):
+            item["analysis"]["draw_radar"] = {
+                "ordinary_draw": {
+                    "tier": "watch",
+                    "rating": 3.5,
+                    "score": 70,
+                    "probability": 29,
+                    "market_probability": 27,
+                    "odds_value": 2,
+                },
+                "handicap_draw": {"tier": "exclude"},
+            }
+        snapshot = {
+            **self.snapshot,
+            "matches": [first, second],
+            "daily_summary": {
+                "recommended_combinations": [],
+                "draw_radar": {
+                    "ordinary_draw": [{"match_id": "202"}],
+                    "handicap_draw": [],
+                },
+            },
+        }
+        results = {
+            "202": {"status": 2, "home_score": 0, "away_score": 0},
+            "203": {"status": 2, "home_score": 1, "away_score": 1},
+        }
+
+        review = FAEDailyAIReviewEngine().review(snapshot, results)
+
+        self.assertEqual(len(review["draw_radar_results"]), 2)
+        self.assertEqual(len(review["draw_radar_shortlist_results"]), 1)
+        self.assertEqual(
+            review["summary"]["draw_radar"]["ordinary_draw"]["settled"],
+            1,
+        )
+        self.assertEqual(
+            review["summary"]["draw_radar"]["scan"]["ordinary_draw"]["settled"],
+            2,
+        )
+
     def test_settles_formal_all_play_pool_independently_from_no_bet(self):
         pick = source(
             "205", "平局", euro=(1.80, 3.50, 4.20), no_bet=True,

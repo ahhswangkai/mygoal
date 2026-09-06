@@ -260,6 +260,65 @@
             <p>{{ faeDailyAi.daily_summary?.league_model_rankings?.policy }}</p>
           </section>
 
+          <section v-if="drawRadarParlay" class="draw-radar-parlay">
+            <header>
+              <div>
+                <strong>今日平 / 让平 2、3关</strong>
+                <small>平局榜首 + 两场不重复的让平榜首</small>
+              </div>
+              <span>雷达观察组合</span>
+            </header>
+            <div class="draw-radar-parlay-picks">
+              <button
+                v-for="(pick, index) in drawRadarParlay.picks"
+                :key="`draw-radar-parlay-${pick.market}-${pick.match_id}`"
+                type="button"
+                @click="goToDetail(pick.match_id)"
+              >
+                <i>{{ index + 1 }}</i>
+                <span>
+                  <b>{{ dailyMatch(pick.match_id).match_number }}</b>
+                  <small>
+                    {{ dailyMatch(pick.match_id).home_team }} vs
+                    {{ dailyMatch(pick.match_id).away_team }}
+                  </small>
+                </span>
+                <strong>
+                  {{ pick.selection }}
+                  <em>@{{ formatPickOdds(pick.odds) }}</em>
+                </strong>
+              </button>
+            </div>
+            <div class="draw-radar-parlay-lines">
+              <span v-for="line in drawRadarParlay.lines" :key="line.key">
+                {{ line.label }}
+                <b>{{ line.odds }}倍</b>
+              </span>
+            </div>
+            <div v-if="drawRadarTwoLeg" class="draw-radar-two-leg">
+              <span>
+                <strong>独立二串一</strong>
+                <small>
+                  {{ drawRadarTwoLeg.picks.map(pick => (
+                    `${dailyMatch(pick.match_id).match_number}${pick.selection}`
+                  )).join(' × ') }}
+                </small>
+              </span>
+              <b>{{ drawRadarTwoLeg.combinedOdds }}倍</b>
+            </div>
+            <footer>
+              <span>
+                <strong>3场2、3关 · 共4注</strong>
+                <small>1倍8元 · 20倍160元</small>
+              </span>
+              <span>
+                <strong>至少2中约 {{ drawRadarParlay.coverageProbability }}%</strong>
+                <small>按当前未校准模型概率独立估算</small>
+              </span>
+            </footer>
+            <p>该卡仅组合当日雷达首选，不等同于正式核心，也不代表保证盈利。</p>
+          </section>
+
           <section v-if="drawRadarGroups.length" class="draw-radar-panel draw-radar-ranking-panel">
             <header>
               <div>
@@ -323,65 +382,6 @@
               </article>
             </div>
             <p>正式雷达同场互斥；影子模型独立展示，且不会自动进入正式串关。赛后按当次研判保存的选项结算。</p>
-          </section>
-
-          <section v-if="drawRadarParlay" class="draw-radar-parlay">
-            <header>
-              <div>
-                <strong>今日平 / 让平 2、3关</strong>
-                <small>平局榜首 + 两场不重复的让平榜首</small>
-              </div>
-              <span>雷达观察组合</span>
-            </header>
-            <div class="draw-radar-parlay-picks">
-              <button
-                v-for="(pick, index) in drawRadarParlay.picks"
-                :key="`draw-radar-parlay-${pick.market}-${pick.match_id}`"
-                type="button"
-                @click="goToDetail(pick.match_id)"
-              >
-                <i>{{ index + 1 }}</i>
-                <span>
-                  <b>{{ dailyMatch(pick.match_id).match_number }}</b>
-                  <small>
-                    {{ dailyMatch(pick.match_id).home_team }} vs
-                    {{ dailyMatch(pick.match_id).away_team }}
-                  </small>
-                </span>
-                <strong>
-                  {{ pick.selection }}
-                  <em>@{{ formatPickOdds(pick.odds) }}</em>
-                </strong>
-              </button>
-            </div>
-            <div class="draw-radar-parlay-lines">
-              <span v-for="line in drawRadarParlay.lines" :key="line.key">
-                {{ line.label }}
-                <b>{{ line.odds }}倍</b>
-              </span>
-            </div>
-            <div v-if="drawRadarTwoLeg" class="draw-radar-two-leg">
-              <span>
-                <strong>独立二串一</strong>
-                <small>
-                  {{ drawRadarTwoLeg.picks.map(pick => (
-                    `${dailyMatch(pick.match_id).match_number}${pick.selection}`
-                  )).join(' × ') }}
-                </small>
-              </span>
-              <b>{{ drawRadarTwoLeg.combinedOdds }}倍</b>
-            </div>
-            <footer>
-              <span>
-                <strong>3场2、3关 · 共4注</strong>
-                <small>1倍8元 · 20倍160元</small>
-              </span>
-              <span>
-                <strong>至少2中约 {{ drawRadarParlay.coverageProbability }}%</strong>
-                <small>按当前未校准模型概率独立估算</small>
-              </span>
-            </footer>
-            <p>该卡仅组合当日雷达首选，不等同于正式核心，也不代表保证盈利。</p>
           </section>
 
           <div v-if="dailyPoolGroups.length" class="daily-pools">
@@ -497,7 +497,7 @@
                 <span class="daily-selection-pair">
                   <span class="daily-choice-stack">
                     <span class="daily-pick-choice primary">
-                      <i>单选</i>
+                      <i>{{ isDailyOfficialSingle(item) ? '正式单选' : '方向首选' }}</i>
                       <em>
                         <b>{{ dailyDisplayPrimary(item) }}</b>
                         <small v-if="dailyDisplayOdds(item, dailyDisplayPrimary(item))">
@@ -520,7 +520,8 @@
                   </span>
                   <strong>
                     {{ item.analysis?.star_text || starText(item.analysis?.rating) }}
-                    <i v-if="item.analysis?.two_option_recommendation?.actionable">双选</i>
+                    <i v-if="isDailyOfficialSingle(item)" class="official-single-badge">正式单选</i>
+                    <i v-else-if="item.analysis?.two_option_recommendation?.actionable">双选</i>
                     <i v-else-if="item.analysis?.no_bet">观察级</i>
                   </strong>
                   <span class="daily-pick-notes">
@@ -749,7 +750,7 @@
               <strong>{{ faeStats.draw_radar?.ordinary_draw?.hit_rate || 0 }}%</strong>
               <small>
                 {{ faeStats.draw_radar?.ordinary_draw?.hits || 0 }}/{{ faeStats.draw_radar?.ordinary_draw?.settled || 0 }}
-                核心与观察独立结算
+                每日榜单前三结算
               </small>
             </article>
             <article>
@@ -757,7 +758,7 @@
               <strong>{{ faeStats.draw_radar?.handicap_draw?.hit_rate || 0 }}%</strong>
               <small>
                 {{ faeStats.draw_radar?.handicap_draw?.hits || 0 }}/{{ faeStats.draw_radar?.handicap_draw?.settled || 0 }}
-                核心与观察独立结算
+                每日榜单前三结算
               </small>
             </article>
           </div>
@@ -2110,7 +2111,9 @@ function dailyCandidateScores(item) {
 
 function dailyDisplayPlays(item) {
   const analysis = item?.analysis || {}
+  const officialSingle = dailyOfficialSingle(item)
   const candidates = [
+    officialSingle?.selection,
     analysis.single_play,
     analysis.single_secondary_play,
     analysis.primary_play,
@@ -2127,6 +2130,24 @@ function dailyDisplayPlays(item) {
     if (!unique.includes(candidate)) unique.push(candidate)
   }
   return unique
+}
+
+const OFFICIAL_PARLAY_SOURCES = new Set([
+  'fae-supervised-profit-parlay',
+  'fae-ark-target-3-parlay',
+  'fae-two-option-receiving-parlay'
+])
+
+function dailyOfficialSingle(item) {
+  const profile = item?.analysis?.official_bet_recommendation || {}
+  const selection = normalizeDailyPlay(profile.selection)
+  if (!profile.actionable || !isDailyResultPlay(selection)) return null
+  if (OFFICIAL_PARLAY_SOURCES.has(String(profile.strategy_source || ''))) return null
+  return { ...profile, selection }
+}
+
+function isDailyOfficialSingle(item) {
+  return !!dailyOfficialSingle(item)
 }
 
 function dailyDisplayPrimary(item) {
@@ -4077,7 +4098,7 @@ onBeforeUnmount(() => {
 }
 
 .daily-pick-choice > i {
-  width: 28px;
+  width: 44px;
   color: #a3a6ad;
   font-size: 9px;
   font-style: normal;
@@ -4142,6 +4163,12 @@ onBeforeUnmount(() => {
   letter-spacing: 0;
   background: #fff6df;
   border-radius: 999px;
+}
+
+.daily-selection-pair > strong .official-single-badge {
+  color: #fff;
+  background: linear-gradient(135deg, #ff5962, #e92747);
+  box-shadow: 0 2px 7px rgb(229 57 85 / 20%);
 }
 
 .daily-pick-notes {
