@@ -61,6 +61,14 @@ TWO_OPTION_COMBO_MIN_ANCHOR_EXPECTED_RETURN = 0.90
 TWO_OPTION_COMBO_MIN_JOINT_COVERAGE = 40.0
 TWO_OPTION_COMBO_MIN_PATH_ODDS = 2.40
 TWO_OPTION_COMBO_TARGET_PATH_ODDS = 3.00
+FORMAL_TWO_LEG_MIN_PROBABILITY = 45.0
+FORMAL_TWO_LEG_MIN_EXPECTED_RETURN = 0.85
+FORMAL_TWO_LEG_MIN_MARKET_CONFIDENCE = 70.0
+FORMAL_TWO_LEG_MIN_TWO_OPTION_COVERAGE = 75.0
+FORMAL_TWO_LEG_MIN_COMBINED_ODDS = 2.70
+FORMAL_TWO_LEG_MAX_COMBINED_ODDS = 4.50
+FORMAL_TWO_LEG_TARGET_ODDS = 3.20
+FORMAL_TWO_LEG_MIN_TICKET_EXPECTED_RETURN = 0.85
 TWO_OPTION_PLAY_SELECTIONS = {
     "主胜", "平局", "客胜", "让胜", "让平", "让负",
 }
@@ -70,6 +78,11 @@ TWO_OPTION_PLAY_SELECTIONS = {
 # 赔率区间风险硬门槛。
 RADAR_OFFICIAL_POOL_LIMITS = {"平局": 2, "让平": 2}
 RADAR_DISPLAY_LIMITS = {"ordinary_draw": 3, "handicap_draw": 3}
+RADAR_WEEKEND_SESSION_LIMITS = {
+    "ordinary_draw": 3,
+    "handicap_draw": 3,
+}
+RADAR_WEEKEND_LATE_HOUR = 21
 RADAR_OFFICIAL_SMALL_MIN_SCORE = {"平局": 88.0, "让平": 80.0}
 RADAR_OFFICIAL_SMALL_MIN_PROBABILITY = {"平局": 29.0, "让平": 27.0}
 RADAR_OFFICIAL_SMALL_MIN_VALUE = {"平局": 0.0, "让平": 0.0}
@@ -5330,17 +5343,31 @@ class FAEDailyAIAnalyzer:
         profile: Dict[str, Any],
         handicap: float,
     ) -> Dict[str, Any]:
-        """Choose one leg from a two-option profile using market evidence."""
+        """Choose a leg only when the independent single model supports it.
+
+        A two-option coverage score describes the probability that *either*
+        selected outcome lands.  It is not evidence for one of those outcomes
+        in isolation.  Formal parlays therefore require the independently
+        calibrated single selection to be present in the same two-option
+        profile, with its own probability and expected-return fields.
+        """
         analysis = row.get("analysis") or {}
         selections = {
             str(value) for value in profile.get("selections") or []
         }
-
-        # A triggered guard is an explicit correction of the model pick and
-        # must outrank every later heuristic.  This prevents a demoted
-        # handicap draw from being reintroduced by the parlay builder.
-        guard_selection = None
-        guard_reason = None
+        coverage = _number(profile.get("coverage_score"))
+        if (
+            coverage is None
+            or coverage < FORMAL_TWO_LEG_MIN_TWO_OPTION_COVERAGE
+        ):
+            return {
+                "eligible": False,
+                "reason": (
+                    "双选覆盖分低于"
+                    f"{FORMAL_TWO_LEG_MIN_TWO_OPTION_COVERAGE:g}分"
+                ),
+            }
+        triggered_guards = []
         for key in (
             "consistency_guard",
             "directional_precision_guard",
@@ -5348,56 +5375,129 @@ class FAEDailyAIAnalyzer:
         ):
             guard = analysis.get(key) or {}
             if guard.get("triggered"):
-                guard_selection = str(
-                    guard.get("effective_selection") or ""
+                triggered_guards.append(
+                    str(guard.get("reason") or key)
                 )
-                guard_reason = str(guard.get("reason") or "")
-        if guard_selection:
+        if triggered_guards:
             return {
-                "eligible": guard_selection in selections,
-                "selection": guard_selection,
-                "basis": "guardrail",
-                "reason": guard_reason or "使用护栏后的最终方向",
+                "eligible": False,
+                "reason": "盘口护栏已触发，只能降级观察："
+                + "；".join(triggered_guards),
             }
 
         source = row.get("input_snapshot") or {}
-        deep_cover = cls._deep_cover_parlay_signal(source)
-        if deep_cover.get("triggered"):
-            selection = str(deep_cover.get("selection") or "")
-            if selection in selections:
-                return {
-                    "eligible": True,
-                    "selection": selection,
-                    "basis": "deep-cover",
-                    "reason": deep_cover.get("reason"),
-                    "deep_cover_signal": deep_cover,
-                }
-
-        one_goal = cls._one_goal_margin_parlay_signal(source)
-        if one_goal.get("triggered") and "让平" in selections:
+        risk = (source.get("fae_core") or {}).get("risk") or {}
+        warnings = [str(value) for value in source.get("data_warnings") or []]
+        if (
+            risk.get("dangerous")
+            or (analysis.get("non_cover_guard") or {}).get("force_no_bet")
+            or any("跳至" in value or "跳档" in value for value in warnings)
+        ):
             return {
-                "eligible": True,
-                "selection": "让平",
-                "basis": "one-goal-margin",
-                "reason": one_goal.get("reason"),
-                "one_goal_margin_signal": one_goal,
+                "eligible": False,
+                "reason": "存在危险盘口、异常跳档或热门不穿信号",
             }
 
-        primary = str(analysis.get("primary_play") or "")
-        if primary in selections:
+        single = analysis.get("single_probability_profile") or {}
+        alignment = single.get("direction_alignment") or {}
+        if alignment.get("cancelled"):
             return {
-                "eligible": True,
-                "selection": primary,
-                "basis": "analysis-primary",
-                "reason": "使用逐场研判的最终主选",
+                "eligible": False,
+                "reason": "独立单选与双选方向冲突，单选已取消",
             }
-
-        receiving = "让负" if handicap < 0 else "让胜"
+        selection = str(single.get("selection") or "")
+        if selection not in selections:
+            return {
+                "eligible": False,
+                "reason": "独立单选不在双选覆盖范围内，禁止强行换项",
+            }
+        candidate = next((
+            value for value in single.get("candidates") or []
+            if str(value.get("selection") or "") == selection
+        ), None)
+        if not candidate:
+            candidate = next((
+                value for value in (
+                    (analysis.get("secondary_selection_guard") or {})
+                    .get("candidates") or []
+                )
+                if str(value.get("selection") or "") == selection
+            ), None)
+        candidate = dict(candidate or {})
+        odds = _number(single.get("odds"))
+        if odds is None:
+            odds = _number(candidate.get("odds"))
+        probability = _number(single.get("probability"))
+        if probability is None:
+            probability = _number(candidate.get("probability"))
+        if probability is None:
+            model_probability = _number(candidate.get("model_probability"))
+            market_probability = _number(candidate.get("market_probability"))
+            if model_probability is not None and market_probability is not None:
+                probability = (
+                    model_probability * SINGLE_MODEL_WEIGHT
+                    + market_probability * SINGLE_MARKET_WEIGHT
+                )
+            elif model_probability is not None:
+                probability = model_probability
+            elif market_probability is not None:
+                probability = market_probability
+        model_probability = _number(candidate.get("model_probability"))
+        market_probability = _number(candidate.get("market_probability"))
+        confidence = _number(
+            (analysis.get("market_confidence") or {}).get("score")
+        )
+        if confidence is None:
+            confidence = _number(profile.get("market_confidence")) or 0
+        expected_return = (
+            probability / 100 * odds
+            if probability is not None and odds is not None else None
+        )
+        reasons = []
+        if odds is None or odds < SINGLE_MIN_ODDS:
+            reasons.append(f"单腿赔率低于{SINGLE_MIN_ODDS:.2f}")
+        if (
+            probability is None
+            or probability < FORMAL_TWO_LEG_MIN_PROBABILITY
+        ):
+            reasons.append(
+                "单腿融合概率低于"
+                f"{FORMAL_TWO_LEG_MIN_PROBABILITY:g}%"
+            )
+        if confidence < FORMAL_TWO_LEG_MIN_MARKET_CONFIDENCE:
+            reasons.append(
+                "盘口可信度低于"
+                f"{FORMAL_TWO_LEG_MIN_MARKET_CONFIDENCE:g}分"
+            )
+        if (
+            expected_return is None
+            or expected_return < FORMAL_TWO_LEG_MIN_EXPECTED_RETURN
+        ):
+            reasons.append(
+                "单腿模型期望低于"
+                f"{FORMAL_TWO_LEG_MIN_EXPECTED_RETURN:.2f}"
+            )
+        if reasons:
+            return {
+                "eligible": False,
+                "selection": selection,
+                "reason": "；".join(reasons),
+            }
         return {
-            "eligible": receiving in selections,
-            "selection": receiving,
-            "basis": "receiving-fallback",
-            "reason": "缺少更强分差证据，回退到双选中的受让保护方向",
+            "eligible": True,
+            "selection": selection,
+            "basis": "independent-single",
+            "reason": (
+                f"独立单选{selection}通过准入：融合概率"
+                f"{probability:.1f}%、单腿期望{expected_return:.2f}、"
+                f"盘口可信度{confidence:g}分"
+            ),
+            "odds": odds,
+            "probability": probability,
+            "model_probability": model_probability,
+            "market_probability": market_probability,
+            "expected_return": expected_return,
+            "market_confidence": confidence,
         }
 
     @classmethod
@@ -5405,19 +5505,12 @@ class FAEDailyAIAnalyzer:
         cls,
         matches: List[Dict[str, Any]],
     ) -> List[Dict[str, Any]]:
-        """Publish guard-aligned two-leg tickets from two-option coverage.
-
-        The original policy always extracted the receiving-side outcome.  It
-        preserved coverage but discarded the exact-margin information that
-        made the second option useful.  Version 2 keeps the same model ranking
-        and session split, while selecting each leg in this order: triggered
-        guard, genuine deep-cover signal, narrow one-goal signal, final match
-        primary, receiving-side fallback.  Odds still never reorder matches.
-        """
+        """Publish independently supported, ticket-level-gated parlays."""
         rows = [dict(item or {}) for item in matches or []]
-        policy_version = "two-option-evidence-parlay-v2"
+        policy_version = "two-option-independent-parlay-v3"
         strategy_source = "fae-two-option-receiving-parlay"
         candidates_by_session: Dict[str, List[Dict[str, Any]]] = {}
+        rejection_reasons: Dict[int, str] = {}
 
         def session_for(row: Dict[str, Any]) -> str:
             match_number = str(row.get("match_number") or "")
@@ -5465,11 +5558,17 @@ class FAEDailyAIAnalyzer:
             )
             if profile.get("market") != "竞彩让球" or not handicap:
                 continue
+            if str(row.get("analysis_source") or "") != "volcengine-ark":
+                rejection_reasons[index] = "未经过火山逐场研判"
+                continue
             selection_profile = cls._two_option_parlay_selection(
                 row, profile, handicap
             )
             selection = str(selection_profile.get("selection") or "")
             if not selection_profile.get("eligible") or not selection:
+                rejection_reasons[index] = str(
+                    selection_profile.get("reason") or "单腿未通过正式准入"
+                )
                 continue
             current = (
                 ((row.get("input_snapshot") or {}).get(
@@ -5482,12 +5581,29 @@ class FAEDailyAIAnalyzer:
                 if odds_index is not None and len(current) > odds_index
                 else None
             )
-            odds = _number((profile.get("odds") or {}).get(selection))
+            odds = _number(selection_profile.get("odds"))
+            if odds is None:
+                odds = _number((profile.get("odds") or {}).get(selection))
             if odds is None:
                 odds = _number(fallback_odds)
-            rank_score = _number(profile.get("rank_score"))
-            if odds is None or odds <= 1 or rank_score is None:
+            probability = _number(selection_profile.get("probability"))
+            expected_return = _number(
+                selection_profile.get("expected_return")
+            )
+            confidence = _number(
+                selection_profile.get("market_confidence")
+            ) or 0
+            if (
+                odds is None or odds <= 1 or probability is None
+                or expected_return is None
+            ):
+                rejection_reasons[index] = "独立单腿概率或赔率不完整"
                 continue
+            rank_score = (
+                probability * 0.50
+                + min(110.0, expected_return * 100) * 0.30
+                + confidence * 0.20
+            )
             session = session_for(row)
             candidates_by_session.setdefault(session, []).append({
                 "index": index,
@@ -5499,45 +5615,104 @@ class FAEDailyAIAnalyzer:
                     profile.get("pair_value_score")
                 ),
                 "market_confidence": _number(
-                    profile.get("market_confidence")
+                    selection_profile.get("market_confidence")
                 ),
+                "probability": probability,
+                "model_probability": selection_profile.get(
+                    "model_probability"
+                ),
+                "market_probability": selection_profile.get(
+                    "market_probability"
+                ),
+                "expected_return": expected_return,
                 "session": session,
                 "selection_basis": selection_profile.get("basis"),
                 "selection_reason": selection_profile.get("reason"),
-                "one_goal_margin_signal": selection_profile.get(
-                    "one_goal_margin_signal"
-                ),
-                "deep_cover_signal": selection_profile.get(
-                    "deep_cover_signal"
-                ),
             })
 
         selected: Dict[int, Dict[str, Any]] = {}
         global_rank = 0
         for session in ("早场", "晚场", "全日"):
-            candidates = sorted(
-                candidates_by_session.get(session) or [],
-                key=lambda item: (
-                    -float(item.get("rank_score") or 0),
-                    -float(item.get("coverage_score") or 0),
-                    str(rows[item["index"]].get("match_time") or ""),
-                ),
-            )[:2]
-            if len(candidates) < 2:
+            candidates = candidates_by_session.get(session) or []
+            pairs = []
+            for first_index, first in enumerate(candidates):
+                for second in candidates[first_index + 1:]:
+                    combined_odds = float(first["odds"]) * float(
+                        second["odds"]
+                    )
+                    ticket_probability = (
+                        float(first["probability"])
+                        * float(second["probability"]) / 100
+                    )
+                    ticket_expected_return = (
+                        ticket_probability / 100 * combined_odds
+                    )
+                    if not (
+                        FORMAL_TWO_LEG_MIN_COMBINED_ODDS
+                        <= combined_odds
+                        <= FORMAL_TWO_LEG_MAX_COMBINED_ODDS
+                    ):
+                        continue
+                    if (
+                        ticket_expected_return
+                        < FORMAL_TWO_LEG_MIN_TICKET_EXPECTED_RETURN
+                    ):
+                        continue
+                    odds_fit = max(
+                        0.0,
+                        100.0 - abs(
+                            combined_odds - FORMAL_TWO_LEG_TARGET_ODDS
+                        ) * 35,
+                    )
+                    pair_score = (
+                        ticket_expected_return * 100 * 0.45
+                        + ticket_probability * 0.25
+                        + (
+                            float(first["market_confidence"] or 0)
+                            + float(second["market_confidence"] or 0)
+                        ) / 2 * 0.15
+                        + odds_fit * 0.15
+                    )
+                    pairs.append({
+                        "legs": [first, second],
+                        "combined_odds": combined_odds,
+                        "ticket_probability": ticket_probability,
+                        "ticket_expected_return": ticket_expected_return,
+                        "pair_score": pair_score,
+                    })
+            if not pairs:
+                for candidate in candidates:
+                    rejection_reasons.setdefault(
+                        candidate["index"],
+                        "单腿通过，但没有满足2.70-4.50倍及票级期望门槛的搭档",
+                    )
                 continue
-            combined_odds = float(candidates[0]["odds"]) * float(
-                candidates[1]["odds"]
+            best_pair = max(
+                pairs,
+                key=lambda item: (
+                    float(item.get("pair_score") or 0),
+                    -abs(
+                        float(item.get("combined_odds") or 0)
+                        - FORMAL_TWO_LEG_TARGET_ODDS
+                    ),
+                ),
             )
+            pair_legs = sorted(
+                best_pair["legs"],
+                key=lambda item: float(item.get("rank_score") or 0),
+                reverse=True,
+            )
+            combined_odds = float(best_pair["combined_odds"])
             ticket_id = (
                 "formal-receiving-"
                 + session
                 + "-"
                 + "-".join(sorted(
                     str(rows[item["index"]].get("match_id") or item["index"])
-                    for item in candidates
+                    for item in pair_legs
                 ))
             )
-            for leg_rank, candidate in enumerate(candidates, 1):
+            for leg_rank, candidate in enumerate(pair_legs, 1):
                 global_rank += 1
                 selected[candidate["index"]] = {
                     **candidate,
@@ -5545,6 +5720,10 @@ class FAEDailyAIAnalyzer:
                     "daily_rank": global_rank,
                     "ticket_id": ticket_id,
                     "combined_odds": combined_odds,
+                    "ticket_probability": best_pair["ticket_probability"],
+                    "ticket_expected_return": best_pair[
+                        "ticket_expected_return"
+                    ],
                 }
 
         for index, row in enumerate(rows):
@@ -5568,7 +5747,9 @@ class FAEDailyAIAnalyzer:
                     "analysis_source": (
                         analysis_source or "fae-two-option"
                     ),
-                    "reason": "未进入所在时段受让方模型排名前二",
+                    "reason": rejection_reasons.get(
+                        index, "未进入符合票级门槛的正式二串一"
+                    ),
                 }
             else:
                 candidate = selected[index]
@@ -5581,12 +5762,22 @@ class FAEDailyAIAnalyzer:
                     "selection": candidate.get("selection"),
                     "market": "竞彩让球",
                     "odds": round(odds, 3),
-                    "probability": None,
-                    "model_probability": None,
-                    "market_probability": None,
+                    "probability": round(
+                        float(candidate["probability"]), 2
+                    ),
+                    "model_probability": candidate.get(
+                        "model_probability"
+                    ),
+                    "market_probability": candidate.get(
+                        "market_probability"
+                    ),
                     "model_market_edge": None,
-                    "model_expected_return": None,
-                    "value_score": candidate.get("pair_value_score"),
+                    "model_expected_return": round(
+                        float(candidate["expected_return"]), 3
+                    ),
+                    "value_score": round(min(
+                        100.0, float(candidate["expected_return"]) * 100
+                    ), 1),
                     "bet_score": round(float(candidate["rank_score"]), 2),
                     "market_confidence": candidate.get("market_confidence"),
                     "model_rating": None,
@@ -5599,6 +5790,12 @@ class FAEDailyAIAnalyzer:
                     "parlay_role": role,
                     "ticket_id": candidate["ticket_id"],
                     "combined_odds": round(combined_odds, 3),
+                    "ticket_probability": round(
+                        float(candidate["ticket_probability"]), 2
+                    ),
+                    "ticket_expected_return": round(
+                        float(candidate["ticket_expected_return"]), 3
+                    ),
                     "daily_rank": candidate["daily_rank"],
                     "recommendation_level": "official",
                     "ai_verified": analysis_source == "volcengine-ark",
@@ -5609,15 +5806,13 @@ class FAEDailyAIAnalyzer:
                         f"正式证据对齐二串一{role}：双选覆盖包含"
                         f"{candidate.get('selection')}，选择依据为"
                         f"{candidate.get('selection_reason') or '模型最终方向'}；"
-                        f"按所在时段模型分排名前二，合计{combined_odds:.2f}倍"
+                        f"组合概率{candidate['ticket_probability']:.1f}%、"
+                        f"票级期望{candidate['ticket_expected_return']:.2f}、"
+                        f"合计{combined_odds:.2f}倍"
                     ),
                     "selection_basis": candidate.get("selection_basis"),
-                    "one_goal_margin_signal": candidate.get(
-                        "one_goal_margin_signal"
-                    ),
-                    "deep_cover_signal": candidate.get(
-                        "deep_cover_signal"
-                    ),
+                    "one_goal_margin_signal": None,
+                    "deep_cover_signal": None,
                 }
             analysis["official_bet_recommendation"] = profile
             row["analysis"] = analysis
@@ -8717,26 +8912,111 @@ class FAEDailyAIAnalyzer:
         source: Dict[str, Any],
         candidate: Dict[str, Any],
     ) -> Dict[str, Any]:
-        """Exclude structurally unconfirmed rows from ranking and review."""
+        """Apply market structure as a ranking penalty, not a recall veto.
+
+        Weekend pools are often more than twice the size of weekday pools.
+        Removing a row before relative ranking made the exact-margin radar
+        miss most of the outcomes it was meant to find.  Any candidate with
+        a usable price/probability therefore stays auditable and rankable;
+        an unconfirmed structure can still forbid formal promotion.
+        """
         result = dict(candidate or {})
-        if not result or result.get("tier") == "exclude":
+        if not result:
             return result
+        selection = str(result.get("selection") or "")
+        odds = _number(result.get("odds"))
+        probability = _number(result.get("probability"))
+        handicap = _number(
+            (source.get("sporttery_handicap") or {}).get("value")
+        )
+        weekend_pool = str(result.get("match_number") or "").startswith(
+            ("周六", "周日")
+        )
+        has_usable_market = bool(
+            selection in {"平局", "让平"}
+            and odds is not None
+            and odds > 1
+            and probability is not None
+            and (selection == "平局" or handicap is not None)
+        )
+        if not has_usable_market:
+            result["ranking_eligible"] = False
+            return result
+
+        if result.get("tier") == "exclude":
+            if not weekend_pool:
+                return result
+            result["original_tier"] = "exclude"
+            result["tier"] = "watch"
+            result["expanded_recall_candidate"] = True
+            result["rating"] = cls._rating(min(
+                2.5, float(result.get("rating") or 2.5)
+            ))
+            result["formal_eligible"] = False
         profile = cls._draw_radar_structure_profile(
-            source, str(result.get("selection") or "")
+            source, selection
         )
         result["market_structure_gate"] = profile
         if profile.get("data_complete") is False:
+            result["ranking_eligible"] = True
+            result["structure_confirmed"] = False
+            result["formal_eligible"] = False
             return result
         if profile.get("eligible"):
             result["ranking_eligible"] = True
+            result["structure_confirmed"] = True
             return result
 
-        result["original_tier"] = result.get("tier")
-        result["tier"] = "exclude"
+        if not weekend_pool:
+            result["original_tier"] = result.get("tier")
+            result["tier"] = "exclude"
+            result["rating"] = cls._rating(min(
+                2.5, float(result.get("rating") or 2.5)
+            ))
+            result["ranking_eligible"] = False
+            result["formal_eligible"] = False
+            veto_reasons = [
+                str(value)
+                for value in result.get("official_veto_reasons") or []
+                if str(value).strip()
+            ]
+            veto_reasons.append(
+                str(profile.get("reason") or "盘口结构未确认")
+            )
+            result["official_veto_reasons"] = list(dict.fromkeys(
+                veto_reasons
+            ))
+            reason = str(result.get("reason") or "").rstrip("。；")
+            result["reason"] = (
+                (reason + "；" if reason else "")
+                + f"结构门禁：{profile.get('reason')}，退出工作日雷达。"
+            )
+            return result
+
+        result.setdefault("original_tier", result.get("tier"))
+        result["tier"] = "watch"
         result["rating"] = cls._rating(min(
-            2.5, float(result.get("rating") or 2.5)
+            3.0, float(result.get("rating") or 3.0)
         ))
-        result["ranking_eligible"] = False
+        probability_penalty = -1.0 if selection == "平局" else -1.5
+        score_penalty = -6.0 if selection == "平局" else -8.0
+        adjusted_probability = max(
+            0.0, min(100.0, probability + probability_penalty)
+        )
+        result["probability"] = round(adjusted_probability, 2)
+        result["score"] = round(max(
+            0.0, float(result.get("score") or 0) + score_penalty
+        ))
+        result["odds_value"] = round(
+            adjusted_probability * odds - 100.0, 2
+        )
+        result["ranking_eligible"] = True
+        result["structure_confirmed"] = False
+        result["structure_penalty"] = {
+            "probability_adjustment_pp": probability_penalty,
+            "score_adjustment": score_penalty,
+            "reason": str(profile.get("reason") or "盘口结构未确认"),
+        }
         result["formal_eligible"] = False
         veto_reasons = [
             str(value) for value in result.get("official_veto_reasons") or []
@@ -8747,7 +9027,7 @@ class FAEDailyAIAnalyzer:
         reason = str(result.get("reason") or "").rstrip("。；")
         result["reason"] = (
             (reason + "；" if reason else "")
-            + f"结构门禁：{profile.get('reason')}，退出当日雷达。"
+            + f"结构降权：{profile.get('reason')}，保留参与当日相对排名。"
         )
         return result
 
@@ -8938,7 +9218,10 @@ class FAEDailyAIAnalyzer:
             3.0,
             float(result.get("rating") or 3.0),
         ))
-        result["ranking_eligible"] = False
+        weekend_pool = str(result.get("match_number") or "").startswith(
+            ("周六", "周日")
+        )
+        result["ranking_eligible"] = weekend_pool
         result["formal_eligible"] = False
         routing_guard = {
             "triggered": True,
@@ -8960,9 +9243,93 @@ class FAEDailyAIAnalyzer:
         reason = str(result.get("reason") or "").rstrip("。；")
         result["reason"] = (
             (reason + "；" if reason else "")
-            + f"{route_reason}，让平退出当日排名。"
+            + (
+                f"{route_reason}，让平降权后保留在周末候选排名。"
+                if weekend_pool else
+                f"{route_reason}，让平退出工作日排名。"
+            )
         )
         return result
+
+    @staticmethod
+    def _draw_radar_ranking_session(match: Dict[str, Any]) -> str:
+        """Return a weekend early/late bucket using the local kick-off time."""
+        match_number = str(match.get("match_number") or "")
+        if not match_number.startswith(("周六", "周日")):
+            return "all"
+        match_time = str(match.get("match_time") or "")
+        time_matches = re.findall(r"(?:T|\s)(\d{1,2}):(\d{2})", match_time)
+        if not time_matches:
+            time_matches = re.findall(r"\b(\d{1,2}):(\d{2})\b", match_time)
+        if not time_matches:
+            return "all"
+        hour = int(time_matches[-1][0])
+        return "early" if hour < RADAR_WEEKEND_LATE_HOUR else "late"
+
+    @classmethod
+    def _draw_radar_ranking_score(
+        cls, candidate: Dict[str, Any]
+    ) -> float:
+        """Calibrate ordering without treating the heuristic score as odds.
+
+        One-month replay showed market probability ranked ordinary draws more
+        reliably than the additive radar score.  Price bands are soft nudges
+        only; no populated band is removed from the board.
+        """
+        probability = _number(candidate.get("probability")) or 0.0
+        market_probability = _number(
+            candidate.get("market_probability")
+        )
+        if market_probability is None:
+            market_probability = probability
+        model_edge = max(-4.0, min(
+            4.0, probability - market_probability
+        ))
+        odds = _number(candidate.get("odds"))
+        selection = str(candidate.get("selection") or "")
+        price_bonus = 0.0
+        if odds is not None and selection == "平局":
+            if 3.30 <= odds < 3.60:
+                price_bonus = 3.0
+            elif 3.00 <= odds < 3.30:
+                price_bonus = 1.0
+            elif odds >= 3.60:
+                price_bonus = -2.0
+        elif odds is not None and selection == "让平":
+            if 3.00 <= odds < 3.30:
+                price_bonus = 3.0
+            elif odds >= 3.60:
+                price_bonus = -1.5
+
+        structure_bonus = (
+            0.75 if candidate.get("structure_confirmed") is True else 0.0
+        )
+        guard_bonus = (
+            0.5
+            if candidate.get("guardrail_ticket_eligible") is not False
+            else 0.0
+        )
+        one_goal_bonus = 0.0
+        if (
+            selection == "让平"
+            and (candidate.get("one_goal_margin_signal") or {}).get(
+                "triggered"
+            )
+        ):
+            one_goal_bonus = 0.5
+        heuristic = min(
+            75.0, float(candidate.get("score") or 0)
+        ) / 100.0
+        return round(
+            market_probability
+            + model_edge * 0.25
+            + price_bonus
+            + structure_bonus
+            + guard_bonus
+            + one_goal_bonus
+            + heuristic,
+            3,
+        )
 
     @classmethod
     def _draw_radar_hard_veto_reasons(
@@ -9036,12 +9403,12 @@ class FAEDailyAIAnalyzer:
         """Expose core/watch radar rows even when official pools exclude them."""
         result = dict(summary or {})
         radar = {
-            "version": "draw-radar-v5-structure-gated",
+            "version": "draw-radar-v6-pool-aware-soft-ranking",
             "policy": (
-                "每天普通平局与竞彩让平分别最多展示前三；同一场只进入"
-                "概率和证据更强的一榜。普通平必须满足均势浅盘或热门失效"
-                "结构；让平必须先确认热门仍能赢，再判断恰好赢一球。只有"
-                "核心且非负赔率价值候选可参与组合。"
+                "所有赔率与让球数据完整的平/让平候选先参与相对排名；"
+                "盘口结构与风险只做软降权。工作日每榜展示前三，周六周日"
+                "按21点前后分早晚场、每个时段各取前三；同一场只进入"
+                "校准排名更强的一榜。"
             ),
             "ordinary_draw": [],
             "handicap_draw": [],
@@ -9064,6 +9431,17 @@ class FAEDailyAIAnalyzer:
                     radar["excluded_count"][key] += 1
                     continue
                 if candidate.get("match_id"):
+                    candidate.setdefault(
+                        "selection",
+                        "平局" if key == "ordinary_draw" else "让平",
+                    )
+                    candidate["match_time"] = item.get("match_time")
+                    candidate["ranking_session"] = (
+                        cls._draw_radar_ranking_session(item)
+                    )
+                    candidate["ranking_score"] = (
+                        cls._draw_radar_ranking_score(candidate)
+                    )
                     match_id = str(candidate.get("match_id"))
                     candidates_by_match.setdefault(match_id, []).append((
                         key, candidate,
@@ -9071,42 +9449,96 @@ class FAEDailyAIAnalyzer:
 
         def candidate_strength(
             value: tuple[str, Dict[str, Any]],
-        ) -> tuple[bool, bool, bool, float, float, float, float]:
+        ) -> tuple:
             _, candidate = value
-            one_goal = candidate.get("one_goal_margin_signal") or {}
+            if candidate.get("ranking_session") == "all":
+                one_goal = candidate.get("one_goal_margin_signal") or {}
+                return (
+                    candidate.get("tier") == "core",
+                    candidate.get("guardrail_ticket_eligible") is not False,
+                    bool(
+                        candidate.get("selection") == "让平"
+                        and one_goal.get("triggered")
+                    ),
+                    float(candidate.get("probability") or 0),
+                    float(candidate.get("score") or 0),
+                    float(candidate.get("odds_value") or -999),
+                    float(candidate.get("effective_sample") or 0),
+                )
             return (
-                candidate.get("tier") == "core",
-                candidate.get("guardrail_ticket_eligible") is not False,
-                bool(
-                    candidate.get("selection") == "让平"
-                    and one_goal.get("triggered")
-                ),
+                float(candidate.get("ranking_score") or 0),
+                float(candidate.get("market_probability") or 0),
                 float(candidate.get("probability") or 0),
-                float(candidate.get("score") or 0),
-                float(candidate.get("odds_value") or -999),
                 float(candidate.get("effective_sample") or 0),
             )
 
         for rows in candidates_by_match.values():
             key, candidate = max(rows, key=candidate_strength)
             radar[key].append(candidate)
-        for key in ("ordinary_draw", "handicap_draw"):
-            radar[key] = sorted(
-                radar[key],
-                key=lambda item: (
-                    item.get("tier") == "core",
-                    item.get("guardrail_ticket_eligible") is not False,
-                    bool(
-                        item.get("selection") == "让平"
-                        and (item.get("one_goal_margin_signal") or {}).get(
-                            "triggered"
-                        )
-                    ),
-                    float(item.get("score") or 0),
-                    float(item.get("probability") or 0),
+
+        def rank_key(item: Dict[str, Any]) -> tuple[float, float, float]:
+            return (
+                float(item.get("ranking_score") or 0),
+                float(item.get("market_probability") or 0),
+                float(item.get("probability") or 0),
+            )
+
+        def weekday_rank_key(item: Dict[str, Any]) -> tuple:
+            one_goal = item.get("one_goal_margin_signal") or {}
+            return (
+                item.get("tier") == "core",
+                item.get("guardrail_ticket_eligible") is not False,
+                bool(
+                    item.get("selection") == "让平"
+                    and one_goal.get("triggered")
                 ),
-                reverse=True,
-            )[:RADAR_DISPLAY_LIMITS.get(key, 3)]
+                float(item.get("score") or 0),
+                float(item.get("probability") or 0),
+            )
+
+        for key in ("ordinary_draw", "handicap_draw"):
+            rows = radar[key]
+            weekend_rows = [
+                item for item in rows
+                if item.get("ranking_session") in {"early", "late"}
+            ]
+            selected = []
+            if weekend_rows:
+                session_limit = RADAR_WEEKEND_SESSION_LIMITS.get(key, 3)
+                for session in ("early", "late"):
+                    session_rows = sorted(
+                        [
+                            item for item in rows
+                            if item.get("ranking_session") == session
+                        ],
+                        key=rank_key,
+                        reverse=True,
+                    )[:session_limit]
+                    for session_rank, item in enumerate(
+                        session_rows, start=1
+                    ):
+                        item["session_rank"] = session_rank
+                    selected.extend(session_rows)
+                # Keep undated weekend candidates auditable without allowing
+                # them to displace both properly timed sessions.
+                if not selected:
+                    selected = sorted(
+                        rows, key=rank_key, reverse=True
+                    )[:RADAR_DISPLAY_LIMITS.get(key, 3)]
+            else:
+                selected = sorted(
+                    rows, key=weekday_rank_key, reverse=True
+                )[:RADAR_DISPLAY_LIMITS.get(key, 3)]
+            selected_rank_key = rank_key if weekend_rows else weekday_rank_key
+            radar[key] = sorted(
+                selected, key=selected_rank_key, reverse=True
+            )
+            for overall_rank, item in enumerate(radar[key], start=1):
+                item["overall_rank"] = overall_rank
+        radar["display_count"] = {
+            "ordinary_draw": len(radar["ordinary_draw"]),
+            "handicap_draw": len(radar["handicap_draw"]),
+        }
         result["draw_radar"] = radar
         return result
 

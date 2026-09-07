@@ -611,6 +611,7 @@ class DailyAnalysisTests(unittest.TestCase):
             "odds_value": -18.30,
         }
         handicap = {
+            "match_number": "周六001",
             "selection": "让平",
             "tier": "watch",
             "probability": 26.25,
@@ -625,7 +626,7 @@ class DailyAnalysisTests(unittest.TestCase):
             source, ordinary, handicap
         )
 
-        self.assertFalse(result["ranking_eligible"])
+        self.assertTrue(result["ranking_eligible"])
         self.assertFalse(result["formal_eligible"])
         self.assertEqual(
             result["precision_routing_guard"]["preferred_selection"],
@@ -636,7 +637,7 @@ class DailyAnalysisTests(unittest.TestCase):
             "监督影子普通平",
         )
         self.assertLess(result["score"], handicap["score"])
-        self.assertIn("让平退出当日排名", result["reason"])
+        self.assertIn("保留在周末候选排名", result["reason"])
 
     def test_deeper_low_water_asian_routes_let_draw_to_cover(self):
         source = {
@@ -650,6 +651,7 @@ class DailyAnalysisTests(unittest.TestCase):
             "current_asian_risk": {"pattern_ids": []},
         }
         handicap = {
+            "match_number": "周六002",
             "selection": "让平",
             "tier": "watch",
             "probability": 28.56,
@@ -664,7 +666,8 @@ class DailyAnalysisTests(unittest.TestCase):
             source, {}, handicap
         )
 
-        self.assertFalse(result["ranking_eligible"])
+        self.assertTrue(result["ranking_eligible"])
+        self.assertFalse(result["formal_eligible"])
         self.assertEqual(
             result["precision_routing_guard"]["preferred_selection"],
             "让胜",
@@ -749,16 +752,20 @@ class DailyAnalysisTests(unittest.TestCase):
         result = FAEDailyAIAnalyzer._apply_draw_radar_structure_gate(
             source,
             {
+                "match_number": "周六003",
                 "selection": "让平",
                 "tier": "core",
                 "rating": 4.5,
                 "score": 88,
+                "probability": 28.0,
+                "odds": 3.55,
                 "reason": "原始模型高分。",
             },
         )
 
-        self.assertEqual(result["tier"], "exclude")
-        self.assertFalse(result["ranking_eligible"])
+        self.assertEqual(result["tier"], "watch")
+        self.assertTrue(result["ranking_eligible"])
+        self.assertFalse(result["formal_eligible"])
         self.assertIn("亚盘退盘", result["reason"])
 
     def test_handicap_draw_accepts_supported_favorite_and_rising_total(self):
@@ -1087,6 +1094,106 @@ class DailyAnalysisTests(unittest.TestCase):
             set(row["match_id"] for row in radar["ordinary_draw"])
             & set(row["match_id"] for row in radar["handicap_draw"]),
             set(),
+        )
+
+    def test_structure_gate_promotes_scored_candidate_to_soft_watch(self):
+        result = FAEDailyAIAnalyzer._apply_draw_radar_structure_gate({
+            "euro": {"current": [1.62, 3.55, 4.60]},
+            "sporttery_handicap": {"value": -1},
+            "asian": {
+                "initial": [0.82, "一球", 1.02],
+                "current": [0.98, "半球", 0.88],
+            },
+            "total": {
+                "initial": [0.90, 2.75, 0.95],
+                "current": [0.88, 2.50, 0.98],
+            },
+        }, {
+            "match_id": "soft-watch",
+            "match_number": "周六004",
+            "selection": "让平",
+            "tier": "exclude",
+            "rating": 2.0,
+            "score": 48,
+            "probability": 24.0,
+            "odds": 3.55,
+            "odds_value": -14.8,
+            "reason": "初始分不足。",
+        })
+
+        self.assertEqual(result["tier"], "watch")
+        self.assertTrue(result["expanded_recall_candidate"])
+        self.assertTrue(result["ranking_eligible"])
+        self.assertFalse(result["formal_eligible"])
+        self.assertIn("结构降权", result["reason"])
+
+    def test_weekend_radar_keeps_three_candidates_per_session(self):
+        matches = []
+        times = [
+            "2026-09-05 18:00", "2026-09-05 19:00",
+            "2026-09-05 20:00", "2026-09-05 20:30",
+            "2026-09-05 21:00", "2026-09-05 22:00",
+            "2026-09-05 23:00", "2026-09-05 23:30",
+        ]
+        for index, match_time in enumerate(times):
+            matches.append({
+                "match_number": f"周六{index + 1:03d}",
+                "match_time": match_time,
+                "analysis": {
+                    "draw_radar": {
+                        "ordinary_draw": {
+                            "match_id": str(index),
+                            "selection": "平局",
+                            "tier": "watch",
+                            "score": 60 + index,
+                            "probability": 27 + index / 10,
+                            "market_probability": 28 + index / 10,
+                            "odds": 3.2,
+                        },
+                        "handicap_draw": {},
+                    },
+                },
+            })
+
+        radar = FAEDailyAIAnalyzer.attach_draw_radar_summary(
+            {}, matches
+        )["draw_radar"]
+
+        self.assertEqual(len(radar["ordinary_draw"]), 6)
+        self.assertEqual(
+            sum(
+                row["ranking_session"] == "early"
+                for row in radar["ordinary_draw"]
+            ),
+            3,
+        )
+        self.assertEqual(
+            sum(
+                row["ranking_session"] == "late"
+                for row in radar["ordinary_draw"]
+            ),
+            3,
+        )
+
+    def test_draw_ranking_uses_price_band_before_raw_radar_score(self):
+        preferred = {
+            "selection": "平局",
+            "market_probability": 29.0,
+            "probability": 29.0,
+            "odds": 3.40,
+            "score": 65,
+        }
+        inflated = {
+            "selection": "平局",
+            "market_probability": 29.0,
+            "probability": 29.0,
+            "odds": 3.70,
+            "score": 95,
+        }
+
+        self.assertGreater(
+            FAEDailyAIAnalyzer._draw_radar_ranking_score(preferred),
+            FAEDailyAIAnalyzer._draw_radar_ranking_score(inflated),
         )
 
     def test_summary_promotion_removes_hard_vetoed_formal_pool_row(self):
@@ -3566,8 +3673,10 @@ class DailyAnalysisTests(unittest.TestCase):
         )
         self.assertFalse(selected[0]["ai_verified"])
 
-    def test_formal_parlay_uses_top_two_receiving_coverage_candidates(self):
-        def candidate(match_id, handicap, selection, odds, rank_score):
+    def test_formal_parlay_uses_independently_supported_single_legs(self):
+        def candidate(
+            match_id, handicap, selection, odds, probability, rank_score,
+        ):
             return {
                 "match_id": match_id,
                 "match_number": "周一001",
@@ -3575,7 +3684,23 @@ class DailyAnalysisTests(unittest.TestCase):
                 "match_time": f"08-31 {18 + len(match_id)}:00",
                 "analysis_source": "volcengine-ark",
                 "analysis": {
+                    "no_bet": False,
+                    "market_confidence": {"score": 80},
+                    "single_probability_profile": {
+                        "selection": selection,
+                        "odds": odds,
+                        "probability": probability,
+                        "candidates": [{
+                            "selection": selection,
+                            "odds": odds,
+                            "model_probability": probability,
+                            "market_probability": probability,
+                        }],
+                    },
                     "two_option_recommendation": {
+                        # The independent leg may still qualify when the
+                        # coverage card was demoted only by its display cap.
+                        "actionable": match_id != "second",
                         "market": "竞彩让球",
                         "selections": [selection, "让平"],
                         "odds": {selection: odds, "让平": 3.5},
@@ -3594,9 +3719,9 @@ class DailyAnalysisTests(unittest.TestCase):
             }
 
         rows = [
-            candidate("first", -1, "让负", 2.65, 79.0),
-            candidate("second", 1, "让胜", 1.46, 80.0),
-            candidate("third", -1, "让负", 1.70, 70.0),
+            candidate("first", -1, "让负", 1.90, 55.0, 79.0),
+            candidate("second", 1, "让胜", 1.70, 60.0, 80.0),
+            candidate("third", -1, "让负", 1.80, 45.0, 70.0),
         ]
 
         result = FAEDailyAIAnalyzer.apply_official_bet_recommendations(rows)
@@ -3611,7 +3736,11 @@ class DailyAnalysisTests(unittest.TestCase):
             ["全日第2腿", "全日第1腿", None],
         )
         self.assertTrue(all(
-            row["combined_odds"] == 3.869
+            row["combined_odds"] == 3.23
+            for row in profiles[:2]
+        ))
+        self.assertTrue(all(
+            row["selection_basis"] == "independent-single"
             for row in profiles[:2]
         ))
         self.assertTrue(all(
@@ -3627,7 +3756,7 @@ class DailyAnalysisTests(unittest.TestCase):
             ["全日第1腿", "全日第2腿"],
         )
 
-    def test_formal_parlay_promotes_low_total_one_goal_margin(self):
+    def test_formal_parlay_does_not_promote_one_goal_heuristic(self):
         def row(
             match_id, match_number, rank_score, selections, odds, source,
             primary,
@@ -3639,8 +3768,10 @@ class DailyAnalysisTests(unittest.TestCase):
                 "match_time": "09-01 01:30",
                 "analysis_source": "volcengine-ark",
                 "analysis": {
+                    "no_bet": False,
                     "primary_play": primary,
                     "two_option_recommendation": {
+                        "actionable": True,
                         "market": "竞彩让球",
                         "selections": selections,
                         "odds": odds,
@@ -3705,17 +3836,13 @@ class DailyAnalysisTests(unittest.TestCase):
             for item in result
         ]
 
-        self.assertEqual(
-            [item["selection"] for item in profiles],
-            ["让平", "让负"],
-        )
-        self.assertEqual(profiles[0]["selection_basis"], "one-goal-margin")
-        self.assertEqual(profiles[1]["selection_basis"], "analysis-primary")
+        self.assertEqual(sum(item["actionable"] for item in profiles), 0)
         self.assertTrue(all(
-            item["combined_odds"] == 9.447 for item in profiles
+            "独立单选不在双选覆盖范围内" in item["reason"]
+            for item in profiles
         ))
 
-    def test_formal_parlay_prefers_true_deep_cover_and_guardrail(self):
+    def test_formal_parlay_never_promotes_triggered_guardrails(self):
         def row(match_id, rank_score, analysis, source):
             return {
                 "match_id": match_id,
@@ -3724,11 +3851,25 @@ class DailyAnalysisTests(unittest.TestCase):
                 "match_time": "09-01 03:30",
                 "analysis_source": "volcengine-ark",
                 "analysis": {
+                    "no_bet": False,
+                    "market_confidence": {"score": 80},
+                    "single_probability_profile": {
+                        "selection": "让负",
+                        "odds": 1.80,
+                        "probability": 58.0,
+                        "candidates": [{
+                            "selection": "让负",
+                            "odds": 1.80,
+                            "model_probability": 58.0,
+                            "market_probability": 58.0,
+                        }],
+                    },
                     **analysis,
                     "two_option_recommendation": {
+                        "actionable": True,
                         "market": "竞彩让球",
                         "selections": ["让负", "让胜"],
-                        "odds": {"让负": 3.60, "让胜": 1.57},
+                        "odds": {"让负": 1.80, "让胜": 1.57},
                         "rank_score": rank_score,
                         "coverage_score": rank_score,
                     },
@@ -3764,7 +3905,13 @@ class DailyAnalysisTests(unittest.TestCase):
             "total": {"current": [0.90, 2.50, 0.92]},
         }
         result = FAEDailyAIAnalyzer.apply_official_bet_recommendations([
-            row("012", 82, {"primary_play": "让负"}, deep_cover),
+            row("012", 82, {
+                "primary_play": "让负",
+                "no_bet": True,
+                "non_cover_guard": {
+                    "force_no_bet": True,
+                },
+            }, deep_cover),
             row("003", 81, {
                 "primary_play": "让负",
                 "consistency_guard": {
@@ -3779,28 +3926,100 @@ class DailyAnalysisTests(unittest.TestCase):
             for item in result
         ]
 
-        self.assertEqual(
-            [item["selection"] for item in profiles],
-            ["让胜", "让负"],
-        )
-        self.assertEqual(profiles[0]["selection_basis"], "deep-cover")
-        self.assertEqual(profiles[1]["selection_basis"], "guardrail")
+        self.assertEqual(sum(item["actionable"] for item in profiles), 0)
+        self.assertIn("危险盘口", profiles[0]["reason"])
+        self.assertIn("盘口护栏已触发", profiles[1]["reason"])
+
+    def test_formal_parlay_uses_independent_direction_not_high_odds_option(self):
+        def row(match_id, match_number, odds, probability):
+            return {
+                "match_id": match_id,
+                "match_number": match_number,
+                "owner_date": "2026-09-06",
+                "match_time": "09-06 22:00",
+                "analysis_source": "volcengine-ark",
+                "analysis": {
+                    # This legacy flag belongs to the specialist value pools;
+                    # it must not veto an otherwise valid independent single.
+                    "no_bet": True,
+                    "market_confidence": {"score": 80},
+                    "single_probability_profile": {
+                        "selection": "让负",
+                        "odds": odds,
+                        "probability": probability,
+                        "candidates": [{
+                            "selection": "让负",
+                            "odds": odds,
+                            "model_probability": probability,
+                            "market_probability": probability,
+                        }],
+                    },
+                    "two_option_recommendation": {
+                        "actionable": True,
+                        "market": "竞彩让球",
+                        "selections": ["让负", "让平"],
+                        "odds": {"让负": odds, "让平": 3.65},
+                        "rank_score": 82,
+                        "coverage_score": 82,
+                    },
+                },
+                "input_snapshot": {
+                    "sporttery_handicap": {
+                        "value": -1,
+                        "current": [4.50, 3.65, odds],
+                    },
+                },
+            }
+
+        result = FAEDailyAIAnalyzer.apply_official_bet_recommendations([
+            row("019", "周日019", 1.56, 58.0),
+            row("023", "周日023", 1.55, 59.0),
+        ])
+        profiles = [
+            item["analysis"]["official_bet_recommendation"]
+            for item in result
+        ]
+
+        self.assertEqual(sum(item["actionable"] for item in profiles), 0)
+        self.assertTrue(all(
+            item["selection"] is None for item in profiles
+        ))
+        self.assertTrue(all(
+            "没有满足2.70-4.50倍" in item["reason"]
+            for item in profiles
+        ))
 
     def test_formal_receiving_parlay_splits_weekend_at_21(self):
-        def row(match_id, match_time, rank_score):
+        def row(match_id, match_time, rank_score, odds):
             return {
                 "match_id": match_id,
                 "match_number": "周日001",
                 "owner_date": "2026-08-30",
                 "match_time": match_time,
                 "analysis_source": "volcengine-ark",
-                "analysis": {"two_option_recommendation": {
-                    "market": "竞彩让球",
-                    "selections": ["让负", "让平"],
-                    "odds": {"让负": 1.6, "让平": 3.5},
-                    "rank_score": rank_score,
-                    "coverage_score": rank_score,
-                }},
+                "analysis": {
+                    "no_bet": False,
+                    "market_confidence": {"score": 80},
+                    "single_probability_profile": {
+                        "selection": "让负",
+                        "odds": odds,
+                        "probability": 60.0,
+                        "candidates": [{
+                            "selection": "让负",
+                            "odds": odds,
+                            "model_probability": 60.0,
+                            "market_probability": 60.0,
+                        }],
+                    },
+                    "two_option_recommendation": {
+                        "actionable": True,
+                        "market": "竞彩让球",
+                        "selections": ["让负", "让平"],
+                        "odds": {"让负": odds, "让平": 3.5},
+                        "rank_score": rank_score,
+                        "coverage_score": rank_score,
+                    },
+                },
                 "input_snapshot": {"sporttery_handicap": {
                     "value": -1,
                     "current": [2.1, 3.5, 1.6],
@@ -3808,10 +4027,10 @@ class DailyAnalysisTests(unittest.TestCase):
             }
 
         result = FAEDailyAIAnalyzer.apply_official_bet_recommendations([
-            row("early-1", "08-30 18:00", 80),
-            row("early-2", "08-30 20:30", 79),
-            row("late-1", "08-30 21:00", 78),
-            row("late-2", "08-31 01:00", 77),
+            row("early-1", "08-30 18:00", 80, 1.70),
+            row("early-2", "08-30 20:30", 79, 1.80),
+            row("late-1", "08-30 21:00", 78, 1.70),
+            row("late-2", "08-31 01:00", 77, 1.80),
         ])
         profiles = [
             item["analysis"]["official_bet_recommendation"]
@@ -3822,7 +4041,7 @@ class DailyAnalysisTests(unittest.TestCase):
         self.assertEqual(len({item["ticket_id"] for item in profiles}), 2)
         self.assertEqual(
             [item["parlay_role"] for item in profiles],
-            ["早场第1腿", "早场第2腿", "晚场第1腿", "晚场第2腿"],
+            ["早场第2腿", "早场第1腿", "晚场第2腿", "晚场第1腿"],
         )
 
     def test_official_bet_pool_rejects_fallback_and_short_favorite_proxy(self):

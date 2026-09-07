@@ -339,7 +339,7 @@
                   type="button"
                   @click="goToDetail(item.match_id)"
                 >
-                  <i class="draw-radar-rank">{{ index + 1 }}</i>
+                  <i class="draw-radar-rank">{{ radarRankLabel(item, index) }}</i>
                   <span class="draw-radar-match">
                     <b>{{ dailyMatch(item.match_id).match_number }}</b>
                     <span>
@@ -1550,9 +1550,9 @@ const drawRadarGroups = computed(() => {
       .filter(candidate => candidate?.match_id)
       .map(candidate => normalizeShadowRadarCandidate(candidate, group.key))
   ))
-  // The summary intentionally keeps only three rows per market.  Include
-  // positive-value candidates from every immutable per-match shadow snapshot
-  // as well, so useful rows just outside that display cap are not hidden.
+  // The summary keeps three weekday rows or three rows per weekend session.
+  // Include positive-value candidates from immutable shadow snapshots as a
+  // separate layer so they remain visible without entering formal tickets.
   const positiveValueShadowCandidates = definitions.flatMap(group => (
     (faeDailyAi.value?.matches || []).flatMap(match => {
       const candidate = match?.input_snapshot?.supervised_shadow?.[group.key]
@@ -2200,6 +2200,17 @@ function radarTierClass(item) {
 function radarDisplayTier(item) {
   if (item?.shadow_only) return '影子候选'
   return item?.formal_eligible ? radarTierLabel(item?.tier) : '观察'
+}
+
+function radarRankLabel(item, index) {
+  const sessionRank = Number(item?.session_rank)
+  if (item?.ranking_session === 'early' && Number.isFinite(sessionRank)) {
+    return `早${sessionRank}`
+  }
+  if (item?.ranking_session === 'late' && Number.isFinite(sessionRank)) {
+    return `晚${sessionRank}`
+  }
+  return index + 1
 }
 
 function radarPercent(value) {
