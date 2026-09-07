@@ -2,8 +2,8 @@
 
 ENGINE_NAME = "Football AI Engine"
 ENGINE_CODE = "FAE"
-ENGINE_VERSION = "2.20.1"
-SCHEMA_VERSION = "2.12"
+ENGINE_VERSION = "2.21.0"
+SCHEMA_VERSION = "2.13"
 
 DIMENSION_WEIGHTS = {
     "handicap": 0.20,
@@ -121,6 +121,7 @@ VERSION_MANIFEST = {
         "组票护栏一致性：被一致性、穿盘或热门不穿护栏降为防选的平/让平禁止重新进入正式组合",
         "竞彩总进球与半全场闭环：计算器赛前赔率快照、去水概率校正首选/次选、前端展示、确定性赛后结算及复盘记忆",
         "总进球数据完整性硬门禁：必须同时具备竞彩总进球赔率、亚洲大小球即时盘及两侧水位才生成首选与次选",
+        "V4资金偏离模型：以竞彩三项去水隐含概率对比唯彩投注比例，区分健康、普通、过热与资金冷淡，并由亚盘和大小球执行平局、让平末级门禁",
     ],
     "learning_policy": {
         "minimum_samples": 10,

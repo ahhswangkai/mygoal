@@ -452,6 +452,7 @@ class MongoDBStorage:
         elif odds_data.get('asian_handicap'): has_data = True
         elif odds_data.get('over_under'): has_data = True
         elif odds_data.get('handicap_index'): has_data = True
+        elif odds_data.get('betting_ratio'): has_data = True
         
         if not has_data:
             self.logger.warning(f"赔率数据为空，跳过保存: {match_id}")
@@ -506,6 +507,12 @@ class MongoDBStorage:
                 update_fields['okooo_match_id'] = str(
                     odds_data['okooo_match_id']
                 )
+            if odds_data.get('vipc_match_id'):
+                update_fields['vipc_match_id'] = str(
+                    odds_data['vipc_match_id']
+                )
+            if odds_data.get('betting_ratio'):
+                update_fields['betting_ratio'] = odds_data['betting_ratio']
             
             # 更新时间字段（如果有）
             if 'euro_odds_update_time' in odds_data:

@@ -16,7 +16,7 @@ from .special_markets import build_special_market_analysis
 from .version import ENGINE_VERSION
 
 
-DAILY_PROMPT_VERSION = "five-market-daily-v36-special-market-regimes"
+DAILY_PROMPT_VERSION = "five-market-daily-v37-market-heat-v4"
 
 OFFICIAL_PLAY_SELECTIONS = {"平局", "让平"}
 OFFICIAL_MIN_BET_SCORE = 70.0
@@ -210,6 +210,7 @@ def compact_daily_ai_run(source: Optional[Dict[str, Any]]) -> Optional[Dict[str,
                     "current": (snapshot.get("sporttery_handicap") or {}).get("current"),
                 },
                 "total": {"current": (snapshot.get("total") or {}).get("current")},
+                "market_heat_v4": snapshot.get("market_heat_v4") or {},
                 "upset_warning_model": snapshot.get(
                     "upset_warning_model"
                 ) or {},
@@ -399,6 +400,7 @@ LEAGUE_TACTICAL_MODEL_VERSION = "league-tactical-model-v1"
 UPSET_WARNING_MODEL_VERSION = "upset-warning-v1"
 ODDS_BAND_MODEL_VERSION = "odds-band-model-v1"
 LOW_ODDS_ASIAN_MODEL_VERSION = "low-odds-asian-hhad-v1"
+MARKET_HEAT_V4_VERSION = "market-heat-deviation-v4"
 
 # 历史回测：让平不能靠“升盘高水/欧亚背离”单独升级。
 # 正向信号主要来自：联赛画像 + 竞彩让1球 + 热门胜赔区间 + 让平赔率区间。
@@ -770,6 +772,315 @@ def _favorite_team_name(match: Dict[str, Any], favorite_side: Any) -> Optional[s
     if favorite_side == "away":
         return match.get("away_team")
     return None
+
+
+def _market_heat_v4_classification(deviation_pp: float) -> Dict[str, str]:
+    """Classify support minus no-vig implied probability in percentage points."""
+    if deviation_pp < 0:
+        return {"code": "D", "label": "资金冷淡", "tone": "cold"}
+    if deviation_pp <= 5:
+        return {"code": "A", "label": "健康热门", "tone": "healthy"}
+    if deviation_pp < 10:
+        return {"code": "B", "label": "普通热门", "tone": "normal"}
+    return {"code": "C", "label": "过热热门", "tone": "overheated"}
+
+
+def _build_market_heat_v4_model(
+    match: Dict[str, Any],
+    sporttery_handicap: Optional[float],
+    current_asian_risk: Dict[str, Any],
+    rank: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Build the V4 price/funds-deviation layer used by every decision path.
+
+    Betting support is descriptive market-flow data rather than a probability
+    forecast.  V4 first derives its own no-vig probability from the current
+    Sporttery 1X2 prices, then measures support minus that probability.  Asian
+    handicap and totals are used only as confirmation, never folded into the
+    deviation formula.
+    """
+    euro_odds = [
+        _number(match.get("euro_current_win")),
+        _number(match.get("euro_current_draw")),
+        _number(match.get("euro_current_lose")),
+    ]
+    implied = _market_no_vig(euro_odds)
+    ratio = match.get("betting_ratio") or {}
+    ordinary_ratio = (
+        ratio.get("ordinary") if isinstance(ratio, dict) else {}
+    ) or {}
+    support = [
+        _number(ordinary_ratio.get("home_support_rate")),
+        _number(ordinary_ratio.get("draw_support_rate")),
+        _number(ordinary_ratio.get("away_support_rate")),
+    ]
+    labels = ("主胜", "平局", "客胜")
+    keys = ("home", "draw", "away")
+    available = bool(
+        len(implied) == 3
+        and all(value is not None for value in implied)
+        and all(value is not None for value in support)
+    )
+    if not available:
+        return {
+            "version": MARKET_HEAT_V4_VERSION,
+            "available": False,
+            "message": "竞彩三项赔率或投注比例不完整，V4资金偏离层不参与硬判断",
+            "formula": "投注比例 - 竞彩三项去水隐含概率",
+            "outcomes": {},
+            "favorite": {},
+            "draw": {"eligible": False, "gate_active": False},
+            "handicap_draw": {
+                "prerequisites_met": False,
+                "gate_active": False,
+                "secondary_only": True,
+            },
+        }
+
+    outcomes: Dict[str, Dict[str, Any]] = {}
+    for index, key in enumerate(keys):
+        deviation = float(support[index]) - float(implied[index])
+        classification = _market_heat_v4_classification(deviation)
+        outcomes[key] = {
+            "selection": labels[index],
+            "odds": round(float(euro_odds[index]), 3),
+            "implied_probability": round(float(implied[index]), 2),
+            "support_rate": round(float(support[index]), 2),
+            "deviation_pp": round(deviation, 2),
+            "class": classification["code"],
+            "class_label": classification["label"],
+            "tone": classification["tone"],
+        }
+
+    # The favourite is the shorter of home/away.  Draw is modelled separately.
+    favorite_key = "home" if euro_odds[0] <= euro_odds[2] else "away"
+    favorite = outcomes[favorite_key]
+    favorite_odds = float(favorite["odds"])
+    favorite_deviation = float(favorite["deviation_pp"])
+    extreme_favorite = favorite_odds < 1.40
+    danger_band = 1.40 <= favorite_odds <= 1.80
+    death_warning = bool(danger_band and favorite_deviation >= 10)
+
+    risk_ids = {
+        str(value)
+        for value in current_asian_risk.get("pattern_ids") or []
+    }
+    unstable_risks = {
+        "deepen_high_water",
+        "upper_water_rise",
+        "water_drop_without_deepen",
+        "handicap_retreat",
+        "euro_asian_divergence",
+        "overheated_shallow",
+    }
+    asian_current_line = _handicap_value_from_text(
+        match.get("asian_current_handicap")
+    )
+    asian_initial_line = _handicap_value_from_text(
+        match.get("asian_initial_handicap")
+    )
+
+    def favorite_depth(line: Optional[float]) -> Optional[float]:
+        if line is None:
+            return None
+        signed = line if favorite_key == "home" else -line
+        return round(max(0.0, signed), 3)
+
+    current_depth = favorite_depth(asian_current_line)
+    initial_depth = favorite_depth(asian_initial_line)
+    line_change = (
+        current_depth - initial_depth
+        if current_depth is not None and initial_depth is not None else None
+    )
+    favorite_water_key = (
+        "asian_current_home_odds"
+        if favorite_key == "home" else "asian_current_away_odds"
+    )
+    favorite_initial_water_key = (
+        "asian_initial_home_odds"
+        if favorite_key == "home" else "asian_initial_away_odds"
+    )
+    favorite_water = _number(match.get(favorite_water_key))
+    favorite_initial_water = _number(match.get(favorite_initial_water_key))
+    water_change = (
+        favorite_water - favorite_initial_water
+        if favorite_water is not None and favorite_initial_water is not None
+        else None
+    )
+    asian_conflict_reasons: List[str] = []
+    if risk_ids & unstable_risks:
+        asian_conflict_reasons.extend(sorted(risk_ids & unstable_risks))
+    if line_change is not None and line_change < -0.01:
+        asian_conflict_reasons.append("热门方向退盘")
+    if water_change is not None and water_change >= 0.08:
+        asian_conflict_reasons.append("热门方向明显升水")
+    asian_available = current_depth is not None
+    asian_conflict = bool(asian_conflict_reasons)
+    asian_strengthened = bool(
+        asian_available
+        and line_change is not None
+        and line_change >= 0.24
+        and not asian_conflict
+        and (favorite_water is None or favorite_water <= 1.08)
+    )
+    asian_supports_favorite = bool(
+        asian_available
+        and current_depth is not None
+        and current_depth >= 0.25
+        and not asian_conflict
+    )
+
+    total_line = _total_line_number(match.get("ou_current_total"))
+    over_water = _number(match.get("ou_current_over_odds"))
+    under_water = _number(match.get("ou_current_under_odds"))
+    under_not_weak = bool(
+        total_line is not None
+        and 2.0 <= total_line <= 2.5
+        and (
+            over_water is None
+            or under_water is None
+            or under_water <= over_water + 0.08
+        )
+    )
+    over_strength = bool(
+        total_line is not None
+        and (
+            total_line >= 3.0
+            or (
+                over_water is not None
+                and under_water is not None
+                and over_water + 0.06 < under_water
+            )
+        )
+    )
+
+    draw = outcomes["draw"]
+    draw_odds = float(draw["odds"])
+    draw_deviation = float(draw["deviation_pp"])
+    probability_gap = abs(
+        float(outcomes["home"]["implied_probability"])
+        - float(outcomes["away"]["implied_probability"])
+    )
+    ranking_gap = _rank_gap(rank)
+    strength_close = bool(
+        probability_gap <= 15
+        and (ranking_gap is None or ranking_gap <= 6)
+    )
+    shallow_asian = bool(
+        current_depth is not None and current_depth <= 0.25
+    )
+    draw_checks = {
+        "draw_odds_2_80_to_3_15": 2.80 <= draw_odds <= 3.15,
+        "draw_deviation_minus2_to_plus5": -2 <= draw_deviation <= 5,
+        "strength_close": strength_close,
+        "asian_flat_or_quarter": shallow_asian,
+        "total_2_to_2_5_under_not_weak": under_not_weak,
+        "total_not_over_strength": not over_strength,
+    }
+    draw_eligible = all(draw_checks.values())
+
+    aligned_handicap = bool(
+        sporttery_handicap is not None
+        and abs(sporttery_handicap) == 1
+        and (
+            (favorite_key == "home" and sporttery_handicap < 0)
+            or (favorite_key == "away" and sporttery_handicap > 0)
+        )
+    )
+    handicap_draw_checks = {
+        "ordinary_favorite_direction_clear": favorite_key in {"home", "away"},
+        "favorite_not_overheated": favorite_deviation < 10,
+        "sporttery_exact_one_aligned": aligned_handicap,
+        "asian_depth_half_to_one": bool(
+            current_depth is not None and 0.5 <= current_depth <= 1.0
+        ),
+        "asian_not_retreating": bool(
+            line_change is None or line_change >= -0.01
+        ),
+        "asian_not_deeper_than_one": bool(
+            current_depth is not None and current_depth <= 1.0
+        ),
+        "asian_no_conflict": not asian_conflict,
+        "total_restrains_margin": bool(
+            total_line is not None and total_line <= 2.5 and not over_strength
+        ),
+    }
+    handicap_draw_ready = all(handicap_draw_checks.values())
+    favorite.update({
+        "side": favorite_key,
+        "is_extreme_1_10_to_1_39": extreme_favorite,
+        "is_danger_band_1_40_to_1_80": danger_band,
+        "death_warning": death_warning,
+        "healthy_anchor": bool(
+            0 <= favorite_deviation <= 5
+            and asian_supports_favorite
+            and not death_warning
+        ),
+    })
+    return {
+        "version": MARKET_HEAT_V4_VERSION,
+        "available": True,
+        "formula": "投注比例 - 竞彩三项去水隐含概率",
+        "source_provider": ratio.get("source_provider"),
+        "outcomes": outcomes,
+        "favorite": favorite,
+        "asian_confirmation": {
+            "available": asian_available,
+            "favorite_side": favorite_key,
+            "initial_depth": initial_depth,
+            "current_depth": current_depth,
+            "line_change": round(line_change, 3)
+            if line_change is not None else None,
+            "favorite_water": favorite_water,
+            "favorite_water_change": round(water_change, 3)
+            if water_change is not None else None,
+            "supports_favorite": asian_supports_favorite,
+            "strengthened": asian_strengthened,
+            "conflict": asian_conflict,
+            "conflict_reasons": list(dict.fromkeys(asian_conflict_reasons)),
+        },
+        "total_confirmation": {
+            "line": total_line,
+            "over_water": over_water,
+            "under_water": under_water,
+            "under_not_weak": under_not_weak,
+            "over_strength": over_strength,
+        },
+        "draw": {
+            "eligible": draw_eligible,
+            "gate_active": True,
+            "checks": draw_checks,
+            "failed_checks": [
+                key for key, passed in draw_checks.items() if not passed
+            ],
+            "selection": "平局",
+            "deviation_pp": round(draw_deviation, 2),
+            "message": (
+                "低平赔、资金不过热、均势浅盘与小球结构同时成立"
+                if draw_eligible else "V4平局条件未同时成立"
+            ),
+        },
+        "handicap_draw": {
+            "prerequisites_met": handicap_draw_ready,
+            "gate_active": True,
+            "secondary_only": True,
+            "checks": handicap_draw_checks,
+            "failed_checks": [
+                key for key, passed in handicap_draw_checks.items()
+                if not passed
+            ],
+            "selection": "让平",
+            "message": (
+                "普通胜方向、稳定一球盘与受限比分路径已成立，仍需比分候选确认"
+                if handicap_draw_ready else "V4让平末级前置条件未同时成立"
+            ),
+        },
+        "governance": (
+            "A类健康热门可进入正路候选；1.40-1.80且偏离不少于10pct"
+            "触发热门死亡预警；C类只降级热门，不机械反买；让平始终是"
+            "普通胜方向成立后的副玩法。"
+        ),
+    }
 
 
 def _build_odds_band_model(
@@ -2162,6 +2473,12 @@ def build_daily_match_input(
         sporttery_handicap,
         current_asian_risk,
     )
+    market_heat_v4 = _build_market_heat_v4_model(
+        match,
+        sporttery_handicap,
+        current_asian_risk,
+        rank_data,
+    )
     low_odds_asian_model = _build_low_odds_asian_handicap_model(
         match,
         sporttery_handicap,
@@ -2235,6 +2552,10 @@ def build_daily_match_input(
                 _number(match.get("ou_current_under_odds")),
             ],
         },
+        "betting_ratio": (
+            match.get("betting_ratio")
+            if isinstance(match.get("betting_ratio"), dict) else {}
+        ),
         "fae_core": {
             "overall_score": analysis.get("overall_score"),
             "recommendation": analysis.get("recommendation"),
@@ -2282,6 +2603,7 @@ def build_daily_match_input(
             },
         },
         "league_tactical_model": league_tactical_model,
+        "market_heat_v4": market_heat_v4,
         "odds_band_model": odds_band_model,
         "low_odds_asian_model": low_odds_asian_model,
         "upset_warning_model": upset_warning_model,
@@ -2450,6 +2772,7 @@ class FAEDailyAIAnalyzer:
         summary = self.attach_league_model_rankings(summary, matches)
         summary = self.attach_upset_warning_summary(summary, matches)
         summary = self.attach_odds_band_summary(summary, matches)
+        summary = self.attach_market_heat_v4_summary(summary, matches)
         summary["recommended_combinations"] = self._ensure_mixed_combinations(
             summary
         )
@@ -2905,6 +3228,9 @@ class FAEDailyAIAnalyzer:
         daily_summary = self.attach_odds_band_summary(
             daily_summary, stored_matches
         )
+        daily_summary = self.attach_market_heat_v4_summary(
+            daily_summary, stored_matches
+        )
         daily_summary["recommended_combinations"] = (
             self._ensure_mixed_combinations(daily_summary)
         )
@@ -3210,6 +3536,12 @@ class FAEDailyAIAnalyzer:
             "联赛中亚盘不配合（退盘、升盘高水、上盘升水、降水不升盘、欧亚背离、热门浅盘）时，胜负方向必须硬降级为观察。杯赛/淘汰赛/两回合赛事若只有退盘或降水不升盘单一信号，且没有欧赔走弱、竞彩保护或阵容赛程第二项独立证据，只降低置信度，不得直接反转方向；赛事阶段缺失时必须说明未知。",
             "大小球跳动达到0.75或以上时优先标记数据异常，不得据此强推方向。",
             "special_markets包含体彩计算器的总进球与半全场固定快照及程序校正结果；它们是独立玩法，只能辅助解释比分路径，不得改写胜平负/让球主次选，程序会保留其首选和次选供单独复盘。",
+            "market_heat_v4是资金偏离主校验层：程序使用当前竞彩胜平负三项SP自行计算去水隐含概率，再计算偏离值=实际投注比例-去水隐含概率；禁止改用数据源自带概率、禁止把支持率写成真实胜率。",
+            "V4分层必须严格执行：偏离<0为D资金冷淡，0到+5pct为A健康热门，+5到+10pct为B普通热门，>=+10pct为C过热热门。A类经亚盘确认后优先正路；C类只触发热门降级和防冷检查，禁止机械反买。",
+            "最低胜赔1.40-1.80且热门偏离>=+10pct时属于热门死亡重点区，不得作为稳胆；1.10-1.39超级热门即使买量很高也不能仅凭热度反买；1.80-2.20必须由偏离与亚盘变化共同确认。",
+            "V4平局必须同时检查平赔2.80-3.15、平局偏离-2到+5pct、两队实力接近、亚洲盘平手/平半、大小球2/2.25/2.5且小球不弱。平局偏离超过+5pct不能因买量高升级，>=+10pct视为平局自身过热。",
+            "V4让平是末级副玩法：必须先确认普通胜方向明确且热门不过热，再要求竞彩正负1球与热门对齐、亚盘稳定在0.5-1.0且没有退盘/升至1.25、大小球不支持大比分，并由主要比分候选落在热门恰好赢1球确认；任何一项失败都不得靠旧联赛模板或历史口袋升级为核心。",
+            "market_heat_v4.available=false时代表资金数据不足：不得虚构买量、偏离或V4标签，也不得因此硬性推翻其他可核验市场结论。",
             "不得伪造近期状态、伤停、首发、天气、战意和赛程；输入缺失必须明确说明。",
             "fundamentals来自公开赛前数据页：recent、history、team_rankings、future可作基本面证据；lineups.status=predicted仅表示预计阵容，禁止称为官方首发；injuries.status=no_listed_players仅表示页面未列出球员，禁止称为确认无伤停。",
             "fundamentals.cache_status=stale时代表刷新失败后的过期缓存，只能低权重引用并必须提示时效风险。",
@@ -3312,6 +3644,10 @@ class FAEDailyAIAnalyzer:
             "历史联赛频率不是真实概率，必须让位于本场欧赔、亚盘、竞彩、大小球和市场一致性。",
             "league_tactical_model是联赛模板指数，只能作为低到中权重筛选层；指数高但赔率价值、盘口一致性或数据质量不足时仍必须降级或不下注。",
             "odds_band_model是赔率区间扫描器：favorite_heat、underdog_upset、handicap_draw_value分别对应热门过热、下盘爆冷、让平价值；指数高只能降低热门或增加防选，不得脱离盘口一致性直接反买。",
+            "market_heat_v4是最高优先级资金偏离校验：偏离值=实际投注比例-当前竞彩三项SP的去水隐含概率；D(<0)为资金冷淡、A(0到+5pct)为健康热门、B(+5到+10pct)为普通热门、C(>=+10pct)为过热热门。",
+            "最低胜赔1.40-1.80且热门偏离>=+10pct时不得作稳胆，只能降级并检查平局/下盘，禁止机械反买；1.10-1.39超级热门不能因买量高直接反买；market_heat_v4.available=false时不得编造偏离结论。",
+            "V4平局只有在平赔2.80-3.15、平局偏离-2到+5pct、双方接近、亚盘平手/平半且大小球2-2.5并且小球不弱时才能升级；平局买量本身过热时必须降级。",
+            "V4让平必须最后判断：普通胜方向先成立、热门偏离不过热、竞彩正负1与热门对齐、亚盘0.5-1.0稳定且未退盘/未升1.25、大小球不支持大比分、主要比分候选为热门恰好赢1球；不满足时旧联赛/历史规则只能保留观察，不能升级核心。",
             "low_odds_asian_model只校准最低胜赔低于1.50的竞彩让球三项：竞彩让1球配亚盘半一/一球/球半前档时比较让平，亚盘至少球半或明显深于竞彩时提高穿盘；亚盘明显浅于竞彩或退盘时提高不穿；热门0.76-0.85低水不能直接当作强穿。所有调整均受样本数和±5个百分点上限约束。",
             "最低胜赔低于1.50只表示该胜负选项投注回报不足，不等于热门会失手。过滤低赔热门后仍必须输出概率最高的可投注方向，不得改成观望；若替代项与热门穿盘方向不一致或融合概率未达到三项均分基线33%，必须标记低赔替代风险，但不能隐藏逐场结论。",
             "普通平局采用历史回测版规则：统一模型只允许正向联赛的均势平进入正式池，必须满足平赔2.75-3.20、亚盘退浅或平手保护、上/下盘水位区间正常；平赔2.85-3.14为核心区间，其余只能小试。另有联赛专属模型：葡超小球平、挪超退盘平、荷甲中低总球平、英超降水平、英冠半球不动平、澳超高平赔中低总球、意甲升盘高水平；巴甲只作为平局基线观察模型，不得因单日命中直接升级；日职中低总球目前只观察。强热门冷平若未命中联赛专属模型，只能观察，禁止进入正式推荐。",
@@ -4558,6 +4894,23 @@ class FAEDailyAIAnalyzer:
             max(0.0, TWO_OPTION_LOW_PRICE_FAVORITE_ODDS - shortest_odds) * 20
             if low_price_favorite and shortest_odds is not None else 0.0
         )
+        market_heat_v4 = source.get("market_heat_v4") or {}
+        v4_favorite = market_heat_v4.get("favorite") or {}
+        v4_favorite_selection = str(v4_favorite.get("selection") or "")
+        v4_adjustment = 0.0
+        if market_heat_v4.get("available"):
+            if (
+                market == "胜平负"
+                and v4_favorite_selection in {primary, secondary}
+                and v4_favorite.get("death_warning")
+            ):
+                v4_adjustment = -8.0
+            elif (
+                market == "胜平负"
+                and primary == v4_favorite_selection
+                and v4_favorite.get("healthy_anchor")
+            ):
+                v4_adjustment = 4.0
         rank_score = (
             coverage * 0.42
             + float(pair_value_score or 0) * 0.38
@@ -4565,6 +4918,7 @@ class FAEDailyAIAnalyzer:
             + min(12.0, max(0.0, second_gap)) * 0.45
             + max(-5.0, min(5.0, coverage_edge)) * 0.8
             - low_price_penalty
+            + v4_adjustment
         )
         reasons = []
         if coverage < TWO_OPTION_MIN_COVERAGE:
@@ -4618,6 +4972,8 @@ class FAEDailyAIAnalyzer:
             ),
             "low_price_favorite": low_price_favorite,
             "low_price_penalty": round(low_price_penalty, 2),
+            "market_heat_v4_adjustment": round(v4_adjustment, 2),
+            "market_heat_v4_class": v4_favorite.get("class"),
             "minimum_anchor_odds": (
                 round(minimum_anchor_odds, 2)
                 if minimum_anchor_odds is not None else None
@@ -4965,6 +5321,14 @@ class FAEDailyAIAnalyzer:
             and favorite_selection
             and selection == favorite_selection
         )
+        market_heat_v4 = source.get("market_heat_v4") or {}
+        v4_favorite = market_heat_v4.get("favorite") or {}
+        v4_favorite_selection = str(v4_favorite.get("selection") or "")
+        v4_death_warning_conflict = bool(
+            market_heat_v4.get("available")
+            and v4_favorite.get("death_warning")
+            and selection == v4_favorite_selection
+        )
         reasons = []
         if selection not in TWO_OPTION_PLAY_SELECTIONS:
             reasons.append("没有形成可结算的结果玩法方向")
@@ -5012,6 +5376,10 @@ class FAEDailyAIAnalyzer:
             reasons.append("低赔热门替代方向未通过独立穿盘确认")
         if high_upset_favorite_conflict:
             reasons.append("普通胜负热门方向与75分以上防冷预警冲突")
+        if v4_death_warning_conflict:
+            reasons.append(
+                "V4热门胜赔1.40-1.80且资金偏离不少于+10pct，不得作为稳胆"
+            )
         if severe_data_risk:
             reasons.append("存在危险盘口、异常跳档或极端水位")
 
@@ -5060,6 +5428,9 @@ class FAEDailyAIAnalyzer:
             "severe_data_risk": severe_data_risk,
             "upset_warning_score": round(upset_score, 1),
             "high_upset_favorite_conflict": high_upset_favorite_conflict,
+            "market_heat_v4_death_warning_conflict": (
+                v4_death_warning_conflict
+            ),
             "reason": (
                 "同时通过融合概率、赔率价值、盘口可信度和风险门槛"
                 if eligible else "；".join(dict.fromkeys(reasons))
@@ -5449,11 +5820,28 @@ class FAEDailyAIAnalyzer:
         )
         if confidence is None:
             confidence = _number(profile.get("market_confidence")) or 0
+        market_heat_v4 = source.get("market_heat_v4") or {}
+        v4_favorite = market_heat_v4.get("favorite") or {}
+        favorite_side = str(v4_favorite.get("side") or "")
+        favorite_cover_selection = (
+            "让胜" if favorite_side == "home" and handicap < 0
+            else "让负" if favorite_side == "away" and handicap > 0
+            else ""
+        )
+        v4_death_warning_conflict = bool(
+            market_heat_v4.get("available")
+            and v4_favorite.get("death_warning")
+            and selection == favorite_cover_selection
+        )
         expected_return = (
             probability / 100 * odds
             if probability is not None and odds is not None else None
         )
         reasons = []
+        if v4_death_warning_conflict:
+            reasons.append(
+                "V4热门死亡预警已触发，热门穿盘方向不能作为正式二串一腿"
+            )
         if odds is None or odds < SINGLE_MIN_ODDS:
             reasons.append(f"单腿赔率低于{SINGLE_MIN_ODDS:.2f}")
         if (
@@ -8731,6 +9119,11 @@ class FAEDailyAIAnalyzer:
                 row.get("input_snapshot") or {},
                 cls._draw_radar_candidate(row, "平局"),
             )
+            ordinary_draw = cls._apply_market_heat_v4_radar_gate(
+                row.get("input_snapshot") or {},
+                analysis,
+                ordinary_draw,
+            )
             ordinary_draw = cls._apply_draw_radar_candidate_guard(
                 ordinary_draw
             )
@@ -8742,6 +9135,11 @@ class FAEDailyAIAnalyzer:
             )
             handicap_draw = cls._apply_draw_radar_structure_gate(
                 row.get("input_snapshot") or {}, handicap_draw
+            )
+            handicap_draw = cls._apply_market_heat_v4_radar_gate(
+                row.get("input_snapshot") or {},
+                analysis,
+                handicap_draw,
             )
             handicap_draw = cls._apply_draw_radar_candidate_guard(
                 handicap_draw
@@ -9028,6 +9426,169 @@ class FAEDailyAIAnalyzer:
         result["reason"] = (
             (reason + "；" if reason else "")
             + f"结构降权：{profile.get('reason')}，保留参与当日相对排名。"
+        )
+        return result
+
+    @classmethod
+    def _apply_market_heat_v4_radar_gate(
+        cls,
+        source: Dict[str, Any],
+        analysis: Dict[str, Any],
+        candidate: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Make V4 the final promotion gate for draw/exact-margin radar.
+
+        Legacy league and backtest rules still generate candidates.  When
+        support-rate data is present, however, those priors cannot promote a
+        candidate that fails the current V4 market structure.  Missing ratio
+        data intentionally leaves legacy behaviour unchanged.
+        """
+        result = dict(candidate or {})
+        model = source.get("market_heat_v4") or {}
+        if not result:
+            return result
+        if not model.get("available"):
+            result["market_heat_v4_gate"] = {
+                "available": False,
+                "applied": False,
+                "reason": str(
+                    model.get("message")
+                    or "V4资金偏离数据不足，不执行硬门禁"
+                ),
+            }
+            return result
+
+        selection = str(result.get("selection") or "")
+        reasons: List[str] = []
+        score_adjustment = 0.0
+        probability_adjustment = 0.0
+        passed = False
+        evidence: Dict[str, Any] = {}
+        if selection == "平局":
+            profile = model.get("draw") or {}
+            passed = bool(profile.get("eligible"))
+            evidence = {
+                "checks": profile.get("checks") or {},
+                "failed_checks": profile.get("failed_checks") or [],
+                "draw_outcome": (
+                    (model.get("outcomes") or {}).get("draw") or {}
+                ),
+            }
+            if passed:
+                score_adjustment = 8.0
+                probability_adjustment = 1.0
+            else:
+                reasons.append(
+                    "V4平局未同时满足低平赔、资金不过热、均势浅盘和小球确认"
+                )
+        elif selection == "让平":
+            profile = model.get("handicap_draw") or {}
+            preconditions = bool(profile.get("prerequisites_met"))
+            favorite_side = str(
+                (model.get("favorite") or {}).get("side") or ""
+            )
+            parsed_scores = []
+            for raw_score in (analysis.get("score_candidates") or [])[:3]:
+                numbers = re.findall(r"\d+", str(raw_score or ""))
+                if len(numbers) < 2:
+                    continue
+                home_score, away_score = int(numbers[0]), int(numbers[1])
+                margin = home_score - away_score
+                exact = (
+                    (favorite_side == "home" and margin == 1)
+                    or (favorite_side == "away" and margin == -1)
+                )
+                parsed_scores.append({
+                    "score": f"{home_score}:{away_score}",
+                    "exact_favorite_one_goal": exact,
+                })
+            exact_count = sum(
+                1 for item in parsed_scores
+                if item.get("exact_favorite_one_goal")
+            )
+            score_path_confirmed = bool(
+                parsed_scores
+                and (
+                    parsed_scores[0].get("exact_favorite_one_goal")
+                    or exact_count >= 2
+                )
+            )
+            passed = bool(preconditions and score_path_confirmed)
+            evidence = {
+                "checks": profile.get("checks") or {},
+                "failed_checks": profile.get("failed_checks") or [],
+                "score_candidates": parsed_scores,
+                "score_path_confirmed": score_path_confirmed,
+                "secondary_only": True,
+            }
+            if passed:
+                score_adjustment = 5.0
+                probability_adjustment = 0.75
+            else:
+                if not preconditions:
+                    reasons.append(
+                        "V4让平前置条件不足：普通胜、稳定一球盘或受限总球未同时成立"
+                    )
+                if not score_path_confirmed:
+                    reasons.append(
+                        "主要比分候选未确认热门方恰好赢1球"
+                    )
+        else:
+            return result
+
+        odds = _number(result.get("odds"))
+        probability = _number(result.get("probability"))
+        if probability is not None and probability_adjustment:
+            probability = max(
+                0.0, min(100.0, probability + probability_adjustment)
+            )
+            result["probability"] = round(probability, 2)
+            if odds is not None:
+                result["odds_value"] = round(probability * odds - 100, 2)
+        result["score"] = round(max(
+            0.0,
+            min(99.0, float(result.get("score") or 0) + score_adjustment),
+        ))
+        result["market_heat_v4_gate"] = {
+            "available": True,
+            "applied": True,
+            "passed": passed,
+            "selection": selection,
+            "score_adjustment": score_adjustment,
+            "probability_adjustment_pp": probability_adjustment,
+            "evidence": evidence,
+            "reason": (
+                "V4资金偏离、亚盘与大小球结构确认"
+                if passed else "；".join(reasons)
+            ),
+        }
+        reason_text = str(result.get("reason") or "").rstrip("。；")
+        if passed:
+            result["reason"] = (
+                (reason_text + "；" if reason_text else "")
+                + "V4资金偏离与盘口结构确认。"
+            )
+            if selection == "让平":
+                result["role"] = "secondary_play"
+                result["secondary_only"] = True
+            return result
+
+        result.setdefault("original_tier", result.get("tier"))
+        if result.get("tier") == "core":
+            result["tier"] = "watch"
+            result["rating"] = cls._rating(min(
+                3.5, float(result.get("rating") or 3.5)
+            ))
+        result["formal_eligible"] = False
+        veto_reasons = [
+            str(value) for value in result.get("official_veto_reasons") or []
+            if str(value).strip()
+        ]
+        veto_reasons.extend(reasons)
+        result["official_veto_reasons"] = list(dict.fromkeys(veto_reasons))
+        result["reason"] = (
+            (reason_text + "；" if reason_text else "")
+            + "V4门禁：" + "；".join(reasons) + "，仅列观察。"
         )
         return result
 
@@ -10684,6 +11245,125 @@ class FAEDailyAIAnalyzer:
         }
         return result
 
+    @classmethod
+    def attach_market_heat_v4_summary(
+        cls,
+        summary: Dict[str, Any],
+        matches: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        """Expose V4 candidates separately from legacy rankings.
+
+        This is an audit layer rather than a forced betting pool: healthy
+        favourites, death warnings, draw confirmations and exact-margin
+        prerequisites remain distinct so a UI or review job cannot silently
+        treat all four as recommendations.
+        """
+        result = dict(summary or {})
+        healthy = []
+        death = []
+        draws = []
+        handicap_draws = []
+        for item in matches or []:
+            source = item.get("input_snapshot") or {}
+            model = source.get("market_heat_v4") or {}
+            if not model.get("available"):
+                continue
+            base = {
+                "match_id": str(item.get("match_id") or ""),
+                "match_number": item.get("match_number"),
+                "home_team": item.get("home_team"),
+                "away_team": item.get("away_team"),
+                "league": item.get("league"),
+            }
+            favorite = model.get("favorite") or {}
+            favorite_row = {
+                **base,
+                "selection": favorite.get("selection"),
+                "odds": favorite.get("odds"),
+                "support_rate": favorite.get("support_rate"),
+                "implied_probability": favorite.get(
+                    "implied_probability"
+                ),
+                "deviation_pp": favorite.get("deviation_pp"),
+                "class": favorite.get("class"),
+                "class_label": favorite.get("class_label"),
+                "asian_confirmation": model.get("asian_confirmation") or {},
+            }
+            if favorite.get("healthy_anchor"):
+                healthy.append(favorite_row)
+            if favorite.get("death_warning"):
+                death.append(favorite_row)
+            draw = model.get("draw") or {}
+            if draw.get("eligible"):
+                draw_outcome = (
+                    (model.get("outcomes") or {}).get("draw") or {}
+                )
+                draws.append({
+                    **base,
+                    "selection": "平局",
+                    "odds": draw_outcome.get("odds"),
+                    "support_rate": draw_outcome.get("support_rate"),
+                    "implied_probability": draw_outcome.get(
+                        "implied_probability"
+                    ),
+                    "deviation_pp": draw_outcome.get("deviation_pp"),
+                    "message": draw.get("message"),
+                })
+            handicap_draw = model.get("handicap_draw") or {}
+            if handicap_draw.get("prerequisites_met"):
+                candidate = (
+                    ((item.get("analysis") or {}).get("draw_radar") or {})
+                    .get("handicap_draw") or {}
+                )
+                gate = candidate.get("market_heat_v4_gate") or {}
+                handicap_draws.append({
+                    **base,
+                    "selection": "让平",
+                    "odds": candidate.get("odds"),
+                    "score_path_confirmed": bool(
+                        (gate.get("evidence") or {}).get(
+                            "score_path_confirmed"
+                        )
+                    ),
+                    "formal_eligible": bool(
+                        gate.get("passed")
+                        and candidate.get("formal_eligible")
+                    ),
+                    "message": handicap_draw.get("message"),
+                })
+
+        healthy.sort(
+            key=lambda row: (
+                -abs(float(row.get("deviation_pp") or 0) - 2.5),
+                -float(row.get("odds") or 99),
+            ),
+            reverse=True,
+        )
+        death.sort(
+            key=lambda row: float(row.get("deviation_pp") or 0),
+            reverse=True,
+        )
+        result["market_heat_v4"] = {
+            "version": MARKET_HEAT_V4_VERSION,
+            "formula": "投注比例 - 竞彩三项去水隐含概率",
+            "policy": (
+                "A类健康热门经亚盘确认后可作正路候选；1.40-1.80"
+                "且偏离>=+10pct只作热门死亡预警；平局须四层确认；"
+                "让平只作普通胜方向成立后的末级副玩法。"
+            ),
+            "available_matches": sum(
+                1 for item in matches or []
+                if ((item.get("input_snapshot") or {}).get(
+                    "market_heat_v4"
+                ) or {}).get("available")
+            ),
+            "healthy_favorites": healthy[:5],
+            "favorite_death_warnings": death[:5],
+            "draw_candidates": draws[:5],
+            "handicap_draw_candidates": handicap_draws[:5],
+        }
+        return result
+
     @staticmethod
     def _predicted_result(source: Dict[str, Any]) -> str:
         probabilities = (
@@ -11378,6 +12058,55 @@ class FAEDailyAIAnalyzer:
                 or effective_primary_play == "观望"
                 or not value_profile
             )
+            market_heat_v4 = source.get("market_heat_v4") or {}
+            v4_block_reason = ""
+            if market_heat_v4.get("available"):
+                v4_favorite = market_heat_v4.get("favorite") or {}
+                if (
+                    effective_primary_play
+                    == str(v4_favorite.get("selection") or "")
+                    and v4_favorite.get("death_warning")
+                ):
+                    v4_block_reason = (
+                        "V4热门胜赔1.40-1.80且资金偏离不少于+10pct，"
+                        "热门方向不得作为稳胆"
+                    )
+                elif effective_primary_play == "平局" and not (
+                    (market_heat_v4.get("draw") or {}).get("eligible")
+                ):
+                    v4_block_reason = (
+                        "V4平局未同时通过低平赔、健康资金偏离、"
+                        "均势浅盘与小球确认"
+                    )
+                elif effective_primary_play == "让平":
+                    v4_handicap_draw = (
+                        market_heat_v4.get("handicap_draw") or {}
+                    )
+                    favorite_side = str(v4_favorite.get("side") or "")
+                    score_paths = []
+                    for raw_score in (analysis.get("score_candidates") or [])[:3]:
+                        score_numbers = re.findall(r"\d+", str(raw_score or ""))
+                        if len(score_numbers) < 2:
+                            continue
+                        score_margin = int(score_numbers[0]) - int(
+                            score_numbers[1]
+                        )
+                        score_paths.append(
+                            (favorite_side == "home" and score_margin == 1)
+                            or (favorite_side == "away" and score_margin == -1)
+                        )
+                    score_path_confirmed = bool(
+                        score_paths
+                        and (score_paths[0] or sum(score_paths) >= 2)
+                    )
+                    if not (
+                        v4_handicap_draw.get("prerequisites_met")
+                        and score_path_confirmed
+                    ):
+                        v4_block_reason = (
+                            "V4让平末级门禁未通过：普通胜方向、稳定一球盘、"
+                            "受限总球和热门恰好赢1球比分路径未同时成立"
+                        )
             value_score_number = _number(value_profile.get("value_score"))
             market_confidence_score = (
                 _number(market_confidence.get("score")) or 0
@@ -11391,6 +12120,11 @@ class FAEDailyAIAnalyzer:
             ) or inferred_divergence
             if value_guard.get("no_bet_only"):
                 no_bet_reasons.append("全部玩法均未达到投注门槛")
+            if v4_block_reason:
+                no_bet = True
+                no_bet_reasons.append(v4_block_reason)
+                cap = min(cap, 3.5)
+                adjustments.append("V4资金偏离与盘口结构门禁未通过")
             if not value_profile:
                 no_bet_reasons.append("缺少主选对应的赔率价值数据")
             if effective_primary_play not in OFFICIAL_PLAY_SELECTIONS:

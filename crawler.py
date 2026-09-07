@@ -4,6 +4,7 @@
 import time
 import requests
 import re
+import json
 import chardet
 from bs4 import BeautifulSoup
 from fake_useragent import UserAgent
@@ -35,6 +36,11 @@ SPORTTERY_CALCULATOR_URL = (
 SPORTTERY_CALCULATOR_CACHE_SECONDS = 60
 _SPORTTERY_CALCULATOR_CACHE = {'fetched_at': 0.0, 'data': None}
 _SPORTTERY_CALCULATOR_CACHE_LOCK = threading.Lock()
+VIPC_BASE_URL = 'https://www.vipc.cn'
+VIPC_JCZQ_LIST_URL = f'{VIPC_BASE_URL}/jczq/'
+VIPC_LIST_CACHE_SECONDS = 300
+_VIPC_LIST_CACHE = {'fetched_at': 0.0, 'data': None}
+_VIPC_LIST_CACHE_LOCK = threading.Lock()
 
 
 class OkoooAccessVerificationError(ValueError):
@@ -88,6 +94,9 @@ class FootballCrawler:
         # 体彩接口必须直连，避免服务器代理触发 WAF 或超时。
         self.sporttery_session = requests.Session()
         self.sporttery_session.trust_env = False
+        # 唯彩公开接口对压缩格式和移动端导航头有校验，使用独立直连会话。
+        self.vipc_session = requests.Session()
+        self.vipc_session.trust_env = False
         self.ua = UserAgent()
         self.headers = REQUEST_HEADERS.copy()
         self.host_last_ts = {}
@@ -993,6 +1002,196 @@ class FootballCrawler:
                 'source_provider': 'sporttery-calculator',
             }
         result['sporttery_match_id'] = item.get('sporttery_match_id', '')
+        return result
+
+    def _vipc_headers(self, referer=VIPC_JCZQ_LIST_URL):
+        return {
+            'User-Agent': OKOOO_MOBILE_USER_AGENT,
+            'Referer': referer,
+            'Accept': 'application/json, text/plain, */*',
+            'Accept-Language': 'zh-CN,zh;q=0.9',
+            # 唯彩对包含 br 的默认请求可能返回 403，固定为 requests 可解压格式。
+            'Accept-Encoding': 'gzip, deflate',
+        }
+
+    def parse_vipc_match_list(self, html_content):
+        """解析唯彩竞彩列表，建立竞彩编号到唯彩直播 MatchID 的映射。"""
+        soup = BeautifulSoup(html_content or '', 'lxml')
+        node = soup.select_one('.vSporttery_matchList[data-list]')
+        if not node:
+            return {'matches': []}
+        try:
+            rows = json.loads(node.get('data-list') or '[]')
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return {'matches': []}
+
+        matches = []
+        for item in rows if isinstance(rows, list) else []:
+            item = item if isinstance(item, dict) else {}
+            vipc_match_id = str(item.get('matchId') or '')
+            match_number = self._normalize_match_number(item.get('displayTime'))
+            if not vipc_match_id.isdigit() or not match_number:
+                continue
+            issue = str(item.get('issue') or '')
+            owner_date = ''
+            if re.match(r'^\d{8}', issue):
+                owner_date = (
+                    f'{issue[:4]}-{issue[4:6]}-{issue[6:8]}'
+                )
+            matches.append({
+                'vipc_match_id': vipc_match_id,
+                'vipc_schedule_id': str(item.get('scheduleId') or ''),
+                'match_number': match_number,
+                'owner_date': owner_date,
+                'match_time': str(item.get('matchTime') or ''),
+                'home_team': str(item.get('home') or ''),
+                'away_team': str(item.get('guest') or ''),
+                'league': str(item.get('league') or ''),
+            })
+        return {'matches': matches}
+
+    def get_vipc_match_list(self, force=False):
+        """读取并短时缓存唯彩竞彩列表。"""
+        now = time.time()
+        with _VIPC_LIST_CACHE_LOCK:
+            cached = _VIPC_LIST_CACHE.get('data')
+            if (
+                not force and cached
+                and now - float(_VIPC_LIST_CACHE.get('fetched_at') or 0)
+                < VIPC_LIST_CACHE_SECONDS
+            ):
+                return cached
+            response = self.vipc_session.get(
+                VIPC_JCZQ_LIST_URL,
+                headers=self._vipc_headers(VIPC_BASE_URL),
+                timeout=REQUEST_TIMEOUT,
+            )
+            response.raise_for_status()
+            data = self.parse_vipc_match_list(response.text)
+            if data.get('matches'):
+                _VIPC_LIST_CACHE['data'] = data
+                _VIPC_LIST_CACHE['fetched_at'] = time.time()
+            return data
+
+    def resolve_vipc_match_id(self, match):
+        """用竞彩编号优先映射唯彩 MatchID，并以日期、球队和时间校验。"""
+        if not isinstance(match, dict):
+            return ''
+        stored_id = str(match.get('vipc_match_id') or '')
+        if stored_id.isdigit():
+            return stored_id
+
+        listing = self.get_vipc_match_list()
+        target_number = self._normalize_match_number(match.get('match_number'))
+        candidates = [
+            item for item in listing.get('matches', [])
+            if item.get('match_number') == target_number
+        ]
+        if not candidates:
+            return ''
+
+        owner_date = str(match.get('owner_date') or '')[:10]
+        exact_date = [
+            item for item in candidates
+            if owner_date and item.get('owner_date') == owner_date
+        ]
+        if len(exact_date) == 1:
+            return exact_date[0].get('vipc_match_id', '')
+
+        target_home = self._normalize_team_name(match.get('home_team'))
+        target_away = self._normalize_team_name(match.get('away_team'))
+        target_times = re.findall(
+            r'(?<!\d)([01]\d|2[0-3]):[0-5]\d',
+            str(match.get('match_time') or ''),
+        )
+        target_time = target_times[-1] if target_times else ''
+        for item in candidates:
+            item_home = self._normalize_team_name(item.get('home_team'))
+            item_away = self._normalize_team_name(item.get('away_team'))
+            teams_match = bool(
+                target_home and target_away
+                and (target_home in item_home or item_home in target_home)
+                and (target_away in item_away or item_away in target_away)
+            )
+            item_time_matches = re.findall(
+                r'(?<!\d)([01]\d|2[0-3]):[0-5]\d',
+                str(item.get('match_time') or ''),
+            )
+            item_time = item_time_matches[-1] if item_time_matches else ''
+            if teams_match or (target_time and target_time == item_time):
+                return item.get('vipc_match_id', '')
+        return ''
+
+    @staticmethod
+    def _vipc_number(value):
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    def parse_vipc_betting_ratio(self, payload):
+        """把唯彩买量/支持率转换为稳定字段，供入库、研判和前端共用。"""
+        root = payload if isinstance(payload, dict) else {}
+        data = root.get('data') if isinstance(root.get('data'), dict) else {}
+        ordinary = data.get('tzbl') if isinstance(data.get('tzbl'), dict) else {}
+        handicap = (
+            data.get('jyykRqspf')
+            if isinstance(data.get('jyykRqspf'), dict) else {}
+        )
+
+        result = {
+            'source_provider': 'vipc',
+            'fetched_at': datetime.now().isoformat(timespec='seconds'),
+        }
+        if ordinary:
+            result['ordinary'] = {
+                'home_support_rate': self._vipc_number(ordinary.get('hsupportRate')),
+                'draw_support_rate': self._vipc_number(ordinary.get('dsupportRate')),
+                'away_support_rate': self._vipc_number(ordinary.get('asupportRate')),
+                'home_market_probability': self._vipc_number(ordinary.get('hprobability')),
+                'draw_market_probability': self._vipc_number(ordinary.get('dprobability')),
+                'away_market_probability': self._vipc_number(ordinary.get('aprobability')),
+                'home_error': self._vipc_number(ordinary.get('herror')),
+                'draw_error': self._vipc_number(ordinary.get('derror')),
+                'away_error': self._vipc_number(ordinary.get('aerror')),
+                'home_odds': self._vipc_number(ordinary.get('h')),
+                'draw_odds': self._vipc_number(ordinary.get('d')),
+                'away_odds': self._vipc_number(ordinary.get('a')),
+            }
+        if handicap:
+            result['handicap'] = {
+                'handicap_value': self._vipc_number(handicap.get('goal')),
+                'home_support_rate': self._vipc_number(handicap.get('hsupportRate')),
+                'draw_support_rate': self._vipc_number(handicap.get('dsupportRate')),
+                'away_support_rate': self._vipc_number(handicap.get('asupportRate')),
+                'home_odds': self._vipc_number(handicap.get('h')),
+                'draw_odds': self._vipc_number(handicap.get('d')),
+                'away_odds': self._vipc_number(handicap.get('a')),
+            }
+        return result if result.get('ordinary') or result.get('handicap') else {}
+
+    def crawl_vipc_betting_ratio(self, match):
+        """抓取一场比赛的普通胜平负与竞彩让球投注支持率。"""
+        result = {'betting_ratio': {}, 'vipc_match_id': ''}
+        vipc_match_id = self.resolve_vipc_match_id(match)
+        if not vipc_match_id:
+            self.logger.warning(
+                f"唯彩未匹配到场次: {match.get('match_number', '')}"
+            )
+            return result
+        url = f'{VIPC_BASE_URL}/i/match/jczq/lr/{vipc_match_id}'
+        referer = f'{VIPC_BASE_URL}/live/football/{vipc_match_id}?in=jczq_buys'
+        response = self.vipc_session.get(
+            url,
+            headers=self._vipc_headers(referer),
+            timeout=REQUEST_TIMEOUT,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        if payload.get('code') not in (None, 0):
+            raise ValueError(payload.get('msg') or '唯彩投注比例返回失败')
+        result['vipc_match_id'] = vipc_match_id
+        result['betting_ratio'] = self.parse_vipc_betting_ratio(payload)
         return result
 
     def parse_okooo_match_list(self, html_content):
@@ -2047,6 +2246,7 @@ class FootballCrawler:
         数据源：
         - 体彩计算器：胜平负、让球胜平负
         - 澳客：亚盘、大小球
+        - 唯彩：胜平负、竞彩让球投注比例
 
         此流程不再请求 500 赔率页面。
         
@@ -2060,7 +2260,8 @@ class FootballCrawler:
             'euro_odds': [],
             'asian_handicap': [],
             'over_under': [],
-            'handicap_index': {}  # 新增：让球指数
+            'handicap_index': {},  # 新增：让球指数
+            'betting_ratio': {},
         }
         
         try:
@@ -2099,6 +2300,16 @@ class FootballCrawler:
                     odds_data['okooo_match_id'] = okooo['okooo_match_id']
             except Exception as exc:
                 self.logger.warning(f'澳客赔率获取失败 {match_id}: {exc}')
+
+            # 3. 唯彩公开买量数据，只补充投注比例，不参与覆盖赔率。
+            try:
+                vipc = self.crawl_vipc_betting_ratio(match)
+                if vipc.get('betting_ratio'):
+                    odds_data['betting_ratio'] = vipc['betting_ratio']
+                if vipc.get('vipc_match_id'):
+                    odds_data['vipc_match_id'] = vipc['vipc_match_id']
+            except Exception as exc:
+                self.logger.warning(f'唯彩投注比例获取失败 {match_id}: {exc}')
 
             return odds_data
 
@@ -2387,6 +2598,10 @@ class FootballCrawler:
             match['sporttery_match_id'] = str(
                 odds_details['sporttery_match_id']
             )
+        if odds_details.get('vipc_match_id'):
+            match['vipc_match_id'] = str(odds_details['vipc_match_id'])
+        if odds_details.get('betting_ratio'):
+            match['betting_ratio'] = odds_details['betting_ratio']
         # 1. 欧赔
         if odds_details.get('euro_odds'):
             euro = odds_details['euro_odds'][0]
@@ -2477,4 +2692,6 @@ class FootballCrawler:
         self.session.close()
         if getattr(self, 'sporttery_session', None):
             self.sporttery_session.close()
+        if getattr(self, 'vipc_session', None):
+            self.vipc_session.close()
         self.logger.info("爬虫会话已关闭")

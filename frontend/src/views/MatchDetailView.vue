@@ -395,6 +395,31 @@
         </template>
 
         <template v-else-if="activeTab === 'odds'">
+          <DataSection v-if="bettingRatioRows.length" title="投注比例">
+            <div class="betting-ratio-card">
+              <header>
+                <span>唯彩买量</span>
+                <small>{{ bettingRatioUpdatedAt }}</small>
+              </header>
+              <article v-for="row in bettingRatioRows" :key="row.key">
+                <div class="betting-ratio-title">
+                  <b>{{ row.title }}</b>
+                  <small>{{ row.subtitle }}</small>
+                </div>
+                <div class="betting-ratio-options">
+                  <p v-for="option in row.options" :key="option.label">
+                    <span>{{ option.label }}</span>
+                    <strong>{{ percentText(option.support) }}</strong>
+                    <i :style="{ width: `${Math.max(0, Math.min(100, option.support || 0))}%` }"></i>
+                    <small v-if="option.probability != null">隐含 {{ percentText(option.probability) }}</small>
+                    <small v-if="option.deviation != null" :class="['ratio-deviation', option.tone]">
+                      偏离 {{ option.deviation > 0 ? '+' : '' }}{{ Number(option.deviation).toFixed(1) }}pct · {{ option.classLabel }}
+                    </small>
+                  </p>
+                </div>
+              </article>
+            </div>
+          </DataSection>
           <DataSection v-for="market in markets" :key="market.key" :title="market.label">
             <div class="odds-table">
               <div class="odds-head"><span></span><span v-for="item in market.items" :key="item.label">{{ item.label }}</span></div>
@@ -641,6 +666,82 @@ const markets = computed(() => {
       { label: '盘口', initial: m.ou_initial_total, current: m.ou_current_total },
       { label: '小球', initial: m.ou_initial_under_odds, current: m.ou_current_under_odds }] }
   ].filter(item => item.show)
+})
+const bettingRatioUpdatedAt = computed(() => {
+  const value = String(match.value?.betting_ratio?.fetched_at || '')
+  return value ? `采集 ${value.replace('T', ' ').slice(5, 16)}` : '最新支持率'
+})
+const marketHeatV4Outcomes = computed(() => {
+  const stored = dailyAiSnapshot.value?.market_heat_v4?.outcomes
+  if (stored && Object.keys(stored).length) return stored
+  const odds = [
+    Number(match.value?.euro_current_win),
+    Number(match.value?.euro_current_draw),
+    Number(match.value?.euro_current_lose)
+  ]
+  const ordinary = match.value?.betting_ratio?.ordinary || {}
+  const supports = [
+    Number(ordinary.home_support_rate),
+    Number(ordinary.draw_support_rate),
+    Number(ordinary.away_support_rate)
+  ]
+  if (odds.some(value => !Number.isFinite(value) || value <= 1) || supports.some(value => !Number.isFinite(value))) return {}
+  const inverse = odds.map(value => 1 / value)
+  const total = inverse.reduce((sum, value) => sum + value, 0)
+  const keys = ['home', 'draw', 'away']
+  const labels = ['主胜', '平局', '客胜']
+  return Object.fromEntries(keys.map((key, index) => {
+    const probability = inverse[index] / total * 100
+    const deviation = supports[index] - probability
+    const category = deviation < 0
+      ? ['D', '资金冷淡', 'cold']
+      : deviation <= 5
+        ? ['A', '健康热门', 'healthy']
+        : deviation < 10
+          ? ['B', '普通热门', 'normal']
+          : ['C', '过热热门', 'overheated']
+    return [key, {
+      selection: labels[index],
+      implied_probability: probability,
+      support_rate: supports[index],
+      deviation_pp: deviation,
+      class: category[0],
+      class_label: category[1],
+      tone: category[2]
+    }]
+  }))
+})
+const bettingRatioRows = computed(() => {
+  const source = match.value?.betting_ratio || {}
+  const ordinary = source.ordinary || {}
+  const handicap = source.handicap || {}
+  const rows = []
+  const v4 = marketHeatV4Outcomes.value
+  if ([ordinary.home_support_rate, ordinary.draw_support_rate, ordinary.away_support_rate].some(value => value != null)) {
+    rows.push({
+      key: 'ordinary',
+      title: '胜平负',
+      subtitle: '投注支持率',
+      options: [
+        { label: '主胜', support: ordinary.home_support_rate, probability: v4.home?.implied_probability, deviation: v4.home?.deviation_pp, classLabel: v4.home?.class_label, tone: v4.home?.tone },
+        { label: '平局', support: ordinary.draw_support_rate, probability: v4.draw?.implied_probability, deviation: v4.draw?.deviation_pp, classLabel: v4.draw?.class_label, tone: v4.draw?.tone },
+        { label: '客胜', support: ordinary.away_support_rate, probability: v4.away?.implied_probability, deviation: v4.away?.deviation_pp, classLabel: v4.away?.class_label, tone: v4.away?.tone }
+      ]
+    })
+  }
+  if ([handicap.home_support_rate, handicap.draw_support_rate, handicap.away_support_rate].some(value => value != null)) {
+    rows.push({
+      key: 'handicap',
+      title: `竞彩让球 ${signedHandicap(handicap.handicap_value)}`,
+      subtitle: '投注支持率',
+      options: [
+        { label: '让胜', support: handicap.home_support_rate },
+        { label: '让平', support: handicap.draw_support_rate },
+        { label: '让负', support: handicap.away_support_rate }
+      ]
+    })
+  }
+  return rows
 })
 
 async function fetchAll() {
@@ -2070,6 +2171,111 @@ onMounted(fetchAll)
 .odds-table {
   overflow: hidden;
   border-radius: 8px;
+}
+
+.betting-ratio-card {
+  margin: 10px;
+  overflow: hidden;
+  border: 1px solid #f0eeee;
+  border-radius: 10px;
+  background: #fff;
+}
+
+.betting-ratio-card > header,
+.betting-ratio-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.betting-ratio-card > header {
+  padding: 9px 11px;
+  background: #fff8f8;
+  color: #e64b5f;
+  font-size: 12px;
+}
+
+.betting-ratio-card > header small,
+.betting-ratio-title small,
+.betting-ratio-options small {
+  color: #a3a7ad;
+  font-size: 9px;
+}
+
+.betting-ratio-card article {
+  padding: 10px 11px 12px;
+}
+
+.betting-ratio-card article + article {
+  border-top: 1px solid #f1f1f1;
+}
+
+.betting-ratio-title b {
+  font-size: 12px;
+}
+
+.betting-ratio-options {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 9px;
+}
+
+.betting-ratio-options p {
+  min-width: 0;
+  margin: 0;
+  text-align: center;
+}
+
+.betting-ratio-options span,
+.betting-ratio-options strong,
+.betting-ratio-options small {
+  display: block;
+}
+
+.betting-ratio-options span {
+  color: #777d85;
+  font-size: 10px;
+}
+
+.betting-ratio-options strong {
+  margin-top: 3px;
+  color: #e6415b;
+  font-size: 17px;
+}
+
+.betting-ratio-options i {
+  display: block;
+  max-width: 100%;
+  height: 3px;
+  margin: 5px auto 0;
+  border-radius: 3px;
+  background: linear-gradient(90deg, #ff7b8f, #ee3151);
+}
+
+.betting-ratio-options small {
+  margin-top: 4px;
+}
+
+.betting-ratio-options .ratio-deviation {
+  min-height: 22px;
+  line-height: 1.25;
+}
+
+.betting-ratio-options .ratio-deviation.healthy {
+  color: #1c9b78;
+}
+
+.betting-ratio-options .ratio-deviation.normal {
+  color: #c08a23;
+}
+
+.betting-ratio-options .ratio-deviation.overheated {
+  color: #e13b57;
+}
+
+.betting-ratio-options .ratio-deviation.cold {
+  color: #7d8794;
 }
 
 @media (min-width: 480px) {

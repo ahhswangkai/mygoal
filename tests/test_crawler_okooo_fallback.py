@@ -361,6 +361,13 @@ class OkoooFallbackTest(unittest.TestCase):
 
         self.crawler.crawl_sporttery_odds = fake_sporttery
         self.crawler.crawl_okooo_odds = fake_okooo
+        self.crawler.crawl_vipc_betting_ratio = lambda match: {
+            'vipc_match_id': '498162138',
+            'betting_ratio': {
+                'source_provider': 'vipc',
+                'ordinary': {'home_support_rate': 44},
+            },
+        }
         result = self.crawler.crawl_match_odds(
             '500-id',
             match={'match_number': '周三005'},
@@ -373,6 +380,10 @@ class OkoooFallbackTest(unittest.TestCase):
         self.assertEqual(result['over_under'][0]['current_total'], '2.25')
         self.assertEqual(result['sporttery_match_id'], '2041234')
         self.assertEqual(result['okooo_match_id'], '1346795')
+        self.assertEqual(result['vipc_match_id'], '498162138')
+        self.assertEqual(
+            result['betting_ratio']['ordinary']['home_support_rate'], 44
+        )
 
 
 if __name__ == '__main__':
