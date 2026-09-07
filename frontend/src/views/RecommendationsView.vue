@@ -364,6 +364,14 @@
                   <span class="draw-radar-metrics">
                     <i>{{ item.shadow_only ? '影子概率' : '概率' }} {{ radarPercent(item.probability) }}</i>
                     <i v-if="!item.shadow_only">雷达 {{ item.score ?? '--' }}分</i>
+                    <i
+                      v-if="radarMarketHeat(item, group.key)"
+                      :class="['market-heat-metric', radarMarketHeat(item, group.key).tone]"
+                    >
+                      {{ marketHeatIcon(radarMarketHeat(item, group.key).tone) }}
+                      {{ radarMarketHeat(item, group.key).class_label }}
+                      {{ signedPct(radarMarketHeat(item, group.key).deviation_pp) }}
+                    </i>
                     <i v-if="item.shadow_probability && !item.shadow_only">
                       影子 {{ radarPercent(item.shadow_probability) }}
                     </i>
@@ -480,6 +488,17 @@
                   <span>{{ item.home_team }}<i>VS</i>{{ item.away_team }}</span>
                   <small>{{ item.league }} · {{ formatMatchTime(item.match_time) }}</small>
                   <div
+                    v-if="dailyMarketHeatBadge(item)"
+                    :class="['daily-market-heat-preview', dailyMarketHeatBadge(item).tone]"
+                  >
+                    <b>V4 {{ dailyMarketHeatBadge(item).selection }}</b>
+                    <span>
+                      {{ marketHeatIcon(dailyMarketHeatBadge(item).tone) }}
+                      {{ dailyMarketHeatBadge(item).class_label }}
+                    </span>
+                    <em>偏离 {{ signedPct(dailyMarketHeatBadge(item).deviation_pp) }}</em>
+                  </div>
+                  <div
                     v-if="specialMarketRows(item).length"
                     class="daily-special-preview"
                   >
@@ -560,6 +579,23 @@
                     <b>{{ triplet(item.input_snapshot?.sporttery_handicap?.current) }}</b>
                   </p>
                   <p><span>大小球</span><b>{{ totalTriplet(item.input_snapshot?.total?.current) }}</b></p>
+                </div>
+                <div v-if="dailyMarketHeatRows(item).length" class="daily-market-heat-panel">
+                  <header>
+                    <strong>V4 资金偏离</strong>
+                    <span>实际买量 − 竞彩去水隐含概率</span>
+                  </header>
+                  <div>
+                    <p v-for="outcome in dailyMarketHeatRows(item)" :key="outcome.key">
+                      <b>{{ outcome.selection }}</b>
+                      <small>买量 {{ radarPercent(outcome.support_rate) }}</small>
+                      <small>隐含 {{ radarPercent(outcome.implied_probability) }}</small>
+                      <em :class="outcome.tone">
+                        {{ marketHeatIcon(outcome.tone) }} {{ outcome.class_label }}
+                        {{ signedPct(outcome.deviation_pp) }}
+                      </em>
+                    </p>
+                  </div>
                 </div>
                 <div v-if="specialMarketRows(item).length" class="special-market-panel">
                   <header>
@@ -2187,6 +2223,52 @@ function formatPickOdds(value) {
   const number = Number(value)
   if (!Number.isFinite(number) || number <= 0) return ''
   return number.toFixed(2).replace(/\.?0+$/, '')
+}
+
+function marketHeatIcon(tone) {
+  return {
+    healthy: '🟢',
+    normal: '🟡',
+    overheated: '🔴',
+    cold: '⚪'
+  }[tone] || '⚪'
+}
+
+function signedPct(value) {
+  const number = Number(value)
+  if (!Number.isFinite(number)) return '--'
+  const formatted = Number.isInteger(number) ? number : number.toFixed(1)
+  return `${number > 0 ? '+' : ''}${formatted}pct`
+}
+
+function dailyMarketHeatRows(item) {
+  const outcomes = item?.input_snapshot?.market_heat_v4?.outcomes || {}
+  return ['home', 'draw', 'away']
+    .map(key => ({ key, ...(outcomes[key] || {}) }))
+    .filter(outcome => outcome.selection && outcome.class_label)
+}
+
+function dailyMarketHeatBadge(item) {
+  const model = item?.input_snapshot?.market_heat_v4 || {}
+  if (!model.available) return null
+  const favorite = model.favorite || {}
+  if (favorite.selection && favorite.class_label) return favorite
+  const rows = dailyMarketHeatRows(item)
+  return rows
+    .filter(row => row.selection !== '平局')
+    .sort((left, right) => Number(left.odds || Infinity) - Number(right.odds || Infinity))[0] || null
+}
+
+function radarMarketHeat(candidate, market) {
+  const model = dailyMatch(candidate?.match_id)?.input_snapshot?.market_heat_v4 || {}
+  if (!model.available) return null
+  if (market === 'ordinary_draw') {
+    return model.outcomes?.draw || null
+  }
+  if (market === 'handicap_draw') {
+    return model.favorite || null
+  }
+  return null
 }
 
 function radarTierLabel(tier) {
@@ -4046,6 +4128,54 @@ onBeforeUnmount(() => {
   font-size: 10px;
 }
 
+.daily-market-heat-preview {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  margin-top: 6px;
+  padding: 3px 7px;
+  color: #66707d;
+  font-size: 9px;
+  line-height: 1.3;
+  background: #f5f7f9;
+  border: 1px solid #e7eaee;
+  border-radius: 999px;
+}
+
+.daily-market-heat-preview b,
+.daily-market-heat-preview span,
+.daily-market-heat-preview em {
+  color: inherit;
+  font-size: inherit;
+  font-style: normal;
+  white-space: nowrap;
+}
+
+.daily-market-heat-preview.healthy {
+  color: #27865e;
+  background: #eef9f4;
+  border-color: #d4eee3;
+}
+
+.daily-market-heat-preview.normal {
+  color: #9a6815;
+  background: #fff8e8;
+  border-color: #f3e3bd;
+}
+
+.daily-market-heat-preview.overheated {
+  color: #d83f57;
+  background: #fff1f3;
+  border-color: #f7d7dd;
+}
+
+.daily-market-heat-preview.cold {
+  color: #697482;
+  background: #f4f6f8;
+  border-color: #e3e7eb;
+}
+
 .daily-special-preview {
   display: flex;
   flex-wrap: wrap;
@@ -4204,6 +4334,110 @@ onBeforeUnmount(() => {
 .daily-match-body {
   padding: 11px;
   background: #fcfcfd;
+}
+
+.daily-market-heat-panel {
+  margin-top: 9px;
+  overflow: hidden;
+  background: #fff;
+  border: 1px solid #ece7e9;
+  border-radius: 9px;
+}
+
+.daily-market-heat-panel > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 9px;
+  background: #faf8f9;
+  border-bottom: 1px solid #f0ecee;
+}
+
+.daily-market-heat-panel > header strong {
+  color: #40454d;
+  font-size: 11px;
+}
+
+.daily-market-heat-panel > header span {
+  color: #a3a6ad;
+  font-size: 9px;
+}
+
+.daily-market-heat-panel > div {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.daily-market-heat-panel p {
+  display: grid;
+  justify-items: center;
+  gap: 3px;
+  min-width: 0;
+  margin: 0;
+  padding: 8px 4px;
+}
+
+.daily-market-heat-panel p + p {
+  border-left: 1px solid #f1edef;
+}
+
+.daily-market-heat-panel p b {
+  color: #444950;
+  font-size: 11px;
+}
+
+.daily-market-heat-panel p small {
+  color: #969ba3;
+  font-size: 9px;
+  white-space: nowrap;
+}
+
+.daily-market-heat-panel p em {
+  padding: 2px 5px;
+  color: #697482;
+  font-size: 9px;
+  font-style: normal;
+  font-weight: 650;
+  background: #f4f6f8;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.daily-market-heat-panel p em.healthy {
+  color: #27865e;
+  background: #eef9f4;
+}
+
+.daily-market-heat-panel p em.normal {
+  color: #9a6815;
+  background: #fff8e8;
+}
+
+.daily-market-heat-panel p em.overheated {
+  color: #d83f57;
+  background: #fff1f3;
+}
+
+.daily-market-heat-panel p em.cold {
+  color: #697482;
+  background: #f4f6f8;
+}
+
+.draw-radar-metrics i.market-heat-metric.healthy {
+  color: #27865e;
+}
+
+.draw-radar-metrics i.market-heat-metric.normal {
+  color: #9a6815;
+}
+
+.draw-radar-metrics i.market-heat-metric.overheated {
+  color: #d83f57;
+}
+
+.draw-radar-metrics i.market-heat-metric.cold {
+  color: #697482;
 }
 
 .daily-guardrail-note {
