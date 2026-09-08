@@ -55,6 +55,14 @@ TWO_OPTION_LOW_PRICE_FAVORITE_ODDS = 1.45
 TWO_OPTION_SECONDARY_VALUE_MAX_GAP = 5.0
 TWO_OPTION_SECONDARY_VALUE_MIN_GAIN = 0.04
 TWO_OPTION_SECONDARY_VALUE_MIN_RETURN = 0.90
+# Handicap coverage is meant to maximise hit probability, not preserve a very
+# long-priced AI opinion merely because it was written as the primary pick.
+# One-month replay showed that broadly replacing either directional extreme
+# with 让平 is harmful.  The correction is therefore limited to the severe
+# anomaly: the omitted middle outcome leads the AI's >=5.00 primary long-shot
+# by at least five blended-probability points.
+TWO_OPTION_HANDICAP_LONGSHOT_MIN_ODDS = 5.0
+TWO_OPTION_HANDICAP_MIDDLE_MIN_ADVANTAGE = 5.0
 TWO_OPTION_COMBO_LIMIT = 3
 TWO_OPTION_COMBO_MIN_ANCHOR_PROBABILITY = 60.0
 TWO_OPTION_COMBO_MIN_ANCHOR_EXPECTED_RETURN = 0.90
@@ -4759,6 +4767,80 @@ class FAEDailyAIAnalyzer:
         by_selection = {
             str(item.get("selection") or ""): item for item in candidates
         }
+        source_selections = [primary, secondary]
+        coverage_pair_guard = {
+            "triggered": False,
+            "source_selections": source_selections,
+            "effective_selections": source_selections,
+        }
+        # The model's primary pick may be a high-price value opinion rather
+        # than one of the two most likely outcomes.  That distinction matters
+        # for a *coverage* product.  In particular, an extreme pair such as
+        # 让胜/让负 must not silently omit 让平 when the exact-margin
+        # outcome is the actual runner-up (or effectively tied with it).
+        if (
+            market == "竞彩让球"
+            and {primary, secondary} == {"让胜", "让负"}
+            and "让平" in by_selection
+        ):
+            directional_rows = [
+                by_selection.get(primary) or {},
+                by_selection.get(secondary) or {},
+            ]
+            if all(
+                _number(item.get("coverage_score")) is not None
+                for item in directional_rows
+            ):
+                weakest = min(
+                    directional_rows,
+                    key=lambda item: float(item.get("coverage_score") or 0),
+                )
+                strongest = max(
+                    directional_rows,
+                    key=lambda item: float(item.get("coverage_score") or 0),
+                )
+                middle = by_selection["让平"]
+                middle_score = _number(middle.get("coverage_score"))
+                weakest_score = _number(weakest.get("coverage_score"))
+                weakest_odds = _number(weakest.get("odds"))
+                if (
+                    middle_score is not None
+                    and weakest_score is not None
+                    and str(weakest.get("selection") or "")
+                    == source_selections[0]
+                    and weakest_odds is not None
+                    and weakest_odds >= TWO_OPTION_HANDICAP_LONGSHOT_MIN_ODDS
+                    and middle_score
+                    >= weakest_score
+                    + TWO_OPTION_HANDICAP_MIDDLE_MIN_ADVANTAGE
+                ):
+                    primary = str(strongest.get("selection") or primary)
+                    secondary = "让平"
+                    coverage_pair_guard = {
+                        "triggered": True,
+                        "source_selections": source_selections,
+                        "effective_selections": [primary, secondary],
+                        "replaced_selection": weakest.get("selection"),
+                        "replacement_selection": "让平",
+                        "replaced_coverage_score": round(
+                            float(weakest_score), 2
+                        ),
+                        "replacement_coverage_score": round(
+                            float(middle_score), 2
+                        ),
+                        "replaced_odds": round(float(weakest_odds), 3),
+                        "minimum_longshot_odds": (
+                            TWO_OPTION_HANDICAP_LONGSHOT_MIN_ODDS
+                        ),
+                        "minimum_coverage_advantage": (
+                            TWO_OPTION_HANDICAP_MIDDLE_MIN_ADVANTAGE
+                        ),
+                        "reason": (
+                            "让球双选原保留了大模型的超高赔低覆盖"
+                            "主选，让平覆盖分明显更高，按命中覆盖"
+                            "目标用让平替换长赔异常项"
+                        ),
+                    }
         selected_rows = [
             by_selection.get(primary) or {},
             by_selection.get(secondary) or {},
@@ -4937,11 +5019,19 @@ class FAEDailyAIAnalyzer:
             reasons.append("双选赔率不完整")
         if severe_data_risk:
             reasons.append("存在危险盘口、异常跳档或热门不穿硬护栏")
+        success_reason = (
+            f"同市场前两项覆盖分{coverage:.1f}，次选领先第三项"
+            f"{second_gap:.1f}个百分点"
+        )
+        if coverage_pair_guard.get("triggered"):
+            success_reason += "；" + str(coverage_pair_guard.get("reason") or "")
         return {
             "actionable": eligible,
             "market": market,
+            "source_selections": source_selections,
             "selections": [primary, secondary],
             "selection_text": f"{primary} / {secondary}",
+            "coverage_pair_guard": coverage_pair_guard,
             "odds": odds,
             "coverage_score": round(coverage, 2),
             "model_coverage_probability": round(model_coverage, 2),
@@ -4985,9 +5075,7 @@ class FAEDailyAIAnalyzer:
             "parlay_fit": parlay_fit,
             "rank_score": round(rank_score, 2),
             "reason": (
-                f"同市场前两项覆盖分{coverage:.1f}，次选领先第三项"
-                f"{second_gap:.1f}个百分点"
-                if eligible else "；".join(reasons)
+                success_reason if eligible else "；".join(reasons)
             ),
         }
 
@@ -9354,6 +9442,10 @@ class FAEDailyAIAnalyzer:
         profile = cls._draw_radar_structure_profile(
             source, selection
         )
+        one_goal_route = bool(
+            selection == "让平"
+            and cls._one_goal_margin_parlay_signal(source).get("triggered")
+        )
         result["market_structure_gate"] = profile
         if profile.get("data_complete") is False:
             result["ranking_eligible"] = True
@@ -9365,7 +9457,7 @@ class FAEDailyAIAnalyzer:
             result["structure_confirmed"] = True
             return result
 
-        if not weekend_pool:
+        if not weekend_pool and not one_goal_route:
             result["original_tier"] = result.get("tier")
             result["tier"] = "exclude"
             result["rating"] = cls._rating(min(
@@ -9410,6 +9502,8 @@ class FAEDailyAIAnalyzer:
         )
         result["ranking_eligible"] = True
         result["structure_confirmed"] = False
+        if one_goal_route:
+            result["precision_route_visible"] = True
         result["structure_penalty"] = {
             "probability_adjustment_pp": probability_penalty,
             "score_adjustment": score_penalty,
@@ -9562,6 +9656,20 @@ class FAEDailyAIAnalyzer:
                 if passed else "；".join(reasons)
             ),
         }
+        if selection == "平局":
+            draw_outcome = (
+                ((model.get("outcomes") or {}).get("draw") or {})
+            )
+            if draw_outcome.get("class") == "B":
+                result["market_heat_v4_watch"] = {
+                    "class": "B",
+                    "label": "普通热门",
+                    "watch_only": True,
+                    "reason": (
+                        "平局资金偏离位于+5至+10pct，"
+                        "只保留观察排名，不进入正式组票"
+                    ),
+                }
         reason_text = str(result.get("reason") or "").rstrip("。；")
         if passed:
             result["reason"] = (
@@ -9580,6 +9688,18 @@ class FAEDailyAIAnalyzer:
                 3.5, float(result.get("rating") or 3.5)
             ))
         result["formal_eligible"] = False
+        # V4 draw-funds deviation directly measures the ordinary-draw market,
+        # so a failed flat-draw row must not leak into persisted tickets.  The
+        # handicap draw is an exact-margin market without a matching support
+        # ratio; V4 still blocks *formal promotion* there, but the separately
+        # audited one-goal-margin route may remain available to coverage
+        # tickets and is judged in replay on its own merits.
+        if selection == "平局":
+            result["guardrail_ticket_eligible"] = False
+            result["parlay_veto_reason"] = (
+                "V4平局资金偏离与盘口结构未通过，"
+                "只列观察，禁止进入平/让平组票"
+            )
         veto_reasons = [
             str(value) for value in result.get("official_veto_reasons") or []
             if str(value).strip()
@@ -9909,7 +10029,11 @@ class FAEDailyAIAnalyzer:
         if candidate.get("guardrail_ticket_eligible") is False:
             alignment = candidate.get("guardrail_alignment") or {}
             reasons.append(
-                str(alignment.get("reason") or "与护栏最终方向冲突")
+                str(
+                    candidate.get("parlay_veto_reason")
+                    or alignment.get("reason")
+                    or "与护栏最终方向冲突"
+                )
             )
         odds_value = _number(candidate.get("odds_value"))
         if odds_value is None:
@@ -9964,7 +10088,7 @@ class FAEDailyAIAnalyzer:
         """Expose core/watch radar rows even when official pools exclude them."""
         result = dict(summary or {})
         radar = {
-            "version": "draw-radar-v6-pool-aware-soft-ranking",
+            "version": "draw-radar-v7-v4-ticket-routing",
             "policy": (
                 "所有赔率与让球数据完整的平/让平候选先参与相对排名；"
                 "盘口结构与风险只做软降权。工作日每榜展示前三，周六周日"
@@ -10123,11 +10247,25 @@ class FAEDailyAIAnalyzer:
             for raw in radar.get(key) or []:
                 match_id = str(raw.get("match_id") or "")
                 odds = _number(raw.get("odds"))
+                v4_gate = raw.get("market_heat_v4_gate") or {}
+                v4_rejected = bool(
+                    key == "ordinary_draw"
+                    and v4_gate.get("applied")
+                    and v4_gate.get("passed") is not True
+                )
+                routed_ordinary_draw = bool(
+                    key == "ordinary_draw"
+                    and (raw.get("one_goal_margin_signal") or {}).get(
+                        "triggered"
+                    )
+                )
                 if (
                     not match_id
                     or odds is None
                     or odds <= 1
                     or raw.get("guardrail_ticket_eligible") is False
+                    or v4_rejected
+                    or routed_ordinary_draw
                 ):
                     continue
                 item = dict(raw)
@@ -10264,7 +10402,7 @@ class FAEDailyAIAnalyzer:
             }
 
         result["draw_parlay_tickets"] = {
-            "version": "draw-parlay-ticket-v1",
+            "version": "draw-parlay-ticket-v2-v4-routing",
             "source": "draw_radar",
             "two_three": two_three,
             "two_leg": two_leg,

@@ -179,6 +179,48 @@ class MarketHeatV4Test(unittest.TestCase):
         self.assertEqual(failed["tier"], "watch")
         self.assertFalse(failed["formal_eligible"])
 
+    def test_b_class_draw_is_watch_only_and_cannot_enter_ticket(self):
+        snapshot = build_daily_match_input(match_with_market(
+            euro_initial_win=2.45,
+            euro_initial_draw=2.95,
+            euro_initial_lose=2.85,
+            euro_current_win=2.45,
+            euro_current_draw=2.95,
+            euro_current_lose=2.85,
+            asian_initial_handicap="平手",
+            asian_current_handicap="平手",
+            betting_ratio={
+                "source_provider": "vipc",
+                "ordinary": {
+                    "home_support_rate": 36,
+                    "draw_support_rate": 37,
+                    "away_support_rate": 27,
+                },
+            },
+        ))
+        self.assertEqual(
+            snapshot["market_heat_v4"]["outcomes"]["draw"]["class"],
+            "B",
+        )
+        result = FAEDailyAIAnalyzer._apply_market_heat_v4_radar_gate(
+            snapshot,
+            {},
+            {
+                "selection": "平局",
+                "tier": "core",
+                "rating": 4.0,
+                "score": 82,
+                "probability": 31,
+                "odds": 2.95,
+                "guardrail_ticket_eligible": True,
+            },
+        )
+
+        self.assertFalse(result["market_heat_v4_gate"]["passed"])
+        self.assertEqual(result["market_heat_v4_watch"]["class"], "B")
+        self.assertTrue(result["market_heat_v4_watch"]["watch_only"])
+        self.assertFalse(result["guardrail_ticket_eligible"])
+
     def test_missing_ratio_does_not_apply_hard_gate_and_compact_keeps_v4(self):
         snapshot = build_daily_match_input(match_with_market(betting_ratio={}))
         self.assertFalse(snapshot["market_heat_v4"]["available"])

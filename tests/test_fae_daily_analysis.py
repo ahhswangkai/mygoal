@@ -1916,6 +1916,102 @@ class DailyAnalysisTests(unittest.TestCase):
         self.assertTrue(analysis["no_bet"])
         self.assertEqual(analysis["decision"], "双选可考虑")
 
+    def test_handicap_coverage_replaces_weaker_extreme_with_letdraw(self):
+        source = {
+            "sporttery_handicap": {
+                "value": 1,
+                "current": [1.36, 4.10, 6.65],
+            },
+            "fae_core": {
+                "probabilities": {
+                    "hhad": {"win": 64, "draw": 21, "lose": 15},
+                },
+                "risk": {"dangerous": False},
+            },
+        }
+        secondary = FAEDailyAIAnalyzer._secondary_play_decision(
+            source, "让负", "让平"
+        )
+        self.assertEqual(secondary["selection"], "让胜")
+
+        profile = FAEDailyAIAnalyzer._two_option_profile(source, {
+            "primary_play": "让负",
+            "secondary_play": secondary["selection"],
+            "secondary_selection_guard": secondary,
+            "market_confidence": {"score": 68},
+        })
+
+        self.assertEqual(profile["source_selections"], ["让负", "让胜"])
+        self.assertEqual(profile["selections"], ["让胜", "让平"])
+        self.assertTrue(profile["coverage_pair_guard"]["triggered"])
+        self.assertEqual(
+            profile["coverage_pair_guard"]["replaced_selection"], "让负"
+        )
+
+    def test_handicap_coverage_keeps_normal_priced_directional_pair(self):
+        source = {
+            "sporttery_handicap": {
+                "value": -1,
+                "current": [1.80, 3.45, 3.40],
+            },
+            "fae_core": {
+                "probabilities": {
+                    "hhad": {"win": 48, "draw": 27, "lose": 25},
+                },
+                "risk": {"dangerous": False},
+            },
+        }
+        decision = FAEDailyAIAnalyzer._secondary_play_decision(
+            source, "让胜", "让负"
+        )
+        profile = FAEDailyAIAnalyzer._two_option_profile(source, {
+            "primary_play": "让胜",
+            "secondary_play": "让负",
+            "secondary_selection_guard": decision,
+            "market_confidence": {"score": 80},
+        })
+
+        self.assertEqual(profile["selections"], ["让胜", "让负"])
+        self.assertFalse(profile["coverage_pair_guard"]["triggered"])
+
+    def test_one_goal_route_keeps_weekday_letdraw_visible(self):
+        source = {
+            "euro": {
+                "initial": [2.03, 3.00, 3.30],
+                "current": [2.03, 3.00, 3.30],
+            },
+            "asian": {
+                "initial": [0.85, "平/半", 1.00],
+                "current": [0.83, "平/半", 1.03],
+            },
+            "sporttery_handicap": {
+                "value": -1,
+                "current": [4.40, 3.62, 1.60],
+            },
+            "total": {
+                "initial": [0.93, 2.25, 0.93],
+                "current": [0.93, 2.25, 0.93],
+            },
+        }
+        candidate = {
+            "match_id": "009",
+            "match_number": "周一009",
+            "selection": "让平",
+            "tier": "watch",
+            "rating": 3.5,
+            "score": 90,
+            "probability": 28,
+            "odds": 3.62,
+        }
+
+        result = FAEDailyAIAnalyzer._apply_draw_radar_structure_gate(
+            source, candidate
+        )
+
+        self.assertTrue(result["ranking_eligible"])
+        self.assertTrue(result["precision_route_visible"])
+        self.assertEqual(result["tier"], "watch")
+
     def test_only_top_five_pairs_are_actionable_each_day(self):
         rows = []
         for index in range(6):
@@ -4205,6 +4301,51 @@ class DailyAnalysisTests(unittest.TestCase):
         self.assertEqual(
             [pick["match_id"] for pick in tickets["two_leg"]["picks"]],
             ["201", "203"],
+        )
+
+    def test_draw_ticket_excludes_v4_failed_and_one_goal_routed_flat_draw(self):
+        summary = {
+            "draw_radar": {
+                "ordinary_draw": [{
+                    "match_id": "009", "selection": "平局", "odds": 3.0,
+                    "guardrail_ticket_eligible": True,
+                    "market_heat_v4_gate": {
+                        "applied": True, "passed": False,
+                    },
+                    "one_goal_margin_signal": {"triggered": True},
+                }, {
+                    "match_id": "002", "selection": "平局", "odds": 3.1,
+                    "guardrail_ticket_eligible": True,
+                    "market_heat_v4_gate": {
+                        "applied": True, "passed": True,
+                    },
+                }],
+                "handicap_draw": [{
+                    "match_id": "004", "selection": "让平", "odds": 3.4,
+                    "guardrail_ticket_eligible": True,
+                    "market_heat_v4_gate": {
+                        "applied": True, "passed": True,
+                    },
+                }],
+            },
+        }
+
+        tickets = FAEDailyAIAnalyzer.attach_draw_parlay_tickets(summary)[
+            "draw_parlay_tickets"
+        ]
+
+        self.assertEqual(
+            [pick["match_id"] for pick in tickets["two_leg"]["picks"]],
+            ["002", "004"],
+        )
+        self.assertNotIn(
+            "009",
+            [
+                pick["match_id"]
+                for ticket in tickets.values()
+                if isinstance(ticket, dict)
+                for pick in ticket.get("picks") or []
+            ],
         )
 
     def test_draw_ticket_can_fall_back_to_two_letdraw_legs(self):
