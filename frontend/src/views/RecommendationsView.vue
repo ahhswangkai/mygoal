@@ -2268,10 +2268,17 @@ function dailyMarketHeatBadge(item) {
 }
 
 function radarMarketHeat(candidate, market) {
-  const snapshot = dailyMatch(candidate?.match_id)?.input_snapshot || {}
+  const match = dailyMatch(candidate?.match_id)
+  const snapshot = match?.input_snapshot || {}
+  const liveMarket = match?.live_market || {}
   const model = snapshot.market_heat_v4 || {}
   if (market === 'ordinary_draw') {
-    return model.outcomes?.draw || buildMarketHeatOutcome(
+    return buildMarketHeatOutcome(
+      liveMarket.euro?.current,
+      liveMarket.betting_ratio?.ordinary,
+      1,
+      '平局'
+    ) || model.outcomes?.draw || buildMarketHeatOutcome(
       snapshot.euro?.current,
       snapshot.betting_ratio?.ordinary,
       1,
@@ -2279,7 +2286,12 @@ function radarMarketHeat(candidate, market) {
     )
   }
   if (market === 'handicap_draw') {
-    return model.handicap_market?.outcomes?.draw || buildMarketHeatOutcome(
+    return buildMarketHeatOutcome(
+      liveMarket.sporttery_handicap?.current,
+      liveMarket.betting_ratio?.handicap,
+      1,
+      '让平'
+    ) || model.handicap_market?.outcomes?.draw || buildMarketHeatOutcome(
       snapshot.sporttery_handicap?.current,
       snapshot.betting_ratio?.handicap,
       1,

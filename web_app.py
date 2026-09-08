@@ -2064,6 +2064,32 @@ def get_fae_league_profile_matches():
     })
 
 
+def _daily_live_market_payload(match):
+    """Expose current prices/flows without mutating the immutable AI snapshot."""
+    source = match if isinstance(match, dict) else {}
+    betting_ratio = source.get('betting_ratio')
+    if not isinstance(betting_ratio, dict):
+        betting_ratio = {}
+    return {
+        'betting_ratio': betting_ratio,
+        'euro': {
+            'current': [
+                source.get('euro_current_win'),
+                source.get('euro_current_draw'),
+                source.get('euro_current_lose'),
+            ],
+        },
+        'sporttery_handicap': {
+            'value': source.get('hi_handicap_value'),
+            'current': [
+                source.get('hi_current_home_odds'),
+                source.get('hi_current_draw_odds'),
+                source.get('hi_current_away_odds'),
+            ],
+        },
+    }
+
+
 @app.route('/api/fae/daily-ai', methods=['GET'])
 def get_fae_daily_ai():
     if not mongo_storage:
@@ -2098,6 +2124,7 @@ def get_fae_daily_ai():
                     score = f'{home_score}:{away_score}'
             if score:
                 item['result_score'] = str(score).replace('-', ':')
+            item['live_market'] = _daily_live_market_payload(live)
     if data and not compact:
         data['matches'] = fae_daily_ai_analyzer.calibrate_daily_matches(
             data.get('matches') or []

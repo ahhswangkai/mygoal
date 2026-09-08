@@ -3237,6 +3237,15 @@ class DailyAnalysisTests(unittest.TestCase):
                 "away_team": "客队",
                 "current_status": 2,
                 "result_score": "2:2",
+                "live_market": {
+                    "betting_ratio": {
+                        "handicap": {"draw_support_rate": 32.0},
+                    },
+                    "sporttery_handicap": {
+                        "value": -1,
+                        "current": [3.75, 3.70, 1.69],
+                    },
+                },
                 "analysis": {
                     "primary_play": "让平",
                     "secondary_play": "让负",
@@ -3321,6 +3330,11 @@ class DailyAnalysisTests(unittest.TestCase):
         self.assertEqual(row["analysis"]["single_odds"], 1.72)
         self.assertEqual(row["current_status"], 2)
         self.assertEqual(row["result_score"], "2:2")
+        self.assertEqual(
+            row["live_market"]["betting_ratio"]["handicap"]
+            ["draw_support_rate"],
+            32.0,
+        )
         self.assertEqual(
             row["analysis"]["two_option_recommendation"]["rank_score"],
             77.51,
