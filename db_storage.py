@@ -1166,6 +1166,8 @@ class MongoDBStorage:
                     'input_snapshot.sporttery_handicap.value': 1,
                     'input_snapshot.sporttery_handicap.current': 1,
                     'input_snapshot.total.current': 1,
+                    'input_snapshot.betting_ratio': 1,
+                    'input_snapshot.market_heat_v4': 1,
                     'input_snapshot.upset_warning_model': 1,
                     'input_snapshot.data_warnings': 1,
                     'input_snapshot.historical_goal_margin_model': 1,

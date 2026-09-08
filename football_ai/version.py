@@ -2,7 +2,7 @@
 
 ENGINE_NAME = "Football AI Engine"
 ENGINE_CODE = "FAE"
-ENGINE_VERSION = "2.21.1"
+ENGINE_VERSION = "2.21.2"
 SCHEMA_VERSION = "2.13"
 
 DIMENSION_WEIGHTS = {
@@ -125,6 +125,7 @@ VERSION_MANIFEST = {
         "V4普通平局组票门禁：资金过热或结构未通过的普通平只保留观察，禁止泄漏进平/让平串关",
         "低总球一球差路由可见性：工作日普通平降级时保留对应让平观察，避免结构门禁覆盖精确净胜球分流",
         "让球双选长赔异常护栏：大模型把5.00以上低覆盖方向作为主选且让平覆盖分领先5分时，仅对双选用让平替换异常长赔项",
+        "平/让平榜资金可视化：分别展示胜平负平局与竞彩让球让平的投注比例、去水偏离和V4冷热等级",
     ],
     "learning_policy": {
         "minimum_samples": 10,

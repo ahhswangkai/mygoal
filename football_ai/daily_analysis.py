@@ -218,6 +218,7 @@ def compact_daily_ai_run(source: Optional[Dict[str, Any]]) -> Optional[Dict[str,
                     "current": (snapshot.get("sporttery_handicap") or {}).get("current"),
                 },
                 "total": {"current": (snapshot.get("total") or {}).get("current")},
+                "betting_ratio": snapshot.get("betting_ratio") or {},
                 "market_heat_v4": snapshot.get("market_heat_v4") or {},
                 "upset_warning_model": snapshot.get(
                     "upset_warning_model"
@@ -822,8 +823,48 @@ def _build_market_heat_v4_model(
         _number(ordinary_ratio.get("draw_support_rate")),
         _number(ordinary_ratio.get("away_support_rate")),
     ]
+    handicap_ratio = (
+        ratio.get("handicap") if isinstance(ratio, dict) else {}
+    ) or {}
+    handicap_odds = [
+        _number(match.get("hi_current_home_odds")),
+        _number(match.get("hi_current_draw_odds")),
+        _number(match.get("hi_current_away_odds")),
+    ]
+    handicap_implied = _market_no_vig(handicap_odds)
+    handicap_support = [
+        _number(handicap_ratio.get("home_support_rate")),
+        _number(handicap_ratio.get("draw_support_rate")),
+        _number(handicap_ratio.get("away_support_rate")),
+    ]
     labels = ("主胜", "平局", "客胜")
     keys = ("home", "draw", "away")
+    handicap_labels = ("让胜", "让平", "让负")
+    handicap_available = bool(
+        len(handicap_implied) == 3
+        and all(value is not None for value in handicap_implied)
+        and all(value is not None for value in handicap_support)
+    )
+    handicap_outcomes: Dict[str, Dict[str, Any]] = {}
+    if handicap_available:
+        for index, key in enumerate(keys):
+            deviation = (
+                float(handicap_support[index])
+                - float(handicap_implied[index])
+            )
+            classification = _market_heat_v4_classification(deviation)
+            handicap_outcomes[key] = {
+                "selection": handicap_labels[index],
+                "odds": round(float(handicap_odds[index]), 3),
+                "implied_probability": round(
+                    float(handicap_implied[index]), 2
+                ),
+                "support_rate": round(float(handicap_support[index]), 2),
+                "deviation_pp": round(deviation, 2),
+                "class": classification["code"],
+                "class_label": classification["label"],
+                "tone": classification["tone"],
+            }
     available = bool(
         len(implied) == 3
         and all(value is not None for value in implied)
@@ -836,6 +877,11 @@ def _build_market_heat_v4_model(
             "message": "竞彩三项赔率或投注比例不完整，V4资金偏离层不参与硬判断",
             "formula": "投注比例 - 竞彩三项去水隐含概率",
             "outcomes": {},
+            "handicap_market": {
+                "available": handicap_available,
+                "handicap_value": sporttery_handicap,
+                "outcomes": handicap_outcomes,
+            },
             "favorite": {},
             "draw": {"eligible": False, "gate_active": False},
             "handicap_draw": {
@@ -1031,6 +1077,11 @@ def _build_market_heat_v4_model(
         "formula": "投注比例 - 竞彩三项去水隐含概率",
         "source_provider": ratio.get("source_provider"),
         "outcomes": outcomes,
+        "handicap_market": {
+            "available": handicap_available,
+            "handicap_value": sporttery_handicap,
+            "outcomes": handicap_outcomes,
+        },
         "favorite": favorite,
         "asian_confirmation": {
             "available": asian_available,

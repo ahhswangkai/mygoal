@@ -51,6 +51,16 @@ class DailySnapshotStorageTests(unittest.TestCase):
             "owner_date", {}
         )
 
+    def test_compact_daily_run_projects_market_heat_and_betting_ratio(self):
+        self.storage.get_fae_daily_ai_run("2026-08-29", compact=True)
+
+        projection = (
+            self.storage.fae_daily_ai_matches_collection.find
+            .call_args.args[1]
+        )
+        self.assertEqual(projection["input_snapshot.market_heat_v4"], 1)
+        self.assertEqual(projection["input_snapshot.betting_ratio"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

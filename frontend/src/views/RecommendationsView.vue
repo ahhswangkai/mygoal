@@ -364,14 +364,18 @@
                   <span class="draw-radar-metrics">
                     <i>{{ item.shadow_only ? '影子概率' : '概率' }} {{ radarPercent(item.probability) }}</i>
                     <i v-if="!item.shadow_only">雷达 {{ item.score ?? '--' }}分</i>
-                    <i
-                      v-if="radarMarketHeat(item, group.key)"
-                      :class="['market-heat-metric', radarMarketHeat(item, group.key).tone]"
-                    >
-                      {{ marketHeatIcon(radarMarketHeat(item, group.key).tone) }}
-                      {{ radarMarketHeat(item, group.key).class_label }}
-                      {{ signedPct(radarMarketHeat(item, group.key).deviation_pp) }}
-                    </i>
+                    <template v-if="radarMarketHeat(item, group.key)">
+                      <i class="market-betting-ratio">
+                        投注比例 {{ radarPercent(radarMarketHeat(item, group.key).support_rate) }}
+                      </i>
+                      <i
+                        :class="['market-heat-metric', radarMarketHeat(item, group.key).tone]"
+                      >
+                        冷热指数 {{ marketHeatIcon(radarMarketHeat(item, group.key).tone) }}
+                        {{ marketHeatClassText(radarMarketHeat(item, group.key)) }}
+                        {{ signedPct(radarMarketHeat(item, group.key).deviation_pp) }}
+                      </i>
+                    </template>
                     <i v-if="item.shadow_probability && !item.shadow_only">
                       影子 {{ radarPercent(item.shadow_probability) }}
                     </i>
@@ -2241,6 +2245,10 @@ function signedPct(value) {
   return `${number > 0 ? '+' : ''}${formatted}pct`
 }
 
+function marketHeatClassText(outcome) {
+  return [outcome?.class, outcome?.class_label].filter(Boolean).join('·')
+}
+
 function dailyMarketHeatRows(item) {
   const outcomes = item?.input_snapshot?.market_heat_v4?.outcomes || {}
   return ['home', 'draw', 'away']
@@ -2260,15 +2268,61 @@ function dailyMarketHeatBadge(item) {
 }
 
 function radarMarketHeat(candidate, market) {
-  const model = dailyMatch(candidate?.match_id)?.input_snapshot?.market_heat_v4 || {}
-  if (!model.available) return null
+  const snapshot = dailyMatch(candidate?.match_id)?.input_snapshot || {}
+  const model = snapshot.market_heat_v4 || {}
   if (market === 'ordinary_draw') {
-    return model.outcomes?.draw || null
+    return model.outcomes?.draw || buildMarketHeatOutcome(
+      snapshot.euro?.current,
+      snapshot.betting_ratio?.ordinary,
+      1,
+      '平局'
+    )
   }
   if (market === 'handicap_draw') {
-    return model.favorite || null
+    return model.handicap_market?.outcomes?.draw || buildMarketHeatOutcome(
+      snapshot.sporttery_handicap?.current,
+      snapshot.betting_ratio?.handicap,
+      1,
+      '让平'
+    )
   }
   return null
+}
+
+function buildMarketHeatOutcome(oddsSource, ratioSource, index, selection) {
+  const odds = Array.isArray(oddsSource)
+    ? oddsSource.slice(0, 3).map(value => Number(value))
+    : []
+  const supportKeys = ['home_support_rate', 'draw_support_rate', 'away_support_rate']
+  const rawSupportRate = ratioSource?.[supportKeys[index]]
+  const supportRate = Number(rawSupportRate)
+  if (
+    odds.length !== 3
+    || odds.some(value => !Number.isFinite(value) || value <= 1)
+    || rawSupportRate == null
+    || rawSupportRate === ''
+    || !Number.isFinite(supportRate)
+  ) return null
+  const inverse = odds.map(value => 1 / value)
+  const inverseTotal = inverse.reduce((sum, value) => sum + value, 0)
+  const impliedProbability = inverse[index] / inverseTotal * 100
+  const deviation = supportRate - impliedProbability
+  const category = deviation < 0
+    ? ['D', '资金冷淡', 'cold']
+    : deviation <= 5
+      ? ['A', '健康热门', 'healthy']
+      : deviation < 10
+        ? ['B', '普通热门', 'normal']
+        : ['C', '过热热门', 'overheated']
+  return {
+    selection,
+    support_rate: supportRate,
+    implied_probability: impliedProbability,
+    deviation_pp: deviation,
+    class: category[0],
+    class_label: category[1],
+    tone: category[2]
+  }
 }
 
 function radarTierLabel(tier) {
@@ -3235,6 +3289,11 @@ onBeforeUnmount(() => {
 
 .draw-radar-metrics i.supervised-probability {
   color: #76529a;
+}
+
+.draw-radar-metrics i.market-betting-ratio {
+  color: #536b94;
+  font-weight: 650;
 }
 
 .draw-radar-reason {

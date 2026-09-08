@@ -147,8 +147,23 @@ class MarketHeatV4Test(unittest.TestCase):
                     "draw_support_rate": 23,
                     "away_support_rate": 14,
                 },
+                "handicap": {
+                    "home_support_rate": 43,
+                    "draw_support_rate": 34,
+                    "away_support_rate": 23,
+                },
             },
         ))
+        handicap_draw_heat = (
+            snapshot["market_heat_v4"]["handicap_market"]
+            ["outcomes"]["draw"]
+        )
+        self.assertEqual(handicap_draw_heat["selection"], "让平")
+        self.assertEqual(handicap_draw_heat["support_rate"], 34.0)
+        self.assertAlmostEqual(
+            handicap_draw_heat["implied_probability"], 26.12, places=2
+        )
+        self.assertEqual(handicap_draw_heat["class"], "B")
         self.assertTrue(
             snapshot["market_heat_v4"]["handicap_draw"][
                 "prerequisites_met"
@@ -246,6 +261,9 @@ class MarketHeatV4Test(unittest.TestCase):
         })
         self.assertIn(
             "market_heat_v4", compact["matches"][0]["input_snapshot"]
+        )
+        self.assertIn(
+            "betting_ratio", compact["matches"][0]["input_snapshot"]
         )
 
 
