@@ -49,6 +49,20 @@
           <span class="mine-service-arrow" aria-hidden="true">›</span>
         </router-link>
 
+        <router-link to="/syndicates" class="mine-service-card">
+          <span class="mine-service-icon mine-service-icon--syndicate" aria-hidden="true">
+            <svg viewBox="0 0 24 24">
+              <path d="M8.25 11.25a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM15.75 10.25a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5Z" />
+              <path d="M3.75 19.25v-2.1A3.9 3.9 0 0 1 7.65 13.25h1.2a3.9 3.9 0 0 1 3.9 3.9v2.1M13.25 13.35a3.55 3.55 0 0 1 2.1-.7h.8a3.35 3.35 0 0 1 3.35 3.35v3.25" />
+            </svg>
+          </span>
+          <span class="mine-service-copy">
+            <strong>合买账本</strong>
+            <small>主持人分配份额、核对票款并自动分账</small>
+          </span>
+          <span class="mine-service-arrow" aria-hidden="true">›</span>
+        </router-link>
+
         <router-link to="/stats" class="mine-service-card">
           <span class="mine-service-icon mine-service-icon--stats" aria-hidden="true">
             <svg viewBox="0 0 24 24">

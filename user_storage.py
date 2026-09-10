@@ -7,6 +7,7 @@ import os
 import secrets
 import sqlite3
 from datetime import datetime, timezone
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 from calculator_math import calculate_max_bonus
 
@@ -18,6 +19,50 @@ except ImportError:  # Python 3.8
 
 PASSWORD_ITERATIONS = 260000
 LOCAL_TIMEZONE = ZoneInfo('Asia/Shanghai')
+
+
+def money_to_cents(value, field_name='金额'):
+    """Convert a user-facing yuan value to exact integer cents."""
+    try:
+        amount = Decimal(str(value)).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+    except (InvalidOperation, TypeError, ValueError):
+        raise ValueError('{}格式错误'.format(field_name))
+    if amount < 0:
+        raise ValueError('{}不能小于0'.format(field_name))
+    return int(amount * 100)
+
+
+def cents_to_yuan(value):
+    return round(int(value or 0) / 100.0, 2)
+
+
+def allocate_cents(total_cents, members, total_shares):
+    """Allocate exact cents by share using the largest-remainder method."""
+    total = int(total_cents or 0)
+    shares = int(total_shares or 0)
+    if total < 0 or shares < 1:
+        raise ValueError('分账金额或总份数无效')
+    allocations = []
+    allocated = 0
+    for index, member in enumerate(members or []):
+        member_shares = max(0, int(member.get('shares') or 0))
+        numerator = total * member_shares
+        cents = numerator // shares
+        remainder = numerator % shares
+        allocations.append({
+            'index': index,
+            'cents': cents,
+            'remainder': remainder,
+        })
+        allocated += cents
+    missing = total - allocated
+    order = sorted(
+        allocations,
+        key=lambda item: (-item['remainder'], item['index']),
+    )
+    for item in order[:missing]:
+        item['cents'] += 1
+    return [item['cents'] for item in sorted(allocations, key=lambda row: row['index'])]
 
 
 def utc_now():
@@ -125,6 +170,43 @@ class UserStorage:
 
                 CREATE INDEX IF NOT EXISTS idx_calculator_drafts_user_date
                     ON calculator_drafts(user_id, match_date, updated_at DESC);
+
+                CREATE TABLE IF NOT EXISTS syndicate_plans (
+                    id TEXT PRIMARY KEY,
+                    host_user_id INTEGER NOT NULL,
+                    bet_id TEXT,
+                    title TEXT NOT NULL,
+                    business_date TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'draft',
+                    total_shares INTEGER NOT NULL,
+                    expected_stake_cents INTEGER NOT NULL,
+                    actual_stake_cents INTEGER,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    locked_at TEXT,
+                    FOREIGN KEY (host_user_id) REFERENCES users(id) ON DELETE CASCADE,
+                    FOREIGN KEY (bet_id) REFERENCES calculator_bets(id) ON DELETE SET NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_syndicate_plans_host_date
+                    ON syndicate_plans(host_user_id, business_date DESC, created_at DESC);
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_syndicate_plans_host_bet
+                    ON syndicate_plans(host_user_id, bet_id)
+                    WHERE bet_id IS NOT NULL;
+
+                CREATE TABLE IF NOT EXISTS syndicate_members (
+                    id TEXT PRIMARY KEY,
+                    plan_id TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    shares INTEGER NOT NULL,
+                    is_host INTEGER NOT NULL DEFAULT 0,
+                    sort_order INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY (plan_id) REFERENCES syndicate_plans(id) ON DELETE CASCADE
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_syndicate_members_plan
+                    ON syndicate_members(plan_id, sort_order ASC);
                 """
             )
             columns = {
@@ -674,6 +756,487 @@ class UserStorage:
                 (draft_id, user_id),
             )
             return cursor.rowcount > 0
+
+    @staticmethod
+    def _validate_syndicate_members(members, total_shares):
+        if not isinstance(members, list) or not members:
+            raise ValueError('请至少添加一名合买成员')
+        if len(members) > 50:
+            raise ValueError('单个合买方案最多支持50名成员')
+        normalized = []
+        names = set()
+        host_count = 0
+        for index, member in enumerate(members):
+            if not isinstance(member, dict):
+                raise ValueError('合买成员格式错误')
+            name = str(member.get('name') or '').strip()
+            if not name or len(name) > 50:
+                raise ValueError('成员姓名需为1-50个字符')
+            name_key = name.casefold()
+            if name_key in names:
+                raise ValueError('同一方案中成员姓名不能重复')
+            names.add(name_key)
+            try:
+                shares = int(member.get('shares'))
+            except (TypeError, ValueError):
+                raise ValueError('{}的份额格式错误'.format(name))
+            if shares < 1:
+                raise ValueError('{}的份额至少为1份'.format(name))
+            is_host = bool(member.get('is_host'))
+            host_count += int(is_host)
+            normalized.append({
+                'id': str(member.get('id') or secrets.token_hex(12)),
+                'name': name,
+                'shares': shares,
+                'is_host': is_host,
+                'sort_order': index,
+            })
+        if host_count != 1:
+            raise ValueError('合买方案必须且只能有一名主持人')
+        if sum(item['shares'] for item in normalized) != int(total_shares):
+            raise ValueError('成员份额合计必须等于总份数')
+        return normalized
+
+    @staticmethod
+    def _validate_syndicate_date(value):
+        text = str(value or '')[:10]
+        try:
+            datetime.strptime(text, '%Y-%m-%d')
+        except ValueError:
+            raise ValueError('合买日期格式错误')
+        return text
+
+    @staticmethod
+    def _syndicate_query():
+        return """
+            SELECT
+                sp.*,
+                cb.status AS bet_status,
+                cb.stake AS bet_stake,
+                cb.actual_return AS bet_actual_return,
+                cb.description AS bet_description
+            FROM syndicate_plans sp
+            LEFT JOIN calculator_bets cb ON cb.id = sp.bet_id
+        """
+
+    def _syndicate_from_row(self, conn, row):
+        if not row:
+            return None
+        member_rows = conn.execute(
+            """
+            SELECT id, name, shares, is_host, sort_order
+            FROM syndicate_members
+            WHERE plan_id = ?
+            ORDER BY sort_order ASC, created_at ASC
+            """,
+            (row['id'],),
+        ).fetchall()
+        members = [
+            {
+                'id': member['id'],
+                'name': member['name'],
+                'shares': int(member['shares']),
+                'is_host': bool(member['is_host']),
+            }
+            for member in member_rows
+        ]
+        total_shares = int(row['total_shares'])
+        expected_cents = int(row['expected_stake_cents'])
+        stored_actual = row['actual_stake_cents']
+        if stored_actual is not None:
+            actual_cents = int(stored_actual)
+            actual_source = 'manual'
+        elif row['bet_stake'] is not None:
+            actual_cents = money_to_cents(row['bet_stake'], '票据金额')
+            actual_source = 'ticket'
+        else:
+            actual_cents = None
+            actual_source = None
+
+        bet_status = str(row['bet_status'] or '')
+        settled = bet_status in {'won', 'lost', 'draw'}
+        return_cents = (
+            money_to_cents(row['bet_actual_return'], '实际返还')
+            if settled and row['bet_actual_return'] is not None
+            else None
+        )
+        expected_allocations = allocate_cents(
+            expected_cents, members, total_shares
+        )
+        actual_allocations = (
+            allocate_cents(actual_cents, members, total_shares)
+            if actual_cents is not None else None
+        )
+        payout_allocations = (
+            allocate_cents(return_cents, members, total_shares)
+            if return_cents is not None else None
+        )
+        member_details = []
+        for index, member in enumerate(members):
+            expected_member_cents = expected_allocations[index]
+            actual_member_cents = (
+                actual_allocations[index]
+                if actual_allocations is not None else None
+            )
+            payout_cents = (
+                payout_allocations[index]
+                if payout_allocations is not None else None
+            )
+            detail = dict(member)
+            detail.update({
+                'ratio': round(member['shares'] / total_shares, 6),
+                'expected_contribution': cents_to_yuan(expected_member_cents),
+                'actual_contribution': (
+                    cents_to_yuan(actual_member_cents)
+                    if actual_member_cents is not None else None
+                ),
+                'adjustment': (
+                    cents_to_yuan(actual_member_cents - expected_member_cents)
+                    if actual_member_cents is not None else None
+                ),
+                'payout': (
+                    cents_to_yuan(payout_cents)
+                    if payout_cents is not None else None
+                ),
+                'profit': (
+                    cents_to_yuan(payout_cents - actual_member_cents)
+                    if payout_cents is not None and actual_member_cents is not None
+                    else None
+                ),
+            })
+            member_details.append(detail)
+
+        effective_status = 'settled' if settled else row['status']
+        return {
+            'id': row['id'],
+            'bet_id': row['bet_id'],
+            'bet_status': bet_status or None,
+            'bet_description': row['bet_description'],
+            'title': row['title'],
+            'business_date': row['business_date'],
+            'status': effective_status,
+            'share_status': row['status'],
+            'total_shares': total_shares,
+            'expected_stake': cents_to_yuan(expected_cents),
+            'actual_stake': (
+                cents_to_yuan(actual_cents) if actual_cents is not None else None
+            ),
+            'actual_stake_source': actual_source,
+            'difference': (
+                cents_to_yuan(actual_cents - expected_cents)
+                if actual_cents is not None else None
+            ),
+            'actual_return': (
+                cents_to_yuan(return_cents) if return_cents is not None else None
+            ),
+            'profit': (
+                cents_to_yuan(return_cents - actual_cents)
+                if return_cents is not None and actual_cents is not None
+                else None
+            ),
+            'members': member_details,
+            'created_at': row['created_at'],
+            'updated_at': row['updated_at'],
+            'locked_at': row['locked_at'],
+        }
+
+    @staticmethod
+    def _replace_syndicate_members(conn, plan_id, members, now):
+        conn.execute('DELETE FROM syndicate_members WHERE plan_id = ?', (plan_id,))
+        conn.executemany(
+            """
+            INSERT INTO syndicate_members (
+                id, plan_id, name, shares, is_host, sort_order, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    member['id'], plan_id, member['name'], member['shares'],
+                    int(member['is_host']), member['sort_order'], now,
+                )
+                for member in members
+            ],
+        )
+
+    def create_syndicate(self, user_id, plan):
+        try:
+            total_shares = int(plan.get('total_shares'))
+        except (TypeError, ValueError):
+            raise ValueError('总份数格式错误')
+        if total_shares < 1 or total_shares > 100000:
+            raise ValueError('总份数需为1-100000')
+        members = self._validate_syndicate_members(
+            plan.get('members'), total_shares
+        )
+        title = str(plan.get('title') or '合买方案').strip()[:100]
+        business_date = self._validate_syndicate_date(plan.get('business_date'))
+        expected_cents = money_to_cents(plan.get('expected_stake'), '预计金额')
+        if expected_cents < 1:
+            raise ValueError('预计金额必须大于0')
+        actual_value = plan.get('actual_stake')
+        actual_cents = (
+            money_to_cents(actual_value, '票据实际金额')
+            if actual_value not in (None, '') else None
+        )
+        if actual_cents is not None and actual_cents < 1:
+            raise ValueError('票据实际金额必须大于0')
+        bet_id = str(plan.get('bet_id') or '').strip() or None
+        now = utc_now()
+        plan_id = str(plan.get('id') or secrets.token_hex(16))
+        with self._connect() as conn:
+            if bet_id:
+                bet = conn.execute(
+                    'SELECT id FROM calculator_bets WHERE id = ? AND user_id = ?',
+                    (bet_id, user_id),
+                ).fetchone()
+                if not bet:
+                    raise ValueError('关联的投注方案不存在')
+            try:
+                conn.execute(
+                    """
+                    INSERT INTO syndicate_plans (
+                        id, host_user_id, bet_id, title, business_date, status,
+                        total_shares, expected_stake_cents, actual_stake_cents,
+                        created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        plan_id, user_id, bet_id, title, business_date,
+                        total_shares, expected_cents, actual_cents, now, now,
+                    ),
+                )
+            except sqlite3.IntegrityError:
+                raise ValueError('该投注方案已经创建过合买记录')
+            self._replace_syndicate_members(conn, plan_id, members, now)
+            row = conn.execute(
+                self._syndicate_query() +
+                ' WHERE sp.id = ? AND sp.host_user_id = ?',
+                (plan_id, user_id),
+            ).fetchone()
+            return self._syndicate_from_row(conn, row)
+
+    def list_syndicates(self, user_id, business_date=None, limit=100):
+        params = [user_id]
+        where = ' WHERE sp.host_user_id = ?'
+        if business_date:
+            where += ' AND sp.business_date = ?'
+            params.append(self._validate_syndicate_date(business_date))
+        params.append(max(1, min(200, int(limit or 100))))
+        with self._connect() as conn:
+            rows = conn.execute(
+                self._syndicate_query() + where +
+                ' ORDER BY sp.business_date DESC, sp.created_at DESC LIMIT ?',
+                params,
+            ).fetchall()
+            return [self._syndicate_from_row(conn, row) for row in rows]
+
+    def get_syndicate(self, user_id, plan_id):
+        with self._connect() as conn:
+            row = conn.execute(
+                self._syndicate_query() +
+                ' WHERE sp.id = ? AND sp.host_user_id = ?',
+                (plan_id, user_id),
+            ).fetchone()
+            return self._syndicate_from_row(conn, row)
+
+    def update_syndicate(self, user_id, plan_id, plan):
+        with self._connect() as conn:
+            current = conn.execute(
+                'SELECT * FROM syndicate_plans WHERE id = ? AND host_user_id = ?',
+                (plan_id, user_id),
+            ).fetchone()
+            if not current:
+                return None
+            if current['status'] != 'draft':
+                raise ValueError('份额已经锁定，不能修改成员或份额')
+            total_shares = int(plan.get('total_shares'))
+            if total_shares < 1 or total_shares > 100000:
+                raise ValueError('总份数需为1-100000')
+            members = self._validate_syndicate_members(
+                plan.get('members'), total_shares
+            )
+            title = str(plan.get('title') or '合买方案').strip()[:100]
+            business_date = self._validate_syndicate_date(plan.get('business_date'))
+            expected_cents = money_to_cents(plan.get('expected_stake'), '预计金额')
+            if expected_cents < 1:
+                raise ValueError('预计金额必须大于0')
+            bet_id = str(plan.get('bet_id') or '').strip() or None
+            if bet_id:
+                bet = conn.execute(
+                    'SELECT id FROM calculator_bets WHERE id = ? AND user_id = ?',
+                    (bet_id, user_id),
+                ).fetchone()
+                if not bet:
+                    raise ValueError('关联的投注方案不存在')
+            now = utc_now()
+            try:
+                conn.execute(
+                    """
+                    UPDATE syndicate_plans
+                    SET bet_id = ?, title = ?, business_date = ?,
+                        total_shares = ?, expected_stake_cents = ?, updated_at = ?
+                    WHERE id = ? AND host_user_id = ?
+                    """,
+                    (
+                        bet_id, title, business_date, total_shares,
+                        expected_cents, now, plan_id, user_id,
+                    ),
+                )
+            except sqlite3.IntegrityError:
+                raise ValueError('该投注方案已经关联到另一条合买记录')
+            self._replace_syndicate_members(conn, plan_id, members, now)
+            row = conn.execute(
+                self._syndicate_query() +
+                ' WHERE sp.id = ? AND sp.host_user_id = ?',
+                (plan_id, user_id),
+            ).fetchone()
+            return self._syndicate_from_row(conn, row)
+
+    def reconcile_syndicate(self, user_id, plan_id, actual_stake=None, bet_id=None):
+        with self._connect() as conn:
+            current = conn.execute(
+                self._syndicate_query() +
+                ' WHERE sp.id = ? AND sp.host_user_id = ?',
+                (plan_id, user_id),
+            ).fetchone()
+            if not current:
+                return None
+            if str(current['bet_status'] or '') in {'won', 'lost', 'draw'}:
+                raise ValueError('方案已经结算，不能修改票据金额')
+            normalized_bet_id = (
+                str(bet_id).strip() if bet_id not in (None, '') else None
+            )
+            if normalized_bet_id:
+                bet = conn.execute(
+                    'SELECT id FROM calculator_bets WHERE id = ? AND user_id = ?',
+                    (normalized_bet_id, user_id),
+                ).fetchone()
+                if not bet:
+                    raise ValueError('关联的投注方案不存在')
+            actual_cents = (
+                money_to_cents(actual_stake, '票据实际金额')
+                if actual_stake not in (None, '') else None
+            )
+            if actual_cents is not None and actual_cents < 1:
+                raise ValueError('票据实际金额必须大于0')
+            if actual_cents is None and not normalized_bet_id:
+                raise ValueError('请填写实际金额或关联一张投注票据')
+            now = utc_now()
+            try:
+                conn.execute(
+                    """
+                    UPDATE syndicate_plans
+                    SET bet_id = ?, actual_stake_cents = ?, updated_at = ?
+                    WHERE id = ? AND host_user_id = ?
+                    """,
+                    (normalized_bet_id, actual_cents, now, plan_id, user_id),
+                )
+            except sqlite3.IntegrityError:
+                raise ValueError('该投注方案已经关联到另一条合买记录')
+            row = conn.execute(
+                self._syndicate_query() +
+                ' WHERE sp.id = ? AND sp.host_user_id = ?',
+                (plan_id, user_id),
+            ).fetchone()
+            return self._syndicate_from_row(conn, row)
+
+    def lock_syndicate(self, user_id, plan_id):
+        now = utc_now()
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE syndicate_plans
+                SET status = 'locked', locked_at = ?, updated_at = ?
+                WHERE id = ? AND host_user_id = ? AND status = 'draft'
+                """,
+                (now, now, plan_id, user_id),
+            )
+            if not cursor.rowcount:
+                row = conn.execute(
+                    self._syndicate_query() +
+                    ' WHERE sp.id = ? AND sp.host_user_id = ?',
+                    (plan_id, user_id),
+                ).fetchone()
+                return self._syndicate_from_row(conn, row)
+            row = conn.execute(
+                self._syndicate_query() +
+                ' WHERE sp.id = ? AND sp.host_user_id = ?',
+                (plan_id, user_id),
+            ).fetchone()
+            return self._syndicate_from_row(conn, row)
+
+    def delete_syndicate(self, user_id, plan_id):
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """
+                DELETE FROM syndicate_plans
+                WHERE id = ? AND host_user_id = ? AND status = 'draft'
+                """,
+                (plan_id, user_id),
+            )
+            return cursor.rowcount > 0
+
+    def get_syndicate_daily_summary(self, user_id, business_date):
+        target_date = self._validate_syndicate_date(business_date)
+        plans = self.list_syndicates(user_id, target_date, limit=200)
+        member_map = {}
+        summary = {
+            'business_date': target_date,
+            'plan_count': len(plans),
+            'pending_count': 0,
+            'settled_count': 0,
+            'expected_stake': 0.0,
+            'actual_stake': 0.0,
+            'actual_return': 0.0,
+            'profit': 0.0,
+            'members': [],
+        }
+        for plan in plans:
+            summary['expected_stake'] += plan['expected_stake']
+            if plan['actual_stake'] is not None:
+                summary['actual_stake'] += plan['actual_stake']
+            if plan['status'] == 'settled':
+                summary['settled_count'] += 1
+                summary['actual_return'] += plan['actual_return'] or 0
+                summary['profit'] += plan['profit'] or 0
+            else:
+                summary['pending_count'] += 1
+            for member in plan['members']:
+                item = member_map.setdefault(member['name'], {
+                    'name': member['name'],
+                    'is_host': member['is_host'],
+                    'expected_contribution': 0.0,
+                    'actual_contribution': 0.0,
+                    'adjustment': 0.0,
+                    'payout': 0.0,
+                    'profit': 0.0,
+                    'pending_plans': 0,
+                })
+                item['is_host'] = item['is_host'] or member['is_host']
+                item['expected_contribution'] += member['expected_contribution'] or 0
+                item['actual_contribution'] += (
+                    member['actual_contribution']
+                    if member['actual_contribution'] is not None
+                    else member['expected_contribution'] or 0
+                )
+                item['adjustment'] += member['adjustment'] or 0
+                item['payout'] += member['payout'] or 0
+                item['profit'] += member['profit'] or 0
+                if plan['status'] != 'settled':
+                    item['pending_plans'] += 1
+        for key in ('expected_stake', 'actual_stake', 'actual_return', 'profit'):
+            summary[key] = round(summary[key], 2)
+        for member in member_map.values():
+            for key in (
+                'expected_contribution', 'actual_contribution', 'adjustment',
+                'payout', 'profit',
+            ):
+                member[key] = round(member[key], 2)
+        summary['members'] = sorted(
+            member_map.values(),
+            key=lambda item: (not item['is_host'], item['name']),
+        )
+        return summary
 
     def get_stats(self, user_id, month=None):
         where_sql = 'user_id = ?'

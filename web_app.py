@@ -5812,6 +5812,130 @@ def get_user_bet_stats():
     })
 
 
+def _syndicate_request_payload(data):
+    payload = dict(data or {})
+    user = user_storage.get_user(session.get('user_id')) or {}
+    host_name = str(
+        user.get('display_name') or user.get('username') or '主持人'
+    ).strip()
+    members = payload.get('members') or []
+    if not isinstance(members, list):
+        raise ValueError('合买成员格式错误')
+    normalized_members = []
+    for member in members:
+        if not isinstance(member, dict):
+            raise ValueError('合买成员格式错误')
+        normalized = dict(member)
+        if normalized.get('is_host'):
+            normalized['name'] = host_name
+        normalized_members.append(normalized)
+    payload['members'] = normalized_members
+    payload['business_date'] = (
+        str(payload.get('business_date') or '')[:10]
+        or _calculator_business_date()
+    )
+    return payload
+
+
+@app.route('/api/user/syndicates', methods=['GET'])
+@login_required
+def list_user_syndicates():
+    business_date = str(request.args.get('date') or '').strip()[:10]
+    try:
+        limit = max(1, min(200, int(request.args.get('limit', 100))))
+        _settle_pending_calculator_bets(session['user_id'])
+        summary_date = business_date or _calculator_business_date()
+        plans = user_storage.list_syndicates(
+            session['user_id'], summary_date, limit=limit
+        )
+        summary = user_storage.get_syndicate_daily_summary(
+            session['user_id'], summary_date
+        )
+    except ValueError as exc:
+        return jsonify({'success': False, 'message': str(exc)}), 400
+    return jsonify({
+        'success': True,
+        'data': plans,
+        'summary': summary,
+        'business_date': summary_date,
+    })
+
+
+@app.route('/api/user/syndicates', methods=['POST'])
+@login_required
+def create_user_syndicate():
+    try:
+        plan = _syndicate_request_payload(request.get_json(silent=True) or {})
+        saved = user_storage.create_syndicate(session['user_id'], plan)
+    except ValueError as exc:
+        return jsonify({'success': False, 'message': str(exc)}), 400
+    return jsonify({'success': True, 'data': saved}), 201
+
+
+@app.route('/api/user/syndicates/<plan_id>', methods=['GET'])
+@login_required
+def get_user_syndicate(plan_id):
+    _settle_pending_calculator_bets(session['user_id'])
+    plan = user_storage.get_syndicate(session['user_id'], str(plan_id))
+    if not plan:
+        return jsonify({'success': False, 'message': '合买方案不存在'}), 404
+    return jsonify({'success': True, 'data': plan})
+
+
+@app.route('/api/user/syndicates/<plan_id>', methods=['PUT'])
+@login_required
+def update_user_syndicate(plan_id):
+    try:
+        payload = _syndicate_request_payload(request.get_json(silent=True) or {})
+        saved = user_storage.update_syndicate(
+            session['user_id'], str(plan_id), payload
+        )
+    except ValueError as exc:
+        return jsonify({'success': False, 'message': str(exc)}), 400
+    if not saved:
+        return jsonify({'success': False, 'message': '合买方案不存在'}), 404
+    return jsonify({'success': True, 'data': saved})
+
+
+@app.route('/api/user/syndicates/<plan_id>/reconcile', methods=['POST'])
+@login_required
+def reconcile_user_syndicate(plan_id):
+    data = request.get_json(silent=True) or {}
+    try:
+        saved = user_storage.reconcile_syndicate(
+            session['user_id'],
+            str(plan_id),
+            actual_stake=data.get('actual_stake'),
+            bet_id=data.get('bet_id'),
+        )
+    except ValueError as exc:
+        return jsonify({'success': False, 'message': str(exc)}), 400
+    if not saved:
+        return jsonify({'success': False, 'message': '合买方案不存在'}), 404
+    return jsonify({'success': True, 'data': saved})
+
+
+@app.route('/api/user/syndicates/<plan_id>/lock', methods=['POST'])
+@login_required
+def lock_user_syndicate(plan_id):
+    saved = user_storage.lock_syndicate(session['user_id'], str(plan_id))
+    if not saved:
+        return jsonify({'success': False, 'message': '合买方案不存在'}), 404
+    return jsonify({'success': True, 'data': saved})
+
+
+@app.route('/api/user/syndicates/<plan_id>', methods=['DELETE'])
+@login_required
+def delete_user_syndicate(plan_id):
+    deleted = user_storage.delete_syndicate(session['user_id'], str(plan_id))
+    if not deleted:
+        return jsonify({
+            'success': False,
+            'message': '合买方案不存在或份额已经锁定',
+        }), 404
+    return jsonify({'success': True})
+
+
 # --- Legacy device-based betting system routes ---
 
 @app.route('/bets')
