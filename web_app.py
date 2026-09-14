@@ -116,10 +116,10 @@ def _fetch_sporttery_calculator_payload(pool_code='had,hhad,crs,ttg,hafu'):
 def _load_calculator_special_market_snapshots():
     try:
         return parse_calculator_payload(
-            _fetch_sporttery_calculator_payload('ttg,hafu')
+            _fetch_sporttery_calculator_payload('crs,ttg,hafu')
         )
     except (requests.RequestException, ValueError, TypeError) as exc:
-        app.logger.warning('竞彩总进球/半全场快照获取失败: %s', exc)
+        app.logger.warning('竞彩比分/总进球/半全场快照获取失败: %s', exc)
         return {}
 
 
@@ -1590,6 +1590,12 @@ def _review_fae_daily_ai(
         snapshot.get('daily_summary') or {},
         snapshot.get('matches') or [],
     )
+    snapshot['daily_summary'] = (
+        fae_daily_ai_analyzer.attach_score_mixed_parlay(
+            snapshot.get('daily_summary') or {},
+            snapshot.get('matches') or [],
+        )
+    )
     matches = {
         str(item.get('match_id')): (
             mongo_storage.get_match_by_id(item.get('match_id')) or {}
@@ -2220,6 +2226,12 @@ def get_fae_daily_ai():
             )
         )
         data['daily_summary'] = (
+            fae_daily_ai_analyzer.attach_score_mixed_parlay(
+                data.get('daily_summary') or {},
+                data.get('matches') or [],
+            )
+        )
+        data['daily_summary'] = (
             fae_daily_ai_analyzer.normalize_summary_memory_governance(
                 data.get('daily_summary') or {},
                 data.get('review_memory') or {},
@@ -2240,6 +2252,12 @@ def get_fae_daily_ai():
         data['daily_summary'] = fae_daily_ai_analyzer.align_summary_ratings(
             data.get('daily_summary') or {},
             data.get('matches') or [],
+        )
+        data['daily_summary'] = (
+            fae_daily_ai_analyzer.attach_score_mixed_parlay(
+                data.get('daily_summary') or {},
+                data.get('matches') or [],
+            )
         )
         data = compact_daily_ai_run(data)
     response = jsonify({

@@ -194,6 +194,117 @@ class MarketHeatV4Test(unittest.TestCase):
         self.assertEqual(failed["tier"], "watch")
         self.assertFalse(failed["formal_eligible"])
 
+    def test_high_total_shallow_favorite_keeps_one_goal_path(self):
+        snapshot = build_daily_match_input(match_with_market(
+            ou_initial_over_odds=0.90,
+            ou_initial_total="3/3.5",
+            ou_initial_under_odds=0.96,
+            ou_current_over_odds=0.90,
+            ou_current_total="3/3.5",
+            ou_current_under_odds=0.96,
+            betting_ratio={
+                "source_provider": "vipc",
+                "ordinary": {
+                    "home_support_rate": 64,
+                    "draw_support_rate": 22,
+                    "away_support_rate": 14,
+                },
+                "handicap": {
+                    "home_support_rate": 45,
+                    "draw_support_rate": 34,
+                    "away_support_rate": 21,
+                },
+            },
+        ))
+        handicap_draw = snapshot["market_heat_v4"]["handicap_draw"]
+
+        self.assertTrue(handicap_draw["prerequisites_met"])
+        self.assertFalse(
+            handicap_draw["checks"]["total_restrains_margin"]
+        )
+        self.assertTrue(handicap_draw["checks"]["open_one_goal_path"])
+        self.assertTrue(
+            handicap_draw["checks"]["exact_margin_market_path"]
+        )
+
+    def test_plus_one_flat_asian_supports_away_one_goal_path(self):
+        snapshot = build_daily_match_input(match_with_market(
+            euro_initial_win=3.20,
+            euro_initial_draw=3.25,
+            euro_initial_lose=2.20,
+            euro_current_win=3.20,
+            euro_current_draw=3.25,
+            euro_current_lose=2.20,
+            asian_initial_handicap="平手",
+            asian_current_handicap="平手",
+            asian_initial_home_odds=0.94,
+            asian_current_home_odds=0.94,
+            asian_initial_away_odds=0.94,
+            asian_current_away_odds=0.94,
+            ou_initial_over_odds=0.94,
+            ou_initial_total=2.75,
+            ou_initial_under_odds=0.94,
+            ou_current_over_odds=0.94,
+            ou_current_total=2.75,
+            ou_current_under_odds=0.94,
+            hi_handicap_value=1,
+            hi_current_home_odds=1.75,
+            hi_current_draw_odds=3.10,
+            hi_current_away_odds=4.20,
+            betting_ratio={
+                "source_provider": "vipc",
+                "ordinary": {
+                    "home_support_rate": 25,
+                    "draw_support_rate": 27,
+                    "away_support_rate": 48,
+                },
+                "handicap": {
+                    "home_support_rate": 35,
+                    "draw_support_rate": 34,
+                    "away_support_rate": 31,
+                },
+            },
+        ))
+        handicap_draw = snapshot["market_heat_v4"]["handicap_draw"]
+
+        self.assertTrue(handicap_draw["prerequisites_met"])
+        self.assertFalse(
+            handicap_draw["checks"]["asian_depth_half_to_one"]
+        )
+        self.assertTrue(
+            handicap_draw["checks"]["plus_one_balanced_away_path"]
+        )
+
+    def test_high_total_path_rejects_overheated_handicap_draw_funds(self):
+        snapshot = build_daily_match_input(match_with_market(
+            ou_initial_over_odds=0.90,
+            ou_initial_total="3/3.5",
+            ou_initial_under_odds=0.96,
+            ou_current_over_odds=0.90,
+            ou_current_total="3/3.5",
+            ou_current_under_odds=0.96,
+            betting_ratio={
+                "source_provider": "vipc",
+                "ordinary": {
+                    "home_support_rate": 64,
+                    "draw_support_rate": 22,
+                    "away_support_rate": 14,
+                },
+                "handicap": {
+                    "home_support_rate": 38,
+                    "draw_support_rate": 43,
+                    "away_support_rate": 19,
+                },
+            },
+        ))
+        handicap_draw = snapshot["market_heat_v4"]["handicap_draw"]
+
+        self.assertFalse(handicap_draw["prerequisites_met"])
+        self.assertFalse(
+            handicap_draw["checks"]["handicap_draw_funds_supported"]
+        )
+        self.assertFalse(handicap_draw["checks"]["open_one_goal_path"])
+
     def test_b_class_draw_is_watch_only_and_cannot_enter_ticket(self):
         snapshot = build_daily_match_input(match_with_market(
             euro_initial_win=2.45,

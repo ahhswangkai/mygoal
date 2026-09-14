@@ -1974,6 +1974,109 @@ class DailyAnalysisTests(unittest.TestCase):
         self.assertEqual(profile["selections"], ["让胜", "让负"])
         self.assertFalse(profile["coverage_pair_guard"]["triggered"])
 
+    def test_handicap_coverage_uses_confirmed_radar_middle_path(self):
+        source = {
+            "sporttery_handicap": {
+                "value": -1,
+                "current": [1.80, 3.45, 3.60],
+            },
+            "fae_core": {"risk": {"dangerous": False}},
+        }
+        candidates = [
+            {
+                "selection": "让胜",
+                "model_probability": 44,
+                "market_probability": 43,
+                "coverage_score": 43.65,
+                "odds": 1.80,
+            },
+            {
+                "selection": "让平",
+                "model_probability": 21,
+                "market_probability": 19.71,
+                "coverage_score": 20.55,
+                "odds": 3.45,
+            },
+            {
+                "selection": "让负",
+                "model_probability": 28,
+                "market_probability": 31,
+                "coverage_score": 29.05,
+                "odds": 3.60,
+            },
+        ]
+        profile = FAEDailyAIAnalyzer._two_option_profile(source, {
+            "primary_play": "让胜",
+            "secondary_play": "让负",
+            "secondary_selection_guard": {"candidates": candidates},
+            "market_confidence": {"score": 80},
+            "draw_radar": {
+                "handicap_draw": {
+                    "selection": "让平",
+                    "tier": "watch",
+                    "ranking_eligible": True,
+                    "formal_eligible": True,
+                },
+            },
+        })
+
+        self.assertEqual(profile["selections"], ["让胜", "让平"])
+        self.assertTrue(profile["actionable"])
+        self.assertEqual(
+            profile["coverage_pair_guard"]["trigger_type"],
+            "draw_radar_exact_margin",
+        )
+        self.assertEqual(
+            profile["coverage_pair_guard"]["replaced_selection"],
+            "让负",
+        )
+        self.assertGreater(
+            -profile["second_over_third_gap"], 8
+        )
+
+    def test_handicap_extreme_pair_is_preserved_without_radar(self):
+        source = {
+            "sporttery_handicap": {
+                "value": -1,
+                "current": [1.80, 3.45, 3.60],
+            },
+            "fae_core": {"risk": {"dangerous": False}},
+        }
+        candidates = [
+            {
+                "selection": "让胜",
+                "model_probability": 44,
+                "market_probability": 43,
+                "coverage_score": 43.65,
+                "odds": 1.80,
+            },
+            {
+                "selection": "让平",
+                "model_probability": 25,
+                "market_probability": 24,
+                "coverage_score": 24.65,
+                "odds": 3.45,
+            },
+            {
+                "selection": "让负",
+                "model_probability": 28,
+                "market_probability": 31,
+                "coverage_score": 29.05,
+                "odds": 3.60,
+            },
+        ]
+        profile = FAEDailyAIAnalyzer._two_option_profile(source, {
+            "primary_play": "让胜",
+            "secondary_play": "让负",
+            "secondary_selection_guard": {"candidates": candidates},
+            "market_confidence": {"score": 80},
+        })
+
+        self.assertEqual(profile["selections"], ["让胜", "让负"])
+        self.assertTrue(profile["actionable"])
+        self.assertFalse(profile["unsupported_extreme_pair"])
+        self.assertLess(profile["source_extreme_over_middle_gap"], 8)
+
     def test_one_goal_route_keeps_weekday_letdraw_visible(self):
         source = {
             "euro": {
@@ -4392,6 +4495,59 @@ class DailyAnalysisTests(unittest.TestCase):
             [pick["match_id"] for pick in tickets["two_leg"]["picks"]],
             ["206", "207"],
         )
+
+    def test_score_mixed_parlay_uses_score_cluster_and_distinct_anchor(self):
+        matches = [{
+            "match_id": "score-1", "match_number": "周一001",
+            "home_team": "主队甲", "away_team": "客队甲",
+            "analysis": {"special_markets": {
+                "correct_score": {
+                    "actionable": True,
+                    "selections": [
+                        {"selection": "1:0", "odds": 6.5,
+                         "market_probability": 13.0},
+                        {"selection": "1:1", "odds": 6.0,
+                         "market_probability": 14.0},
+                    ],
+                    "historical_validation": {
+                        "holdout_coverage": 26.7,
+                    },
+                    "reason": "低总球比分簇",
+                },
+            }},
+            "input_snapshot": {"total": {"current": [0.9, 2.5, 0.95]}},
+        }, {
+            "match_id": "anchor-1", "match_number": "周一002",
+            "home_team": "主队乙", "away_team": "客队乙",
+            "analysis": {"special_markets": {
+                "half_full": {
+                    "actionable": True,
+                    "primary": {
+                        "selection": "胜胜", "odds": 2.4,
+                        "model_probability": 34.0,
+                    },
+                },
+            }},
+            "input_snapshot": {"total": {"current": [0.9, 3.5, 0.95]}},
+        }]
+
+        ticket = FAEDailyAIAnalyzer.attach_score_mixed_parlay(
+            {}, matches
+        )["score_mixed_parlay"]
+
+        self.assertTrue(ticket["available"])
+        self.assertEqual(ticket["stake_lines"], 2)
+        self.assertEqual(ticket["score_pick"]["match_id"], "score-1")
+        self.assertEqual(ticket["anchor_pick"]["market_key"], "half_full")
+        self.assertEqual(ticket["path_odds"], {"1:0": 15.6, "1:1": 14.4})
+
+    def test_score_mixed_parlay_does_not_force_missing_anchor(self):
+        ticket = FAEDailyAIAnalyzer.attach_score_mixed_parlay(
+            {}, []
+        )["score_mixed_parlay"]
+
+        self.assertFalse(ticket["available"])
+        self.assertIn("不强行组串", ticket["reason"])
 
 
 if __name__ == "__main__":

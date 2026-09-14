@@ -126,6 +126,12 @@ def _verified_settlement_summary(review: Dict[str, Any]) -> Dict[str, Any]:
         "half_full_two_option": _metric_snapshot(
             (special.get("half_full") or {}).get("two_option")
         ),
+        "score_cluster_two_option": _metric_snapshot(
+            (special.get("correct_score") or {}).get("two_option")
+        ),
+        "score_mixed_parlay": _metric_snapshot(
+            summary.get("score_mixed_parlay")
+        ),
         "source": "deterministic-program-settlement",
     }
 
@@ -143,6 +149,8 @@ def _verified_settlement_text(value: Dict[str, Any]) -> str:
         ("总进球双选", "total_goals_two_option"),
         ("半全场首选", "half_full_primary"),
         ("半全场双选", "half_full_two_option"),
+        ("比分簇双选", "score_cluster_two_option"),
+        ("比分混合二串一", "score_mixed_parlay"),
     )
     parts = []
     for label, key in labels:
@@ -568,7 +576,7 @@ class FAEAIReviewAnalyzer:
                 "asian": "亚盘复核",
                 "sporttery": "竞彩让球复核",
                 "total": "大小球复核",
-                "special_markets": "总进球与半全场独立玩法复核",
+                "special_markets": "比分、总进球与半全场独立玩法复核",
                 "consistency": "市场一致性复核",
             },
             "matches": [{
@@ -621,7 +629,7 @@ class FAEAIReviewAnalyzer:
             "selection=观望且没有具体下注方向时，不能按命中率评价，只复核是否正确识别了数据不足、盘口冲突或风险。",
             "必须单独复核draw_radar_predictions：核心候选与观察候选分开统计；观察命中不能事后包装成正式推荐，核心未中也必须记录。",
             "必须把平/让平3场2、3关与平/让平二串一当作两张独立票复核；3场2、3关按3个2串1和1个3串1共4注结算，禁止与独立二串一合并命中率或ROI。",
-            "必须单独复核special_market_predictions中的总进球和半全场：primary_status统计首选，coverage_status统计首选+次选覆盖；半全场没有半场比分时只能标记未结算，不得用全场比分猜测半场结果。",
+            "必须单独复核special_market_predictions中的比分簇、总进球和半全场：primary_status统计首选，coverage_status统计首选+次选覆盖；比分混合二串一按比分簇两注的整票收益复核；半全场没有半场比分时只能标记未结算，不得用全场比分猜测半场结果。",
             "竞彩让球必须严格按保存的让球数计算：主队-1时，赢2球以上为让胜、恰好赢1球为让平、其余为让负；确定性结算结果优先于文字推断。",
             "每场result.handicap_settlement.actual_outcome是程序计算的唯一让球赛果，禁止自行重算或改写；诊断中提到让球赛果时必须逐字使用该字段。",
             "market_risk_context中的水位模式仅表示赛前风险结构；可以检验该预警是否有效，但不得把退盘、升水或欧亚背离直接写成比赛失利的真实原因。",

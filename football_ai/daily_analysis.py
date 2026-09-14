@@ -16,7 +16,7 @@ from .special_markets import build_special_market_analysis
 from .version import ENGINE_VERSION
 
 
-DAILY_PROMPT_VERSION = "five-market-daily-v37-market-heat-v4"
+DAILY_PROMPT_VERSION = "five-market-daily-v38-one-goal-alignment"
 
 OFFICIAL_PLAY_SELECTIONS = {"平局", "让平"}
 OFFICIAL_MIN_BET_SCORE = 70.0
@@ -63,12 +63,20 @@ TWO_OPTION_SECONDARY_VALUE_MIN_RETURN = 0.90
 # by at least five blended-probability points.
 TWO_OPTION_HANDICAP_LONGSHOT_MIN_ODDS = 5.0
 TWO_OPTION_HANDICAP_MIDDLE_MIN_ADVANTAGE = 5.0
+# A handicap pair containing both directional extremes (让胜/让负) skips the
+# exact-margin middle.  It is only a sound coverage pair when the weaker
+# extreme still leads 让平 clearly.  When an independently-built draw radar
+# confirms the one-goal path, allow that middle outcome to replace an extreme
+# while it remains within this auditable probability distance.
+TWO_OPTION_HANDICAP_RADAR_MAX_DEFICIT = 10.0
 TWO_OPTION_COMBO_LIMIT = 3
 TWO_OPTION_COMBO_MIN_ANCHOR_PROBABILITY = 60.0
 TWO_OPTION_COMBO_MIN_ANCHOR_EXPECTED_RETURN = 0.90
 TWO_OPTION_COMBO_MIN_JOINT_COVERAGE = 40.0
 TWO_OPTION_COMBO_MIN_PATH_ODDS = 2.40
 TWO_OPTION_COMBO_TARGET_PATH_ODDS = 3.00
+SCORE_MIXED_PARLAY_VERSION = "score-mixed-parlay-v1-low-total"
+SCORE_CLUSTER_HOLDOUT_COVERAGE = 26.7
 FORMAL_TWO_LEG_MIN_PROBABILITY = 45.0
 FORMAL_TWO_LEG_MIN_EXPECTED_RETURN = 0.85
 FORMAL_TWO_LEG_MIN_MARKET_CONFIDENCE = 70.0
@@ -245,7 +253,7 @@ def compact_daily_ai_run(source: Optional[Dict[str, Any]]) -> Optional[Dict[str,
             "version": special.get("version"),
             "source": special.get("source"),
         }
-        for key in ("total_goals", "half_full"):
+        for key in ("correct_score", "total_goals", "half_full"):
             market = special.get(key) or {}
             if not market:
                 continue
@@ -257,6 +265,9 @@ def compact_daily_ai_run(source: Optional[Dict[str, Any]]) -> Optional[Dict[str,
                     "regime", "regime_label", "baseline_only", "actionable",
                     "recommendation_status", "direction_profile",
                     "data_complete", "calculator_available",
+                    "selections", "favorite", "favorite_odds",
+                    "asian_depth", "initial_asian_depth", "total_line",
+                    "historical_validation",
                 )
                 if field in market
             }
@@ -410,12 +421,12 @@ LEAGUE_TACTICAL_MODEL_VERSION = "league-tactical-model-v1"
 UPSET_WARNING_MODEL_VERSION = "upset-warning-v1"
 ODDS_BAND_MODEL_VERSION = "odds-band-model-v1"
 LOW_ODDS_ASIAN_MODEL_VERSION = "low-odds-asian-hhad-v1"
-MARKET_HEAT_V4_VERSION = "market-heat-deviation-v4"
+MARKET_HEAT_V4_VERSION = "market-heat-deviation-v4.1"
 
 # 历史回测：让平不能靠“升盘高水/欧亚背离”单独升级。
 # 正向信号主要来自：联赛画像 + 竞彩让1球 + 热门胜赔区间 + 让平赔率区间。
 HANDICAP_DRAW_BACKTEST_VERSION = "handicap-draw-backtest-v4-movement-soft-signal"
-HANDICAP_DRAW_PATH_MODEL_VERSION = "handicap-draw-path-v2-price-confirmation"
+HANDICAP_DRAW_PATH_MODEL_VERSION = "handicap-draw-path-v3-cross-layer-alignment"
 SPORTTERY_DRAW_PRICE_SIGNAL_VERSION = "sporttery-draw-price-signal-v1"
 ORDINARY_DRAW_BACKTEST_VERSION = "ordinary-draw-backtest-v1"
 ORDINARY_DRAW_POSITIVE_LEAGUES = {
@@ -1042,6 +1053,49 @@ def _build_market_heat_v4_model(
             or (favorite_key == "away" and sporttery_handicap > 0)
         )
     )
+    handicap_draw_heat = handicap_outcomes.get("draw") or {}
+    handicap_draw_heat_class = str(
+        handicap_draw_heat.get("class") or ""
+    )
+    handicap_draw_funds_supported = bool(
+        handicap_available
+        and handicap_draw_heat_class in {"A", "B"}
+    )
+    low_total_one_goal_path = bool(
+        current_depth is not None
+        and 0.5 <= current_depth <= 1.0
+        and total_line is not None
+        and total_line <= 2.5
+        and not over_strength
+    )
+    # A high total does not automatically mean a large winning margin.  A
+    # half/three-quarter favourite in an open game commonly lands 2:1 or 3:2.
+    # Require the independent handicap-market funds signal to be healthy or
+    # merely normal before accepting this alternative exact-margin path.
+    open_one_goal_path = bool(
+        current_depth is not None
+        and 0.5 <= current_depth <= 0.75
+        and total_line is not None
+        and 2.75 <= total_line <= 3.5
+        and handicap_draw_funds_supported
+    )
+    # Symmetric +1 handling: a modest away favourite can win by one even when
+    # the Asian market remains flat/quarter-ball.  This is still only a
+    # secondary path and later needs an explicit one-goal score candidate.
+    plus_one_balanced_away_path = bool(
+        sporttery_handicap == 1
+        and favorite_key == "away"
+        and current_depth is not None
+        and current_depth <= 0.25
+        and total_line is not None
+        and 2.25 <= total_line <= 3.5
+        and handicap_draw_funds_supported
+    )
+    exact_margin_market_path = bool(
+        low_total_one_goal_path
+        or open_one_goal_path
+        or plus_one_balanced_away_path
+    )
     handicap_draw_checks = {
         "ordinary_favorite_direction_clear": favorite_key in {"home", "away"},
         "favorite_not_overheated": favorite_deviation < 10,
@@ -1059,8 +1113,32 @@ def _build_market_heat_v4_model(
         "total_restrains_margin": bool(
             total_line is not None and total_line <= 2.5 and not over_strength
         ),
+        "handicap_draw_funds_supported": handicap_draw_funds_supported,
+        "low_total_one_goal_path": low_total_one_goal_path,
+        "open_one_goal_path": open_one_goal_path,
+        "plus_one_balanced_away_path": plus_one_balanced_away_path,
+        "exact_margin_market_path": exact_margin_market_path,
     }
-    handicap_draw_ready = all(handicap_draw_checks.values())
+    handicap_draw_required_checks = {
+        "ordinary_favorite_direction_clear": (
+            handicap_draw_checks["ordinary_favorite_direction_clear"]
+        ),
+        "favorite_not_overheated": (
+            handicap_draw_checks["favorite_not_overheated"]
+        ),
+        "sporttery_exact_one_aligned": (
+            handicap_draw_checks["sporttery_exact_one_aligned"]
+        ),
+        "asian_not_retreating": (
+            handicap_draw_checks["asian_not_retreating"]
+        ),
+        "asian_not_deeper_than_one": (
+            handicap_draw_checks["asian_not_deeper_than_one"]
+        ),
+        "asian_no_conflict": handicap_draw_checks["asian_no_conflict"],
+        "exact_margin_market_path": exact_margin_market_path,
+    }
+    handicap_draw_ready = all(handicap_draw_required_checks.values())
     favorite.update({
         "side": favorite_key,
         "is_extreme_1_10_to_1_39": extreme_favorite,
@@ -1126,12 +1204,12 @@ def _build_market_heat_v4_model(
             "secondary_only": True,
             "checks": handicap_draw_checks,
             "failed_checks": [
-                key for key, passed in handicap_draw_checks.items()
+                key for key, passed in handicap_draw_required_checks.items()
                 if not passed
             ],
             "selection": "让平",
             "message": (
-                "普通胜方向、稳定一球盘与受限比分路径已成立，仍需比分候选确认"
+                "普通胜方向与一球差市场路径已成立，仍需比分候选确认"
                 if handicap_draw_ready else "V4让平末级前置条件未同时成立"
             ),
         },
@@ -2843,6 +2921,7 @@ class FAEDailyAIAnalyzer:
             summary
         )
         summary = self.attach_draw_parlay_tickets(summary)
+        summary = self.attach_score_mixed_parlay(summary, matches)
         summary = self.normalize_summary_memory_governance(
             summary, result.get("review_memory") or {}
         )
@@ -3307,6 +3386,9 @@ class FAEDailyAIAnalyzer:
             self._ensure_mixed_combinations(daily_summary)
         )
         daily_summary = self.attach_draw_parlay_tickets(daily_summary)
+        daily_summary = self.attach_score_mixed_parlay(
+            daily_summary, stored_matches
+        )
         daily_summary = self.normalize_summary_memory_governance(
             daily_summary, memory
         )
@@ -3658,9 +3740,27 @@ class FAEDailyAIAnalyzer:
                 default=str,
             ),
             "# 当日比赛输入\n" + json.dumps(
-                matches, ensure_ascii=False, indent=2, default=str
+                [self._prompt_match_input(item) for item in matches],
+                ensure_ascii=False,
+                indent=2,
+                default=str,
             ),
         ])
+
+    @staticmethod
+    def _prompt_match_input(match: Dict[str, Any]) -> Dict[str, Any]:
+        """Keep deterministic score-market odds out of the Ark prompt.
+
+        Correct-score candidates are selected and settled locally.  Sending
+        the complete 31-option calculator market to Ark adds substantial
+        prompt volume without affecting the five-market narrative analysis.
+        The unmodified input snapshot is still retained in the stored run.
+        """
+        compact = dict(match or {})
+        special = dict(compact.get("special_markets") or {})
+        special.pop("correct_score", None)
+        compact["special_markets"] = special
+        return compact
 
     def _build_single_prompt(
         self,
@@ -3713,7 +3813,7 @@ class FAEDailyAIAnalyzer:
             "普通平局采用历史回测版规则：统一模型只允许正向联赛的均势平进入正式池，必须满足平赔2.75-3.20、亚盘退浅或平手保护、上/下盘水位区间正常；平赔2.85-3.14为核心区间，其余只能小试。另有联赛专属模型：葡超小球平、挪超退盘平、荷甲中低总球平、英超降水平、英冠半球不动平、澳超高平赔中低总球、意甲升盘高水平；巴甲只作为平局基线观察模型，不得因单日命中直接升级；日职中低总球目前只观察。强热门冷平若未命中联赛专属模型，只能观察，禁止进入正式推荐。",
             "让平升级采用历史回测版规则：通用模型只允许正向联赛、竞彩让1球、热门胜赔1.26-1.40、让平赔3.30-3.70，并要求亚盘上盘水位0.65-1.04、下盘水位不低于0.75；热门胜赔1.41-1.55只能小试。另有联赛专属让平口袋：意甲中赔让平、德甲中热门让平、法甲高让平赔、英超中高总球小球让平、西甲小球水位让平、沙特高赔大球让平、欧罗巴低水让平；挪超降水让平当前样本不足只观察。让平必须再通过净胜1球路径检查：若降水不升盘但竞彩受让保护项明显低赔，说明更像热门不穿或失手，不升级让平。≤1.25超热、让2球、低命中联赛、上盘≥1.08不得升级；升盘高水、欧亚背离和退盘只作为风险证据，不能单独推让平。",
             "小球只限制比分上限，不自动支持平局：强方胜赔下降、对手胜赔上升，并得到亚盘真实升深或明确低水支持时，优先强方小胜，平局只作防选。",
-            "让平必须和穿盘方向比较：竞彩让1球、热门胜赔不高于1.50、亚盘真实升深至少0.25至一球且大小球不低于2.75时，正常低水应把让胜/让负放主选、让平放防选；不高于1.30的超强热门升至一球/球半后，不得机械把让平排第一。",
+            "让平必须和穿盘方向比较：竞彩让1球、热门胜赔不高于1.50、亚盘真实升深至少0.25至一球且大小球不低于2.75时，正常低水应把让胜/让负放主选、让平放防选；但亚盘仅半球/半一、总球2.75-3.5且竞彩让平资金偏离为A/B时，要保留2:1或3:2的一球差路径，不能把高总球机械解释成穿盘；主队受让1球且客队为浅盘热门时，同样检查0:1、1:2、2:3的客队小胜路径。",
             "主次选按本场市场证据排序，不得因用户偏好平/让平而倒置。",
             "竞彩让球主选确定后，防选必须重新比较剩余两项的模型概率与去水市场概率，不得机械保留让平；让平只有真实排第二时才可作为防选。",
             "单选核心只允许平局或让平，且必须投注分>=70、价值指数>=60、盘口可信度>=70、星级>=4；逐场主选按校准概率排序。同市场第二项达到门槛时形成防选，否则可以比较另一结果市场的最强独立方向。",
@@ -3749,7 +3849,10 @@ class FAEDailyAIAnalyzer:
                 default=str,
             ),
             "# 比赛输入\n" + json.dumps(
-                match, ensure_ascii=False, separators=(",", ":"), default=str
+                self._prompt_match_input(match),
+                ensure_ascii=False,
+                separators=(",", ":"),
+                default=str,
             ),
         ])
 
@@ -4819,6 +4922,9 @@ class FAEDailyAIAnalyzer:
         by_selection = {
             str(item.get("selection") or ""): item for item in candidates
         }
+        semantic_pair_guard_enabled = (
+            analysis.get("two_option_pair_guard_policy") != "legacy"
+        )
         source_selections = [primary, secondary]
         coverage_pair_guard = {
             "triggered": False,
@@ -4854,8 +4960,47 @@ class FAEDailyAIAnalyzer:
                 middle = by_selection["让平"]
                 middle_score = _number(middle.get("coverage_score"))
                 weakest_score = _number(weakest.get("coverage_score"))
+                strongest_score = _number(strongest.get("coverage_score"))
                 weakest_odds = _number(weakest.get("odds"))
-                if (
+                handicap = _number(
+                    (source.get("sporttery_handicap") or {}).get("value")
+                )
+                radar_candidate = dict(
+                    ((analysis.get("draw_radar") or {}).get(
+                        "handicap_draw"
+                    ) or {})
+                )
+                radar_gate = (
+                    radar_candidate.get("market_heat_v4_gate") or {}
+                )
+                radar_supports_middle = bool(
+                    abs(handicap or 0) == 1
+                    and radar_candidate.get("selection") == "让平"
+                    and radar_candidate.get("tier") != "exclude"
+                    and radar_candidate.get("ranking_eligible") is not False
+                    and (
+                        radar_candidate.get("formal_eligible") is True
+                        or (
+                            radar_gate.get("passed") is True
+                            and radar_candidate.get(
+                                "structure_confirmed"
+                            ) is True
+                        )
+                    )
+                )
+                radar_middle_close = bool(
+                    semantic_pair_guard_enabled
+                    and radar_supports_middle
+                    and middle_score is not None
+                    and weakest_score is not None
+                    and strongest_score is not None
+                    and middle_score
+                    >= weakest_score
+                    - TWO_OPTION_HANDICAP_RADAR_MAX_DEFICIT
+                    and strongest_score + middle_score
+                    >= TWO_OPTION_MIN_COVERAGE
+                )
+                longshot_anomaly = bool(
                     middle_score is not None
                     and weakest_score is not None
                     and str(weakest.get("selection") or "")
@@ -4865,11 +5010,17 @@ class FAEDailyAIAnalyzer:
                     and middle_score
                     >= weakest_score
                     + TWO_OPTION_HANDICAP_MIDDLE_MIN_ADVANTAGE
-                ):
+                )
+                if radar_middle_close or longshot_anomaly:
                     primary = str(strongest.get("selection") or primary)
                     secondary = "让平"
+                    trigger_type = (
+                        "draw_radar_exact_margin"
+                        if radar_middle_close else "longshot_anomaly"
+                    )
                     coverage_pair_guard = {
                         "triggered": True,
+                        "trigger_type": trigger_type,
                         "source_selections": source_selections,
                         "effective_selections": [primary, secondary],
                         "replaced_selection": weakest.get("selection"),
@@ -4880,7 +5031,10 @@ class FAEDailyAIAnalyzer:
                         "replacement_coverage_score": round(
                             float(middle_score), 2
                         ),
-                        "replaced_odds": round(float(weakest_odds), 3),
+                        "replaced_odds": (
+                            round(float(weakest_odds), 3)
+                            if weakest_odds is not None else None
+                        ),
                         "minimum_longshot_odds": (
                             TWO_OPTION_HANDICAP_LONGSHOT_MIN_ODDS
                         ),
@@ -4888,6 +5042,10 @@ class FAEDailyAIAnalyzer:
                             TWO_OPTION_HANDICAP_MIDDLE_MIN_ADVANTAGE
                         ),
                         "reason": (
+                            "本场让平雷达已独立确认一球差路径，原双选却"
+                            "同时保留让胜/让负两端；让平与较弱端覆盖分"
+                            "接近，按同场证据一致性用让平替换较弱端"
+                            if radar_middle_close else
                             "让球双选原保留了大模型的超高赔低覆盖"
                             "主选，让平覆盖分明显更高，按命中覆盖"
                             "目标用让平替换长赔异常项"
@@ -4940,6 +5098,30 @@ class FAEDailyAIAnalyzer:
             for item in omitted_rows
         )
         second_gap = second_score - third_score
+        source_extreme_gap = None
+        unsupported_extreme_pair = False
+        if (
+            market == "竞彩让球"
+            and set(source_selections) == {"让胜", "让负"}
+            and "让平" in by_selection
+        ):
+            source_extreme_scores = [
+                _number((by_selection.get(label) or {}).get(
+                    "coverage_score"
+                ))
+                for label in source_selections
+            ]
+            middle_source_score = _number(
+                by_selection["让平"].get("coverage_score")
+            )
+            if (
+                all(value is not None for value in source_extreme_scores)
+                and middle_source_score is not None
+            ):
+                source_extreme_gap = (
+                    min(float(value) for value in source_extreme_scores)
+                    - float(middle_source_score)
+                )
         confidence = _number(
             (analysis.get("market_confidence") or {}).get("score")
         ) or 0
@@ -5014,7 +5196,15 @@ class FAEDailyAIAnalyzer:
         eligible = bool(
             coverage >= TWO_OPTION_MIN_COVERAGE
             and confidence >= TWO_OPTION_MIN_MARKET_CONFIDENCE
-            and second_gap >= TWO_OPTION_MIN_SECOND_GAP
+            and (
+                second_gap >= TWO_OPTION_MIN_SECOND_GAP
+                or (
+                    coverage_pair_guard.get("trigger_type")
+                    == "draw_radar_exact_margin"
+                    and second_gap
+                    >= -TWO_OPTION_HANDICAP_RADAR_MAX_DEFICIT
+                )
+            )
             and complete_odds
             and not severe_data_risk
         )
@@ -5063,7 +5253,11 @@ class FAEDailyAIAnalyzer:
             reasons.append(
                 f"盘口可信度{confidence:g}低于{TWO_OPTION_MIN_MARKET_CONFIDENCE:g}"
             )
-        if second_gap < TWO_OPTION_MIN_SECOND_GAP:
+        if (
+            second_gap < TWO_OPTION_MIN_SECOND_GAP
+            and coverage_pair_guard.get("trigger_type")
+            != "draw_radar_exact_margin"
+        ):
             reasons.append(
                 f"次选仅领先第三项{second_gap:.1f}个百分点"
             )
@@ -5092,6 +5286,11 @@ class FAEDailyAIAnalyzer:
                 if market_coverage is not None else None
             ),
             "second_over_third_gap": round(second_gap, 2),
+            "source_extreme_over_middle_gap": (
+                round(source_extreme_gap, 2)
+                if source_extreme_gap is not None else None
+            ),
+            "unsupported_extreme_pair": unsupported_extreme_pair,
             "market_confidence": round(confidence, 1),
             "coverage_value_edge": round(coverage_edge, 2),
             "pair_value_score": (
@@ -9673,7 +9872,7 @@ class FAEDailyAIAnalyzer:
             else:
                 if not preconditions:
                     reasons.append(
-                        "V4让平前置条件不足：普通胜、稳定一球盘或受限总球未同时成立"
+                        "V4让平前置条件不足：普通胜与低总球、开放浅盘或+1客队小胜路径未同时成立"
                     )
                 if not score_path_confirmed:
                     reasons.append(
@@ -12294,8 +12493,8 @@ class FAEDailyAIAnalyzer:
                         and score_path_confirmed
                     ):
                         v4_block_reason = (
-                            "V4让平末级门禁未通过：普通胜方向、稳定一球盘、"
-                            "受限总球和热门恰好赢1球比分路径未同时成立"
+                            "V4让平末级门禁未通过：普通胜方向、一球差市场"
+                            "路径和热门恰好赢1球比分候选未同时成立"
                         )
             value_score_number = _number(value_profile.get("value_score"))
             market_confidence_score = (
@@ -12613,6 +12812,191 @@ class FAEDailyAIAnalyzer:
             row["analysis"] = analysis
             rows.append(row)
         return rows
+
+    @classmethod
+    def attach_score_mixed_parlay(
+        cls,
+        summary: Dict[str, Any],
+        matches: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        """Attach at most one auditable score-cluster mixed parlay.
+
+        The score leg is the released low-total two-score cluster.  The other
+        match must independently qualify either as the total-3.5 half/full
+        primary path or as a non-baseline total-goals structural candidate.
+        The ticket contains two paths because the score leg has two options.
+        """
+        result = dict(summary or {})
+        score_legs = []
+        anchors = []
+        for item in matches or []:
+            match_id = str(item.get("match_id") or "")
+            if not match_id:
+                continue
+            analysis = item.get("analysis") or {}
+            special = analysis.get("special_markets") or (
+                (item.get("input_snapshot") or {}).get("special_markets") or {}
+            )
+            score_model = special.get("correct_score") or {}
+            score_options = [
+                dict(option) for option in score_model.get("selections") or []
+                if option.get("selection") and _number(option.get("odds"))
+            ][:2]
+            if score_model.get("actionable") and len(score_options) == 2:
+                market_coverage = sum(
+                    float(option.get("market_probability") or 0)
+                    for option in score_options
+                )
+                score_legs.append({
+                    "match_id": match_id,
+                    "match_number": item.get("match_number"),
+                    "home_team": item.get("home_team"),
+                    "away_team": item.get("away_team"),
+                    "selections": score_options,
+                    "market_coverage": round(market_coverage, 2),
+                    "historical_coverage": float(
+                        (score_model.get("historical_validation") or {}).get(
+                            "holdout_coverage"
+                        ) or SCORE_CLUSTER_HOLDOUT_COVERAGE
+                    ),
+                    "reason": score_model.get("reason"),
+                })
+            total_values = (
+                (item.get("input_snapshot") or {}).get("total") or {}
+            ).get("current") or []
+            total_line = (
+                _number(total_values[1]) if len(total_values) > 1 else None
+            )
+            half_full = special.get("half_full") or {}
+            half_pick = half_full.get("primary") or {}
+            if (
+                half_full.get("actionable")
+                and total_line is not None
+                and abs(total_line - 3.5) < 0.01
+                and half_pick.get("selection")
+                and _number(half_pick.get("odds"))
+            ):
+                anchors.append({
+                    "match_id": match_id,
+                    "match_number": item.get("match_number"),
+                    "home_team": item.get("home_team"),
+                    "away_team": item.get("away_team"),
+                    "market_key": "half_full",
+                    "market": "半全场",
+                    "selection": half_pick.get("selection"),
+                    "odds": round(float(half_pick.get("odds")), 3),
+                    "model_probability": round(float(
+                        half_pick.get("model_probability") or 0
+                    ), 2),
+                    "priority": 2,
+                    "reason": "大小球3.5下的半全场方向主选",
+                })
+            total_goals = special.get("total_goals") or {}
+            goal_pick = total_goals.get("primary") or {}
+            if (
+                total_goals.get("actionable")
+                and total_goals.get("data_complete")
+                and not total_goals.get("baseline_only")
+                and goal_pick.get("selection")
+                and _number(goal_pick.get("odds"))
+            ):
+                anchors.append({
+                    "match_id": match_id,
+                    "match_number": item.get("match_number"),
+                    "home_team": item.get("home_team"),
+                    "away_team": item.get("away_team"),
+                    "market_key": "total_goals",
+                    "market": "总进球",
+                    "selection": goal_pick.get("selection"),
+                    "odds": round(float(goal_pick.get("odds")), 3),
+                    "model_probability": round(float(
+                        goal_pick.get("model_probability") or 0
+                    ), 2),
+                    "priority": 1,
+                    "reason": total_goals.get("regime_label") or "进球结构主选",
+                })
+        candidates = []
+        for score_leg in score_legs:
+            for anchor in anchors:
+                if score_leg["match_id"] == anchor["match_id"]:
+                    continue
+                path_odds = {
+                    str(option["selection"]): round(
+                        float(option["odds"]) * float(anchor["odds"]), 2
+                    )
+                    for option in score_leg["selections"]
+                }
+                joint = (
+                    float(score_leg["historical_coverage"])
+                    * float(anchor["model_probability"]) / 100
+                )
+                candidates.append({
+                    "rank_score": round(
+                        joint
+                        + float(score_leg["market_coverage"]) * 0.08
+                        + int(anchor["priority"]) * 1.5,
+                        2,
+                    ),
+                    "score_pick": score_leg,
+                    "anchor_pick": anchor,
+                    "path_odds": path_odds,
+                    "minimum_path_odds": min(path_odds.values()),
+                    "maximum_path_odds": max(path_odds.values()),
+                    "estimated_joint_coverage": round(joint, 2),
+                })
+        candidates.sort(key=lambda row: (
+            float(row.get("rank_score") or 0),
+            float(row.get("minimum_path_odds") or 0),
+        ), reverse=True)
+        if not candidates:
+            result["score_mixed_parlay"] = {
+                "version": SCORE_MIXED_PARLAY_VERSION,
+                "available": False,
+                "play": "双比分×单选 2串1",
+                "stake_lines": 2,
+                "reason": (
+                    "当天没有同时满足低总球比分簇和独立半全场/总进球"
+                    "锚点的两场比赛，不强行组串。"
+                ),
+            }
+            return result
+        selected = candidates[0]
+        score_pick = selected["score_pick"]
+        anchor_pick = selected["anchor_pick"]
+        result["score_mixed_parlay"] = {
+            "version": SCORE_MIXED_PARLAY_VERSION,
+            "available": True,
+            "ticket_id": (
+                f"score-mixed:{score_pick['match_id']}:"
+                f"{anchor_pick['match_id']}:{anchor_pick['market_key']}"
+            ),
+            "play": "双比分×单选 2串1",
+            "stake_lines": 2,
+            "score_pick": score_pick,
+            "anchor_pick": anchor_pick,
+            "path_odds": selected["path_odds"],
+            "minimum_path_odds": round(
+                float(selected["minimum_path_odds"]), 2
+            ),
+            "maximum_path_odds": round(
+                float(selected["maximum_path_odds"]), 2
+            ),
+            "estimated_joint_coverage": selected[
+                "estimated_joint_coverage"
+            ],
+            "rank_score": selected["rank_score"],
+            "reason": (
+                f"{score_pick['match_number']}覆盖"
+                + "/".join(
+                    str(option.get("selection"))
+                    for option in score_pick["selections"]
+                )
+                + f"，搭配{anchor_pick['match_number']}"
+                + f"{anchor_pick['market']}{anchor_pick['selection']}；"
+                + "全票2注，仅作小额高波动观察。"
+            ),
+        }
+        return result
 
     @classmethod
     def _has_euro_asian_divergence(cls, source: Dict[str, Any]) -> bool:

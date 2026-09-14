@@ -319,6 +319,80 @@
             <p>该卡仅组合当日雷达首选，不等同于正式核心，也不代表保证盈利。</p>
           </section>
 
+          <section v-if="scoreMixedParlay" class="score-mixed-parlay">
+            <header>
+              <div>
+                <strong>每日比分观察串</strong>
+                <small>低总球双比分 × 独立特殊玩法单选</small>
+              </div>
+              <span :class="scoreMixedParlayReview?.status || ''">
+                {{ scoreMixedParlayStatusLabel }}
+              </span>
+            </header>
+            <template v-if="scoreMixedParlay.available">
+              <div class="score-mixed-parlay-picks">
+                <button
+                  type="button"
+                  @click="goToDetail(scoreMixedParlay.score_pick.match_id)"
+                >
+                  <i>比分双选</i>
+                  <span>
+                    <b>{{ dailyMatch(scoreMixedParlay.score_pick.match_id).match_number }}</b>
+                    <small>
+                      {{ dailyMatch(scoreMixedParlay.score_pick.match_id).home_team }} vs
+                      {{ dailyMatch(scoreMixedParlay.score_pick.match_id).away_team }}
+                    </small>
+                  </span>
+                  <strong>
+                    <em
+                      v-for="option in scoreMixedParlay.score_pick.selections"
+                      :key="option.selection"
+                    >
+                      {{ option.selection }} @{{ formatPickOdds(option.odds) }}
+                    </em>
+                  </strong>
+                </button>
+                <button
+                  type="button"
+                  @click="goToDetail(scoreMixedParlay.anchor_pick.match_id)"
+                >
+                  <i>{{ scoreMixedParlay.anchor_pick.market }}</i>
+                  <span>
+                    <b>{{ dailyMatch(scoreMixedParlay.anchor_pick.match_id).match_number }}</b>
+                    <small>
+                      {{ dailyMatch(scoreMixedParlay.anchor_pick.match_id).home_team }} vs
+                      {{ dailyMatch(scoreMixedParlay.anchor_pick.match_id).away_team }}
+                    </small>
+                  </span>
+                  <strong>
+                    <em>
+                      {{ scoreMixedParlay.anchor_pick.selection }}
+                      @{{ formatPickOdds(scoreMixedParlay.anchor_pick.odds) }}
+                    </em>
+                  </strong>
+                </button>
+              </div>
+              <div class="score-mixed-parlay-paths">
+                <span
+                  v-for="(odds, selection) in scoreMixedParlay.path_odds"
+                  :key="selection"
+                >
+                  {{ selection }}路径 <b>{{ odds }}倍</b>
+                </span>
+              </div>
+              <footer>
+                <span>二串一 · 共{{ scoreMixedParlay.stake_lines }}注</span>
+                <strong>
+                  估算联合覆盖 {{ scoreMixedParlay.estimated_joint_coverage }}%
+                </strong>
+              </footer>
+              <p>{{ scoreMixedParlay.reason }}</p>
+            </template>
+            <div v-else class="score-mixed-parlay-empty">
+              {{ scoreMixedParlay.reason }}
+            </div>
+          </section>
+
           <section v-if="drawRadarGroups.length" class="draw-radar-panel draw-radar-ranking-panel">
             <header>
               <div>
@@ -1015,6 +1089,64 @@
           </div>
 
           <template v-if="faeReview">
+            <section
+              v-if="scoreMixedParlayReview"
+              class="daily-review-block score-mixed-review-block"
+            >
+              <h2>
+                <span>比分混合串复盘</span>
+                <small>
+                  {{ scoreMixedParlayReview.status === 'hit' ? '✓ 命中' : scoreMixedParlayReview.status === 'miss' ? '× 未中' : '待赛' }}
+                  <template v-if="scoreMixedParlayReview.profit != null">
+                    · {{ signedMetric(scoreMixedParlayReview.profit) }}单位
+                  </template>
+                </small>
+              </h2>
+              <button
+                type="button"
+                @click="goToDetail(scoreMixedParlayReview.score_pick.match_id)"
+              >
+                <span class="review-match-info">
+                  <b>{{ dailyMatch(scoreMixedParlayReview.score_pick.match_id).match_number }}</b>
+                  {{ dailyMatch(scoreMixedParlayReview.score_pick.match_id).home_team }} vs
+                  {{ dailyMatch(scoreMixedParlayReview.score_pick.match_id).away_team }}
+                </span>
+                <span class="review-pick-info">
+                  <strong>
+                    {{ scoreMixedParlayReview.score_pick.selections.map(item => item.selection).join('/') }}
+                  </strong>
+                  <i :class="scoreMixedParlayReview.score_pick.status">
+                    {{ scoreMixedParlayReview.score_pick.status === 'hit' ? '命中' : scoreMixedParlayReview.score_pick.status === 'miss' ? '未中' : '待赛' }}
+                  </i>
+                </span>
+                <span class="review-result-info">
+                  <em>{{ scoreMixedParlayReview.score_pick.actual_score || '待赛' }}</em>
+                </span>
+              </button>
+              <button
+                type="button"
+                @click="goToDetail(scoreMixedParlayReview.anchor_pick.match_id)"
+              >
+                <span class="review-match-info">
+                  <b>{{ dailyMatch(scoreMixedParlayReview.anchor_pick.match_id).match_number }}</b>
+                  {{ dailyMatch(scoreMixedParlayReview.anchor_pick.match_id).home_team }} vs
+                  {{ dailyMatch(scoreMixedParlayReview.anchor_pick.match_id).away_team }}
+                </span>
+                <span class="review-pick-info">
+                  <strong>
+                    {{ scoreMixedParlayReview.anchor_pick.market }}
+                    {{ scoreMixedParlayReview.anchor_pick.selection }}
+                  </strong>
+                  <i :class="scoreMixedParlayReview.anchor_pick.status">
+                    {{ scoreMixedParlayReview.anchor_pick.status === 'hit' ? '命中' : scoreMixedParlayReview.anchor_pick.status === 'miss' ? '未中' : '待赛' }}
+                  </i>
+                </span>
+                <span class="review-result-info">
+                  <em>{{ scoreMixedParlayReview.anchor_pick.result_score || '待赛' }}</em>
+                </span>
+              </button>
+            </section>
+
             <section
               v-if="faeReview.official_bet_results?.length"
               class="daily-review-block official-review-block"
@@ -1795,6 +1927,19 @@ const drawRadarTwoLeg = computed(() => {
     picks: [ordinary, handicap],
     combinedOdds: (Number(ordinary.odds) * Number(handicap.odds)).toFixed(2)
   }
+})
+const scoreMixedParlay = computed(() => (
+  faeDailyAi.value?.daily_summary?.score_mixed_parlay || null
+))
+const scoreMixedParlayReview = computed(() => (
+  faeReview.value?.score_mixed_parlay_result || null
+))
+const scoreMixedParlayStatusLabel = computed(() => {
+  if (!scoreMixedParlay.value?.available) return '今日暂无'
+  const status = scoreMixedParlayReview.value?.status
+  if (status === 'hit') return '✓ 命中'
+  if (status === 'miss') return '× 未中'
+  return '待赛'
 })
 const leagueModelGroups = computed(() => {
   const source = faeDailyAi.value?.daily_summary?.league_model_rankings || {}
@@ -6197,6 +6342,160 @@ onBeforeUnmount(() => {
   color: #e53955;
   font-size: 13px;
   text-align: center;
+}
+
+.score-mixed-parlay {
+  margin: 14px 0;
+  overflow: hidden;
+  border: 1px solid #ead9ad;
+  border-radius: 14px;
+  background: linear-gradient(180deg, #fffdf8 0%, #fff 100%);
+}
+
+.score-mixed-parlay > header,
+.score-mixed-parlay > footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 13px 15px;
+}
+
+.score-mixed-parlay > header {
+  border-bottom: 1px solid #f1e6c9;
+}
+
+.score-mixed-parlay > header div {
+  display: grid;
+  gap: 3px;
+}
+
+.score-mixed-parlay > header strong {
+  color: #3f3a32;
+  font-size: 16px;
+}
+
+.score-mixed-parlay > header small,
+.score-mixed-parlay > p,
+.score-mixed-parlay-empty {
+  color: #9b8c71;
+  font-size: 12px;
+}
+
+.score-mixed-parlay > header > span {
+  flex: none;
+  padding: 4px 9px;
+  color: #b58a29;
+  font-size: 12px;
+  background: #fff7df;
+  border-radius: 12px;
+}
+
+.score-mixed-parlay > header > span.hit {
+  color: #15966c;
+  background: #eaf8f2;
+}
+
+.score-mixed-parlay > header > span.miss {
+  color: #df3657;
+  background: #fff0f3;
+}
+
+.score-mixed-parlay-picks button {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 13px 15px;
+  text-align: left;
+  background: transparent;
+  border: 0;
+}
+
+.score-mixed-parlay-picks button + button {
+  border-top: 1px dashed #eee1c1;
+}
+
+.score-mixed-parlay-picks button > i {
+  padding: 3px 6px;
+  color: #b38320;
+  font-size: 11px;
+  font-style: normal;
+  background: #fff5d9;
+  border-radius: 7px;
+}
+
+.score-mixed-parlay-picks button > span,
+.score-mixed-parlay-picks button > strong {
+  display: grid;
+  gap: 3px;
+}
+
+.score-mixed-parlay-picks button b {
+  color: #414141;
+  font-size: 14px;
+}
+
+.score-mixed-parlay-picks button small {
+  overflow: hidden;
+  color: #999;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.score-mixed-parlay-picks button > strong {
+  color: #e53955;
+  font-size: 13px;
+  text-align: right;
+}
+
+.score-mixed-parlay-picks button > strong em {
+  font-style: normal;
+  white-space: nowrap;
+}
+
+.score-mixed-parlay-paths {
+  display: flex;
+  gap: 8px;
+  padding: 0 15px 12px;
+}
+
+.score-mixed-parlay-paths span {
+  flex: 1;
+  padding: 7px 8px;
+  color: #8d7b57;
+  font-size: 12px;
+  text-align: center;
+  background: #fff9e9;
+  border-radius: 8px;
+}
+
+.score-mixed-parlay-paths b {
+  color: #d74963;
+}
+
+.score-mixed-parlay > footer {
+  padding-top: 10px;
+  padding-bottom: 10px;
+  border-top: 1px solid #f3ead3;
+  font-size: 12px;
+}
+
+.score-mixed-parlay > footer strong {
+  color: #b38320;
+}
+
+.score-mixed-parlay > p,
+.score-mixed-parlay-empty {
+  margin: 0;
+  padding: 0 15px 13px;
+  line-height: 1.6;
+}
+
+.score-mixed-parlay-empty {
+  padding-top: 15px;
 }
 
 @media (max-width: 560px) {

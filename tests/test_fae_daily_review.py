@@ -182,6 +182,76 @@ class DailyAIReviewTests(unittest.TestCase):
             100.0,
         )
 
+    def test_settles_two_line_score_mixed_parlay(self):
+        score_match = source("score-1", "主胜")
+        score_match["analysis"]["special_markets"] = {
+            "correct_score": {
+                "available": True,
+                "actionable": True,
+                "model_version": "score-test",
+                "selections": [
+                    {"selection": "1:0", "odds": 6.5},
+                    {"selection": "1:1", "odds": 6.0},
+                ],
+            },
+        }
+        anchor_match = source("anchor-1", "主胜")
+        anchor_match["analysis"]["special_markets"] = {
+            "half_full": {
+                "available": True,
+                "model_version": "half-test",
+                "primary": {"selection": "平胜", "odds": 4.5},
+                "secondary": {"selection": "胜胜", "odds": 2.5},
+            },
+        }
+        ticket = {
+            "available": True,
+            "ticket_id": "score-ticket-1",
+            "version": "score-mixed-test",
+            "play": "双比分×单选 2串1",
+            "stake_lines": 2,
+            "score_pick": {
+                "match_id": "score-1",
+                "selections": [
+                    {"selection": "1:0", "odds": 6.5},
+                    {"selection": "1:1", "odds": 6.0},
+                ],
+            },
+            "anchor_pick": {
+                "match_id": "anchor-1",
+                "market_key": "half_full",
+                "market": "半全场",
+                "selection": "平胜",
+                "odds": 4.5,
+            },
+        }
+        snapshot = {
+            **self.snapshot,
+            "matches": [score_match, anchor_match],
+            "daily_summary": {
+                "recommended_combinations": [],
+                "score_mixed_parlay": ticket,
+            },
+        }
+
+        review = FAEDailyAIReviewEngine().review(snapshot, {
+            "score-1": {
+                "status": 2, "home_score": 1, "away_score": 0,
+            },
+            "anchor-1": {
+                "status": 2, "home_score": 2, "away_score": 1,
+                "home_half_score": 0, "away_half_score": 0,
+            },
+        })
+
+        result = review["score_mixed_parlay_result"]
+        self.assertEqual(result["status"], "hit")
+        self.assertEqual(result["return"], 29.25)
+        self.assertEqual(result["profit"], 27.25)
+        self.assertEqual(
+            review["summary"]["score_mixed_parlay"]["roi"], 1362.5
+        )
+
     def test_all_match_single_uses_probability_play_not_value_play(self):
         snapshot = {
             **self.snapshot,

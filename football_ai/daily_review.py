@@ -196,6 +196,42 @@ def summarize_special_primary(rows: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
     } for row in rows])
 
 
+def summarize_score_mixed_parlay(
+    row: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    return summarize_score_mixed_parlays([row] if row else [])
+
+
+def summarize_score_mixed_parlays(
+    rows: Iterable[Dict[str, Any]],
+) -> Dict[str, Any]:
+    values = [dict(row) for row in rows if row]
+    settled_rows = [
+        row for row in values if row.get("status") in {"hit", "miss"}
+    ]
+    hits = sum(row.get("status") == "hit" for row in settled_rows)
+    stake = sum(_number(row.get("stake")) or 0 for row in settled_rows)
+    returns = sum(_number(row.get("return")) or 0 for row in settled_rows)
+    profit = returns - stake
+    return {
+        "total": len(values),
+        "settled": len(settled_rows),
+        "pending": sum(row.get("status") == "pending" for row in values),
+        "hits": hits,
+        "misses": len(settled_rows) - hits,
+        "hit_rate": (
+            round(hits / len(settled_rows) * 100, 1)
+            if settled_rows else 0
+        ),
+        "stake": round(stake, 2),
+        "return": round(returns, 2),
+        "profit": round(profit, 2),
+        "roi": (
+            round(profit / stake * 100, 1) if stake else 0
+        ),
+    }
+
+
 def unique_two_option_rows(
     rows: Iterable[Dict[str, Any]],
 ) -> List[Dict[str, Any]]:
@@ -356,6 +392,13 @@ class FAEDailyAIReviewEngine:
                 item, matches_by_id.get(str(item.get("match_id"))) or {}
             )
         ]
+        score_mixed_parlay_result = self._settle_score_mixed_parlay(
+            ((snapshot.get("daily_summary") or {}).get(
+                "score_mixed_parlay"
+            ) or {}),
+            matches_by_id,
+            special_market_results,
+        )
         snapshot_by_id = {
             str(item.get("match_id")): item for item in matches
         }
@@ -498,6 +541,7 @@ class FAEDailyAIReviewEngine:
                 draw_radar_shortlist_results
             ),
             "special_market_results": special_market_results,
+            "score_mixed_parlay_result": score_mixed_parlay_result,
             "combo_results": combo_results,
             "draw_ticket_results": draw_ticket_results,
             "conflicts": conflicts,
@@ -584,8 +628,13 @@ class FAEDailyAIReviewEngine:
                             if row.get("market_key") == key
                         ]),
                     }
-                    for key in ("total_goals", "half_full")
+                    for key in (
+                        "correct_score", "total_goals", "half_full"
+                    )
                 },
+                "score_mixed_parlay": summarize_score_mixed_parlay(
+                    score_mixed_parlay_result
+                ),
                 "draw_tickets": {
                     str(item.get("key") or ""): item.get("summary") or {}
                     for item in draw_ticket_results
@@ -622,6 +671,104 @@ class FAEDailyAIReviewEngine:
                 },
                 "guardrail_conflicts": len(conflicts),
             },
+        }
+
+    @staticmethod
+    def _settle_score_mixed_parlay(
+        ticket: Dict[str, Any],
+        matches_by_id: Dict[str, Dict[str, Any]],
+        special_market_results: Iterable[Dict[str, Any]],
+    ) -> Optional[Dict[str, Any]]:
+        if not ticket.get("available"):
+            return None
+        score_pick = ticket.get("score_pick") or {}
+        anchor_pick = ticket.get("anchor_pick") or {}
+        score_match_id = str(score_pick.get("match_id") or "")
+        anchor_match_id = str(anchor_pick.get("match_id") or "")
+        score_match = matches_by_id.get(score_match_id) or {}
+        actual_score = _score(score_match)
+        score_pending = (
+            score_match.get("status") not in (2, "2")
+            or actual_score is None
+        )
+        actual_score_text = (
+            f"{actual_score[0]}:{actual_score[1]}"
+            if actual_score else None
+        )
+        score_options = [
+            dict(item) for item in score_pick.get("selections") or []
+            if item.get("selection")
+        ]
+        hit_score = next((
+            item for item in score_options
+            if str(item.get("selection")) == actual_score_text
+        ), None)
+        score_status = (
+            "pending" if score_pending else "hit" if hit_score else "miss"
+        )
+        anchor_row = next((
+            row for row in special_market_results
+            if str(row.get("match_id") or "") == anchor_match_id
+            and str(row.get("market_key") or "")
+            == str(anchor_pick.get("market_key") or "")
+        ), None)
+        if not anchor_row or anchor_row.get("actual_selection") is None:
+            anchor_status = "pending"
+        else:
+            anchor_status = (
+                "hit" if str(anchor_row.get("actual_selection"))
+                == str(anchor_pick.get("selection")) else "miss"
+            )
+        if "miss" in (score_status, anchor_status):
+            status = "miss"
+        elif "pending" in (score_status, anchor_status):
+            status = "pending"
+        else:
+            status = "hit"
+        stake = float(ticket.get("stake_lines") or len(score_options) or 2)
+        payout = None
+        if status == "hit":
+            score_odds = _number((hit_score or {}).get("odds"))
+            anchor_odds = _number(anchor_pick.get("odds"))
+            payout = (
+                round(score_odds * anchor_odds, 2)
+                if score_odds is not None and anchor_odds is not None
+                else None
+            )
+        elif status == "miss":
+            payout = 0.0
+        return {
+            "ticket_id": ticket.get("ticket_id"),
+            "version": ticket.get("version"),
+            "play": ticket.get("play"),
+            "status": status,
+            "stake": stake if status in {"hit", "miss"} else None,
+            "return": payout,
+            "profit": (
+                round(payout - stake, 2) if payout is not None else None
+            ),
+            "score_pick": {
+                **score_pick,
+                "actual_score": actual_score_text,
+                "status": score_status,
+                "hit_selection": (
+                    hit_score.get("selection") if hit_score else None
+                ),
+            },
+            "anchor_pick": {
+                **anchor_pick,
+                "actual_selection": (
+                    anchor_row.get("actual_selection") if anchor_row else None
+                ),
+                "result_score": (
+                    anchor_row.get("result_score") if anchor_row else None
+                ),
+                "half_score": (
+                    anchor_row.get("half_score") if anchor_row else None
+                ),
+                "status": anchor_status,
+            },
+            "hit_path_odds": payout if status == "hit" else None,
         }
 
     def _settle_match(
@@ -1282,6 +1429,7 @@ def aggregate_daily_ai_reviews(
     draw_radar_results: List[Dict[str, Any]] = []
     draw_radar_scan_results: List[Dict[str, Any]] = []
     special_market_results: List[Dict[str, Any]] = []
+    score_mixed_parlay_results: List[Dict[str, Any]] = []
     combos: List[Dict[str, Any]] = []
     draw_ticket_results: List[Dict[str, Any]] = []
     conflicts: List[Dict[str, Any]] = []
@@ -1325,6 +1473,11 @@ def aggregate_daily_ai_reviews(
             **row,
             "review_owner_date": owner_date,
         } for row in review.get("special_market_results") or [])
+        if review.get("score_mixed_parlay_result"):
+            score_mixed_parlay_results.append({
+                **review["score_mixed_parlay_result"],
+                "review_owner_date": owner_date,
+            })
         combos.extend(review.get("combo_results") or [])
         draw_ticket_results.extend({
             **row,
@@ -1424,8 +1577,11 @@ def aggregate_daily_ai_reviews(
                     if row.get("market_key") == key
                 ]),
             }
-            for key in ("total_goals", "half_full")
+            for key in ("correct_score", "total_goals", "half_full")
         },
+        "score_mixed_parlay": summarize_score_mixed_parlays(
+            score_mixed_parlay_results
+        ),
         "draw_tickets": {
             key: {
                 "days": len(items),

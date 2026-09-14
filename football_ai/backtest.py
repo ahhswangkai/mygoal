@@ -142,6 +142,8 @@ class FAEShadowBacktestEngine:
                     fresh["strategy"] = "hhad-model-market-coverage-v1"
             analysis["secondary_play"] = fresh.get("selection")
             analysis["secondary_selection_guard"] = fresh
+            if variant == FAEShadowBacktestEngine.BASELINE:
+                analysis["two_option_pair_guard_policy"] = "legacy"
             row["analysis"] = analysis
         return FAEDailyAIAnalyzer.apply_two_option_recommendations(matches)
 

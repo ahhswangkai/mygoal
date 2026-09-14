@@ -1,4 +1,4 @@
-"""Deterministic total-goals and half/full-time market support.
+"""Deterministic score, total-goals and half/full-time market support.
 
 The Sporttery calculator is the source of the exact-outcome prices.  This
 module deliberately keeps network access outside the model so a saved FAE
@@ -35,6 +35,20 @@ HALF_FULL_KEYS = {
     "ah": "负胜",
     "ad": "负平",
     "aa": "负负",
+}
+
+CORRECT_SCORE_KEYS = {
+    "s01s00": "1:0", "s02s00": "2:0", "s02s01": "2:1",
+    "s03s00": "3:0", "s03s01": "3:1", "s03s02": "3:2",
+    "s04s00": "4:0", "s04s01": "4:1", "s04s02": "4:2",
+    "s05s00": "5:0", "s05s01": "5:1", "s05s02": "5:2",
+    "s00s00": "0:0", "s01s01": "1:1", "s02s02": "2:2",
+    "s03s03": "3:3",
+    "s00s01": "0:1", "s00s02": "0:2", "s01s02": "1:2",
+    "s00s03": "0:3", "s01s03": "1:3", "s02s03": "2:3",
+    "s00s04": "0:4", "s01s04": "1:4", "s02s04": "2:4",
+    "s00s05": "0:5", "s01s05": "1:5", "s02s05": "2:5",
+    "s1sh": "胜其他", "s1sd": "平其他", "s1sa": "负其他",
 }
 
 
@@ -87,7 +101,7 @@ def _parse_market(
 
 
 def parse_calculator_payload(payload: Any) -> Dict[str, Dict[str, Any]]:
-    """Index official calculator TTG/HAFU snapshots by match number."""
+    """Index official calculator CRS/TTG/HAFU snapshots by match number."""
     root = payload if isinstance(payload, dict) else {}
     if isinstance(root.get("data"), dict):
         root = root["data"]
@@ -99,14 +113,22 @@ def parse_calculator_payload(payload: Any) -> Dict[str, Dict[str, Any]]:
             number = normalize_match_number(match.get("matchNumStr"))
             if not number:
                 continue
+            correct_score = _parse_market(
+                match.get("crs"), CORRECT_SCORE_KEYS
+            )
             total_goals = _parse_market(match.get("ttg"), TOTAL_GOAL_KEYS)
             half_full = _parse_market(match.get("hafu"), HALF_FULL_KEYS)
-            if not total_goals["odds"] and not half_full["odds"]:
+            if (
+                not correct_score["odds"]
+                and not total_goals["odds"]
+                and not half_full["odds"]
+            ):
                 continue
             result[number] = {
                 "source": "sporttery-calculator",
                 "match_number": number,
                 "calculator_match_id": str(match.get("matchId") or ""),
+                "correct_score": correct_score,
                 "total_goals": total_goals,
                 "half_full": half_full,
             }
@@ -160,7 +182,10 @@ def _goal_number(label: str) -> float:
 
 
 def _asian_home_line(value: Any) -> Optional[float]:
-    raw = str(value or "").replace(" ", "").strip()
+    raw = (
+        str(value or "").replace(" ", "")
+        .replace("升", "").replace("降", "").strip()
+    )
     if not raw:
         return None
     received = raw.startswith("受")
@@ -191,6 +216,122 @@ def _asian_home_line(value: Any) -> Optional[float]:
             return None
         number = sum(parts) / len(parts)
     return -number if received else number
+
+
+def _correct_score_analysis(
+    market: Dict[str, Any],
+    match_input: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Build the released low-total two-score cluster.
+
+    The rule is intentionally narrow and auditable.  A March-to-September
+    replay used data before August for score-template selection and August
+    onward as holdout.  In the matching 0.5/0.75, total-2.5 and 1.51-1.80
+    favourite band, the two-score cluster covered 8/30 holdout matches.  This
+    remains an observation strategy rather than a profitability guarantee.
+    """
+    odds = market.get("odds") or {}
+    if len(odds) < len(CORRECT_SCORE_KEYS):
+        return {
+            "available": False,
+            "market": "比分",
+            "actionable": False,
+            "recommendation_status": "数据不足",
+            "reason": "竞彩比分赔率不完整，不生成比分串候选。",
+            "selections": [],
+        }
+    euro = ((match_input.get("euro") or {}).get("current") or [])
+    if len(euro) < 3:
+        return {
+            "available": True,
+            "market": "比分",
+            "actionable": False,
+            "recommendation_status": "条件不足",
+            "reason": "缺少即时欧赔，无法确认比分串热门方向。",
+            "selections": [],
+        }
+    home_odds, away_odds = _number(euro[0]), _number(euro[2])
+    total = ((match_input.get("total") or {}).get("current") or [])
+    total_line = _number(total[1]) if len(total) > 1 else None
+    asian = match_input.get("asian") or {}
+    initial = asian.get("initial") or []
+    current = asian.get("current") or []
+    current_line = _asian_home_line(
+        current[1] if len(current) > 1 else None
+    )
+    initial_line = _asian_home_line(
+        initial[1] if len(initial) > 1 else None
+    )
+    if home_odds is None or away_odds is None or current_line is None:
+        return {
+            "available": True,
+            "market": "比分",
+            "actionable": False,
+            "recommendation_status": "条件不足",
+            "reason": "缺少完整欧赔或亚洲盘口，无法生成比分串候选。",
+            "selections": [],
+        }
+    favorite = "home" if home_odds < away_odds else "away"
+    favorite_odds = home_odds if favorite == "home" else away_odds
+    current_depth = current_line if favorite == "home" else -current_line
+    initial_depth = (
+        initial_line if favorite == "home" else -initial_line
+    ) if initial_line is not None else None
+    direction_aligned = current_depth > 0
+    line_fit = 0.5 <= current_depth <= 0.75
+    total_fit = total_line is not None and abs(total_line - 2.5) < 0.01
+    odds_fit = 1.51 <= favorite_odds <= 1.80
+    no_retreat = (
+        initial_depth is None or current_depth >= initial_depth - 0.01
+    )
+    labels = ["1:0", "1:1"] if favorite == "home" else ["0:1", "1:1"]
+    probabilities = _no_vig(odds)
+    selections = [{
+        "selection": label,
+        "odds": round(float(odds[label]), 3),
+        "movement": int((market.get("flags") or {}).get(label) or 0),
+        "market_probability": round(probabilities.get(label, 0), 2),
+    } for label in labels if _number(odds.get(label)) is not None]
+    actionable = all((
+        direction_aligned, line_fit, total_fit, odds_fit, no_retreat,
+        len(selections) == 2,
+    ))
+    failed = []
+    if not total_fit:
+        failed.append("大小球不是2.5")
+    if not line_fit or not direction_aligned:
+        failed.append("亚盘未对齐半球/半一")
+    if not odds_fit:
+        failed.append("热门胜赔不在1.51-1.80")
+    if not no_retreat:
+        failed.append("亚洲盘口发生退盘")
+    return {
+        "available": True,
+        "market": "比分",
+        "model_version": "score-cluster-v1-low-total",
+        "actionable": actionable,
+        "recommendation_status": "比分串候选" if actionable else "观察",
+        "favorite": favorite,
+        "favorite_odds": round(favorite_odds, 3),
+        "asian_depth": round(current_depth, 2),
+        "initial_asian_depth": (
+            round(initial_depth, 2) if initial_depth is not None else None
+        ),
+        "total_line": total_line,
+        "selections": selections if actionable else [],
+        "historical_validation": {
+            "training_window": "2026-03-01/2026-07-31",
+            "holdout_window": "2026-08-01/2026-09-13",
+            "holdout_sample": 30,
+            "holdout_hits": 8,
+            "holdout_coverage": 26.7,
+        },
+        "reason": (
+            "低总球比分簇：热门胜赔1.51-1.80、亚盘半球/半一且未退盘、"
+            "大小球2.5，覆盖热门1球小胜与1:1。"
+            if actionable else "；".join(failed) or "未达到比分串条件"
+        ),
+    }
 
 
 def _poisson_distribution(expectation: float) -> Dict[str, float]:
@@ -565,6 +706,7 @@ def build_special_market_analysis(
     match_input: Dict[str, Any],
 ) -> Dict[str, Any]:
     snapshot = calculator_snapshot if isinstance(calculator_snapshot, dict) else {}
+    score_market = snapshot.get("correct_score") or {}
     total_market = snapshot.get("total_goals") or {}
     half_full_market = snapshot.get("half_full") or {}
     return {
@@ -572,6 +714,10 @@ def build_special_market_analysis(
         "source": snapshot.get("source") or "sporttery-calculator",
         "match_number": snapshot.get("match_number") or match_input.get("match_number"),
         "calculator_match_id": snapshot.get("calculator_match_id"),
+        "correct_score": {
+            "snapshot": score_market,
+            **_correct_score_analysis(score_market, match_input),
+        },
         "total_goals": {
             "snapshot": total_market,
             **_total_goal_analysis(total_market, match_input),
@@ -602,7 +748,7 @@ def settle_special_markets(
     source: Dict[str, Any],
     match: Dict[str, Any],
 ) -> List[Dict[str, Any]]:
-    """Settle saved primary/secondary selections for both special markets."""
+    """Settle saved score, total-goals and half/full selections."""
     analysis = (source.get("analysis") or {}).get("special_markets") or (
         (source.get("input_snapshot") or {}).get("special_markets") or {}
     )
@@ -610,19 +756,39 @@ def settle_special_markets(
     half_score = _score_pair(match, half=True)
     finished = match.get("status") in (2, "2") and full_score is not None
     rows: List[Dict[str, Any]] = []
-    for key, title in (("total_goals", "总进球"), ("half_full", "半全场")):
+    for key, title in (
+        ("correct_score", "比分"),
+        ("total_goals", "总进球"),
+        ("half_full", "半全场"),
+    ):
         model = analysis.get(key) or {}
         if not model.get("available"):
             continue
-        primary = model.get("primary") or {}
-        secondary = model.get("secondary") or {}
+        if key == "correct_score":
+            score_selections = [
+                dict(item) for item in model.get("selections") or []
+                if item.get("selection")
+            ][:2]
+            if not model.get("actionable") or not score_selections:
+                continue
+            primary = score_selections[0]
+            secondary = (
+                score_selections[1] if len(score_selections) > 1 else {}
+            )
+        else:
+            primary = model.get("primary") or {}
+            secondary = model.get("secondary") or {}
         actual = None
-        if finished and key == "total_goals":
+        if finished and key == "correct_score":
+            actual = f"{full_score[0]}:{full_score[1]}"
+        elif finished and key == "total_goals":
             goals = sum(full_score or (0, 0))
             actual = str(goals) if goals <= 6 else "7+"
         elif finished and key == "half_full" and half_score is not None:
             actual = _outcome(half_score) + _outcome(full_score)
-        result_pending = not finished or (key == "half_full" and half_score is None)
+        result_pending = (
+            not finished or (key == "half_full" and half_score is None)
+        )
         selections = [
             dict(item) for item in (primary, secondary)
             if item.get("selection")

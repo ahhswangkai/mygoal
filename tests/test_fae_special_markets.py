@@ -1,6 +1,7 @@
 import unittest
 
 from football_ai.special_markets import (
+    CORRECT_SCORE_KEYS,
     build_special_market_analysis,
     parse_calculator_payload,
     settle_special_markets,
@@ -15,6 +16,14 @@ def calculator_payload():
                 "subMatchList": [{
                     "matchId": "calc-1",
                     "matchNumStr": "周二003",
+                    "crs": {
+                        **{
+                            key: 6 + index
+                            for index, key in enumerate(CORRECT_SCORE_KEYS)
+                        },
+                        "updateDate": "2026-09-01",
+                        "updateTime": "12:29:00",
+                    },
                     "ttg": {
                         **{f"s{i}": value for i, value in enumerate(
                             (18, 7, 4, 3.5, 5, 8, 13, 20)
@@ -43,6 +52,7 @@ class SpecialMarketTests(unittest.TestCase):
         row = snapshots["周二003"]
 
         self.assertEqual(row["calculator_match_id"], "calc-1")
+        self.assertEqual(row["correct_score"]["odds"]["1:0"], 6.0)
         self.assertEqual(row["total_goals"]["odds"]["7+"], 20.0)
         self.assertEqual(row["total_goals"]["flags"]["2"], -1)
         self.assertEqual(
@@ -66,6 +76,41 @@ class SpecialMarketTests(unittest.TestCase):
             result["total_goals"]["primary"]["model_probability"],
             result["total_goals"]["secondary"]["model_probability"],
         )
+
+    def test_builds_low_total_score_cluster_from_complete_markets(self):
+        snapshot = parse_calculator_payload(calculator_payload())["周二003"]
+        result = build_special_market_analysis(snapshot, {
+            "euro": {"current": [1.65, 3.5, 5.0]},
+            "asian": {
+                "initial": [0.9, "半球", 0.95],
+                "current": [0.86, "半球/一球", 1.0],
+            },
+            "total": {"current": [0.9, 2.5, 0.95]},
+        })["correct_score"]
+
+        self.assertTrue(result["available"])
+        self.assertTrue(result["actionable"])
+        self.assertEqual(
+            [item["selection"] for item in result["selections"]],
+            ["1:0", "1:1"],
+        )
+        self.assertEqual(result["historical_validation"]["holdout_hits"], 8)
+
+    def test_score_cluster_rejects_retreat_and_non_25_total(self):
+        snapshot = parse_calculator_payload(calculator_payload())["周二003"]
+        result = build_special_market_analysis(snapshot, {
+            "euro": {"current": [1.65, 3.5, 5.0]},
+            "asian": {
+                "initial": [0.9, "一球", 0.95],
+                "current": [0.86, "半球", 1.0],
+            },
+            "total": {"current": [0.9, 2.75, 0.95]},
+        })["correct_score"]
+
+        self.assertFalse(result["actionable"])
+        self.assertEqual(result["selections"], [])
+        self.assertIn("大小球不是2.5", result["reason"])
+        self.assertIn("退盘", result["reason"])
 
     def test_total_goals_low_regime_uses_lower_tail_as_secondary(self):
         snapshot = parse_calculator_payload(calculator_payload())["周二003"]
