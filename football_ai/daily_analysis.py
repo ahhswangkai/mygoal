@@ -16,7 +16,7 @@ from .special_markets import build_special_market_analysis
 from .version import ENGINE_VERSION
 
 
-DAILY_PROMPT_VERSION = "five-market-daily-v38-one-goal-alignment"
+DAILY_PROMPT_VERSION = "five-market-daily-v39-long-term-memory"
 
 OFFICIAL_PLAY_SELECTIONS = {"平局", "让平"}
 OFFICIAL_MIN_BET_SCORE = 70.0
@@ -3714,6 +3714,7 @@ class FAEDailyAIAnalyzer:
             "若欧赔和亚盘同时推向客胜，但current_asian_risk出现升盘高水/上盘升水，且竞彩主队受让后的让胜为低赔最低项，必须把客胜降级为方向观察或不下注，不得作为主选胆。",
             "若联赛画像与当天盘口冲突，以当天盘口、数据质量和阵容事实为准，并在风险中说明冲突。",
             "单日观察项属于低权重提醒；只有validated_patterns中的跨日模式可以作为辅助校正，且必须让位于当天盘口。",
+            "复盘记忆分为recent_observations近期观察与全历史长期记忆；按relevance、support_ratio与effective_evidence评估长期模式，contested_patterns和dormant_patterns只能作待核验参考。long_term_performance仅描述历史表现，不是本场预测概率；跨日重复不等于样本外有效。",
             "当validated_pattern_count为0时，代表没有经过跨日和足量样本验证的规则；禁止使用历史0%命中区间、严禁纳入、全部排除或类似绝对结论。",
             "单日某玩法0/N或N/N只说明当天小样本结果，不得外推到赔率区间或当天其他比赛；是否入选必须由当日五项市场证据独立决定。",
             "星级必须横向拉开：五星最多1场且要求多个市场一致、无明显数据异常；四星到四星半最多3场；有欧亚背离、极端水位或盘口跳档的场次最高3.5星。",
@@ -3829,6 +3830,7 @@ class FAEDailyAIAnalyzer:
             "current_asian_risk只描述本场赛前水位结构；只有联赛画像中相同asian_risk_patterns模式样本不少于20时才能辅助降级或增加防选，禁止把市场预警写成赛果真实原因。",
             "欧赔和亚盘同时推向客胜但触发升盘高水/上盘升水，且竞彩主队受让后的让胜为低赔最低项时，客胜必须降级为观察或不下注。",
             "仅validated_patterns可作为跨日辅助校正，近期观察项不能单独改变推荐。",
+            "长期模式来自全部历史复盘而非最近7天；参考其时间衰减relevance、支持占比support_ratio和有效证据effective_evidence。争议或休眠模式不参与调权，历史累计命中率不能替代本场概率。",
             "单日0/N或N/N属于小样本，不得据此将当前比赛定义为严禁、必选、高危赔率区间或全部排除。",
             "存在欧亚背离、极端水位或大小球跳档时自动降级，最高3.5星；缺少多项基本面时不得给五星。",
             "推荐排序优先使用bet_score与value_score，而不是只按胜率；no_bet场次只保留方向观察，必须进入避开池。",
@@ -3916,6 +3918,7 @@ class FAEDailyAIAnalyzer:
             "亚盘不配合时胜负方向必须硬降级为观察，不得在摘要里重新包装成可下注推荐。",
             "严格区分推荐池：客队小胜只放客胜方向且预计客队净胜1球的比赛；竞彩让负无论主客强弱都只能放入handicap_lose池。",
             "结合历史复盘记忆检查是否重复犯错，但记忆不能替代当天盘口，也不能把单日赛果当成稳定规律。",
+            "长期记忆覆盖全部历史，近期观察只保留短期细节；优先核验当前盘口是否匹配validated_patterns，contested_patterns和dormant_patterns不用于改变推荐，long_term_performance不能当作本场概率。",
             "validated_pattern_count为0时不得输出历史0%命中区间、严禁纳入、全部排除等绝对规则；单日小样本只能作为风险备注。",
             "横向校准星级：五星最多1场，四星到四星半最多3场；欧亚背离、极端水位或盘口跳档场次不得进入核心高星推荐。",
             "逐场主选已经给出，防选可能为观望；摘要池不得为凑双选自行补充第二方向，若采用有效防选必须明确写为防范，不得与主选并列成两个高置信结论。",

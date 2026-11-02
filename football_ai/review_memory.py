@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+from datetime import date
 from hashlib import sha256
 import json
 import re
 from typing import Any, Dict, Iterable, List
 
 
-REVIEW_MEMORY_VERSION = "review-memory-v3-special-market-samples"
+REVIEW_MEMORY_VERSION = "review-memory-v4-long-term"
 
 
 def _text(value: Any, limit: int) -> str:
@@ -41,6 +42,163 @@ def _candidate_key(candidate: Dict[str, Any]) -> tuple:
     return scope, action, target
 
 
+def _historical_performance(rows, target_date, half_life_days):
+    """Describe all historical outcomes without treating them as predictions."""
+    paths = {
+        "singles": ("singles",), "handicap": ("handicap",),
+        "two_option": ("two_option", "overall"),
+        "ordinary_draw_radar": ("draw_radar", "ordinary_draw"),
+        "handicap_draw_radar": ("draw_radar", "handicap_draw"),
+        "total_goals_primary": ("special_markets", "total_goals", "primary"),
+        "half_full_primary": ("special_markets", "half_full", "primary"),
+    }
+    result = {}
+    for name, path in paths.items():
+        settled = hits = decided = stake = returns = 0.0
+        weighted_decided = weighted_hits = weighted_stake = weighted_returns = 0.0
+        for review in rows:
+            metric = review.get("summary") or {}
+            for key in path:
+                metric = metric.get(key) or {}
+            count = _number(metric.get("settled"))
+            push = _number(metric.get("pushes"))
+            wins = _number(metric.get("hits"))
+            age = (date.fromisoformat(target_date) - date.fromisoformat(review["owner_date"][:10])).days
+            weight = 0.5 ** (age / half_life_days)
+            settled += count
+            decided += max(0, count - push)
+            hits += wins
+            weighted_decided += max(0, count - push) * weight
+            weighted_hits += wins * weight
+            cost = _number(metric.get("equal_stake") if name == "two_option" else metric.get("stake"))
+            payout = _number(metric.get("equal_stake_return") if name == "two_option" else metric.get("return"))
+            stake += cost
+            returns += payout
+            weighted_stake += cost * weight
+            weighted_returns += payout * weight
+        if settled:
+            result[name] = {
+                "settled": int(settled), "hits": int(hits),
+                "hit_rate": round(hits / decided * 100, 1) if decided else None,
+                "roi": round((returns / stake - 1) * 100, 1) if stake else None,
+                "effective_samples": round(weighted_decided, 1),
+                "weighted_hit_rate": round(weighted_hits / weighted_decided * 100, 1) if weighted_decided else None,
+                "weighted_roi": round((weighted_returns / weighted_stake - 1) * 100, 1) if weighted_stake else None,
+            }
+    return result
+
+
+def _long_term_patterns(rows, target_date, half_life_days,
+                        minimum_pattern_days, minimum_evidence, recent_dates):
+    """Accumulate historical evidence; keep contradictory/stale memories visible."""
+    grouped: Dict[tuple, Dict[str, Any]] = {}
+    if not rows:
+        return [], [], []
+    cutoff = date.fromisoformat(target_date)
+    for review in rows:
+        owner_date = str(review.get("owner_date") or "")[:10]
+        age = max(0, (cutoff - date.fromisoformat(owner_date)).days)
+        weight = 0.5 ** (age / half_life_days)
+        known_ids = {
+            str(row.get("match_id")) for row in review.get("match_results") or []
+            if row.get("match_id")
+        }
+        for candidate in (review.get("ai_deep_review") or {}).get("learning_candidates") or []:
+            if not isinstance(candidate, dict):
+                continue
+            key = _candidate_key(candidate)
+            if not all(key) or key[1] not in {"increase", "decrease"}:
+                continue
+            evidence = {
+                str(value) for value in candidate.get("evidence_match_ids") or []
+                if value not in (None, "")
+                and ("match_results" not in review or str(value) in known_ids)
+            }
+            if not evidence:
+                continue
+            item = grouped.setdefault(key, {
+                "scope": key[0], "action": key[1],
+                "target": _text(candidate.get("target"), 160),
+                "dates": set(), "evidence": {}, "reasons": [],
+                "daily_deltas": {}, "minimum_samples": 10,
+            })
+            item["dates"].add(owner_date)
+            # Rows arrive newest-first: replaying a match cannot inflate support.
+            for match_id in evidence:
+                item["evidence"].setdefault(match_id, (owner_date, weight))
+            reason = _text(candidate.get("reason"), 240)
+            if reason and reason not in item["reasons"]:
+                item["reasons"].append(reason)
+            item["daily_deltas"].setdefault(
+                owner_date, (_number(candidate.get("delta")), weight)
+            )
+            try:
+                required = int(candidate.get("minimum_samples") or 10)
+            except (TypeError, ValueError):
+                required = 10
+            item["minimum_samples"] = max(item["minimum_samples"], required)
+
+    validated, contested, dormant = [], [], []
+    for key, item in grouped.items():
+        support_days = {day for day, _ in item["evidence"].values()}
+        if (len(support_days) < minimum_pattern_days
+                or len(item["evidence"]) < max(minimum_evidence, item["minimum_samples"])):
+            continue
+        opposite = grouped.get((key[0], "decrease" if key[1] == "increase" else "increase", key[2])) or {}
+        evidence_weight = sum(weight for _, weight in item["evidence"].values())
+        opposing_weight = sum(weight for _, weight in (opposite.get("evidence") or {}).values())
+        support_ratio = evidence_weight / (evidence_weight + opposing_weight)
+        recent_weight = sum(
+            weight for day, weight in item["evidence"].values() if day in recent_dates
+        )
+        recent_opposing = sum(
+            weight for day, weight in (opposite.get("evidence") or {}).values()
+            if day in recent_dates
+        )
+        recent_opposing_days = {
+            day for day, _ in (opposite.get("evidence") or {}).values()
+        } & recent_dates
+        recent_conflict = (
+            len(recent_opposing_days) >= minimum_pattern_days
+            and recent_opposing > recent_weight
+        )
+        first_seen, last_seen = min(support_days), max(support_days)
+        days_since_seen = (cutoff - date.fromisoformat(last_seen)).days
+        relevance = 0.5 ** (days_since_seen / half_life_days)
+        delta_weight = sum(weight for _, weight in item["daily_deltas"].values())
+        delta = sum(value * weight for value, weight in item["daily_deltas"].values()) / delta_weight
+        pattern = {
+            "pattern_id": sha256(":".join(key).encode()).hexdigest()[:16],
+            "scope": item["scope"], "target": item["target"], "action": item["action"],
+            "suggested_delta": round(delta * relevance * support_ratio, 4),
+            "observed_days": len(support_days), "evidence_matches": len(item["evidence"]),
+            "effective_evidence": round(evidence_weight, 2),
+            "opposing_evidence_matches": len(opposite.get("evidence") or {}),
+            "support_ratio": round(support_ratio, 3),
+            "first_seen": first_seen, "last_seen": last_seen,
+            "days_since_seen": days_since_seen,
+            "relevance": round(relevance, 4),
+            "source_dates": sorted(support_days)[-10:],
+            "reason": "；".join(item["reasons"][:3])[:500],
+            "validation_basis": "cross-day-review-evidence",
+            "predictive_validation": False,
+        }
+        if support_ratio < 2 / 3 or recent_conflict:
+            pattern.update({"status": "contested-memory", "usage": "reference-only"})
+            contested.append(pattern)
+        elif days_since_seen > half_life_days * 3:
+            pattern.update({"status": "dormant-memory", "usage": "reference-only"})
+            dormant.append(pattern)
+        else:
+            pattern.update({"status": "historically-validated-memory", "usage": "auxiliary-only"})
+            validated.append(pattern)
+    for patterns in (validated, contested, dormant):
+        patterns.sort(key=lambda item: (
+            item["effective_evidence"] * item["support_ratio"], item["last_seen"]
+        ), reverse=True)
+    return validated, contested, dormant
+
+
 def build_review_memory(
     reviews: Iterable[Dict[str, Any]],
     before_date: str,
@@ -49,6 +207,8 @@ def build_review_memory(
     observation_days: int = 3,
     minimum_pattern_days: int = 2,
     minimum_evidence: int = 10,
+    half_life_days: int = 90,
+    max_patterns: int = 10,
 ) -> Dict[str, Any]:
     """Build non-binding observations plus cross-day validated patterns.
 
@@ -56,20 +216,32 @@ def build_review_memory(
     eligible. This keeps backtests and reruns free from future-result leakage.
     """
     target_date = str(before_date or "")[:10]
-    eligible = []
+    by_date = {}
     for review in reviews:
         owner_date = str(review.get("owner_date") or "")[:10]
-        deep = review.get("ai_deep_review") or {}
-        if (
-            owner_date
-            and owner_date < target_date
-            and deep.get("status") == "completed"
-        ):
-            eligible.append(review)
+        try:
+            date.fromisoformat(owner_date)
+            date.fromisoformat(target_date)
+        except ValueError:
+            continue
+        if owner_date and owner_date < target_date:
+            previous = by_date.get(owner_date)
+            if previous is None or str(review.get("reviewed_at") or "") > str(previous.get("reviewed_at") or ""):
+                by_date[owner_date] = review
+    # Select the last review first; an older completed diagnosis must not
+    # replace the final run when that final diagnosis is pending or stale.
+    by_date = {
+        day: review for day, review in by_date.items()
+        if (review.get("ai_deep_review") or {}).get("status") == "completed"
+        and not review.get("ai_deep_review_stale")
+    }
+    eligible = list(by_date.values())
     eligible.sort(
         key=lambda item: str(item.get("owner_date") or ""),
         reverse=True,
     )
+    # The old window limits recent detail only. Long-term evidence never
+    # expires at a fixed lookback boundary.
     rows = eligible[:max(1, int(window_days or 7))]
 
     observations = []
@@ -154,72 +326,12 @@ def build_review_memory(
             },
         })
 
-    grouped: Dict[tuple, Dict[str, Any]] = {}
-    for review in rows:
-        owner_date = str(review.get("owner_date") or "")[:10]
-        deep = review.get("ai_deep_review") or {}
-        for candidate in deep.get("learning_candidates") or []:
-            if not isinstance(candidate, dict):
-                continue
-            key = _candidate_key(candidate)
-            if not all(key):
-                continue
-            item = grouped.setdefault(key, {
-                "scope": key[0],
-                "action": key[1],
-                "target": _text(candidate.get("target"), 160),
-                "dates": set(),
-                "evidence": set(),
-                "reasons": [],
-                "deltas": [],
-                "minimum_samples": 10,
-            })
-            item["dates"].add(owner_date)
-            item["evidence"].update(
-                f"{owner_date}:{value}"
-                for value in candidate.get("evidence_match_ids") or []
-                if value not in (None, "")
-            )
-            reason = _text(candidate.get("reason"), 240)
-            if reason and reason not in item["reasons"]:
-                item["reasons"].append(reason)
-            item["deltas"].append(_number(candidate.get("delta")))
-            try:
-                required = int(candidate.get("minimum_samples") or 10)
-            except (TypeError, ValueError):
-                required = 10
-            item["minimum_samples"] = max(
-                item["minimum_samples"], required
-            )
-
-    validated_patterns = []
-    for item in grouped.values():
-        required_evidence = max(
-            int(minimum_evidence or 10),
-            int(item["minimum_samples"]),
-        )
-        if (
-            len(item["dates"]) < max(2, int(minimum_pattern_days or 2))
-            or len(item["evidence"]) < required_evidence
-        ):
-            continue
-        deltas = item["deltas"] or [0]
-        validated_patterns.append({
-            "scope": item["scope"],
-            "target": item["target"],
-            "action": item["action"],
-            "suggested_delta": round(sum(deltas) / len(deltas), 3),
-            "observed_days": len(item["dates"]),
-            "evidence_matches": len(item["evidence"]),
-            "source_dates": sorted(item["dates"]),
-            "reason": "；".join(item["reasons"][:3])[:500],
-            "status": "historically-validated-memory",
-        })
-    validated_patterns.sort(
-        key=lambda item: (
-            item["observed_days"], item["evidence_matches"]
-        ),
-        reverse=True,
+    half_life_days = max(30, int(half_life_days or 90))
+    validated_patterns, contested_patterns, dormant_patterns = _long_term_patterns(
+        eligible, target_date, half_life_days,
+        max(2, int(minimum_pattern_days or 2)),
+        max(10, int(minimum_evidence or 10)),
+        {str(review.get("owner_date") or "")[:10] for review in rows},
     )
 
     source_dates = sorted({
@@ -229,12 +341,28 @@ def build_review_memory(
         "version": REVIEW_MEMORY_VERSION,
         "before_date": target_date,
         "source_dates": source_dates,
-        "review_days": len(rows),
+        "review_days": len(eligible),
+        "recent_review_days": len(rows),
+        "history_review_days": len(eligible),
+        "history_range": {
+            "first_date": min(by_date, default=None),
+            "last_date": max(by_date, default=None),
+        },
         "observation_count": len(observations),
         "validated_pattern_count": len(validated_patterns),
+        "contested_pattern_count": len(contested_patterns),
+        "dormant_pattern_count": len(dormant_patterns),
         "recent_observations": observations,
-        "validated_patterns": validated_patterns[:10],
+        "long_term_performance": _historical_performance(eligible, target_date, half_life_days),
+        "validated_patterns": validated_patterns[:max(1, int(max_patterns or 10))],
+        "contested_patterns": contested_patterns[:5],
+        "dormant_patterns": dormant_patterns[:5],
         "governance": {
+            "history_scope": "all-available-before-date",
+            "recent_window_days": max(1, int(window_days or 7)),
+            "half_life_days": half_life_days,
+            "long_term_memory_retained": True,
+            "cross_day_repetition_is_not_predictive_validation": True,
             "future_data_excluded": True,
             "observations_are_non_binding": True,
             "absolute_exclusions_forbidden": True,
@@ -248,6 +376,9 @@ def build_review_memory(
             "instruction": (
                 "近期观察只用于检查同类风险，不得单独决定赛果；"
                 "单日0%或100%命中率均不得外推为禁选或必选规则；"
+                "长期记忆使用全部历史复盘，按时效衰减；冲突或休眠模式只作参考；"
+                "跨日重复证据不等于样本外预测有效，不能宣称命中率提升；"
+                "long_term_performance只是历史表现汇总，不能把整体命中率当作本场概率；"
                 "已验证模式也必须让位于当天真实盘口和数据质量。"
             ),
         },

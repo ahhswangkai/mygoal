@@ -1698,6 +1698,34 @@ def _review_fae_daily_ai(
     return saved.get('review') if saved.get('saved') else None
 
 
+def _run_scheduled_fae_reviews(run_ai=False):
+    """Refresh settlement independently of upstream crawling and Ark calls."""
+    if not mongo_storage:
+        return {'reviewed': 0, 'failed': []}
+    reviewed = 0
+    failed = []
+    dates = mongo_storage.get_fae_daily_ai_snapshot_dates(
+        14, eligible_only=False
+    )
+    for owner_date in sorted(dates, reverse=True):
+        try:
+            review = _review_fae_daily_ai(owner_date, run_ai=run_ai)
+            if review:
+                reviewed += 1
+                if run_ai:
+                    _push_wecom_ai_review(review)
+        except Exception:
+            failed.append(owner_date)
+            app.logger.exception('FAE scheduled review failed for %s', owner_date)
+    if not run_ai:
+        for owner_date in mongo_storage.get_fae_draw_snapshot_dates(14):
+            try:
+                _review_fae_draw_plan(owner_date)
+            except Exception:
+                app.logger.exception('FAE draw review failed for %s', owner_date)
+    return {'reviewed': reviewed, 'failed': failed}
+
+
 def _run_fae_shadow_backtest(requested_days=28, save=True):
     """Replay old/new guards on immutable prematch snapshots."""
     if not mongo_storage:
@@ -3575,32 +3603,9 @@ def _crawl_latest():
         if mongo_storage:
             owner_date = datetime.now().strftime('%Y-%m-%d')
             try:
-                ai_review_count = 0
-                for snapshot_date in (
-                    mongo_storage.get_fae_daily_ai_snapshot_dates(
-                        14, eligible_only=False
-                    )
-                ):
-                    daily_review = _review_fae_daily_ai(snapshot_date)
-                    if daily_review:
-                        ai_review_count += 1
-                        _push_wecom_ai_review(daily_review)
-                if ai_review_count:
-                    print(
-                        f"✅ FAE AI主复盘: 更新 {ai_review_count} 天"
-                    )
-            except Exception as exc:
-                print(f"❌ FAE AI主复盘失败: {str(exc)}")
-            try:
                 _snapshot_fae_draw_plan(owner_date)
-                draw_review_count = 0
-                for snapshot_date in mongo_storage.get_fae_draw_snapshot_dates(7):
-                    if _review_fae_draw_plan(snapshot_date):
-                        draw_review_count += 1
-                if draw_review_count:
-                    print(f"✅ FAE 平/让平专项复盘: 更新 {draw_review_count} 天")
             except Exception as exc:
-                print(f"❌ FAE 平/让平快照或复盘失败: {str(exc)}")
+                print(f"❌ FAE 平/让平快照失败: {str(exc)}")
 
         # 5. 企业微信比赛提醒
         def to_float(x):
@@ -3652,6 +3657,24 @@ def _start_scheduler():
             if scheduler is None:
                 scheduler = BackgroundScheduler()
                 scheduler.add_job(_crawl_latest, CronTrigger(minute='*/15'), id='crawl_every_15m', replace_existing=True)
+                scheduler.add_job(
+                    _run_scheduled_fae_reviews,
+                    CronTrigger(minute='*/5'),
+                    id='fae_review_settlement',
+                    replace_existing=True,
+                    coalesce=True,
+                    max_instances=1,
+                    next_run_time=datetime.now() + timedelta(seconds=15),
+                )
+                scheduler.add_job(
+                    _run_scheduled_fae_reviews,
+                    CronTrigger(minute='2,17,32,47'),
+                    kwargs={'run_ai': True},
+                    id='fae_ai_deep_review',
+                    replace_existing=True,
+                    coalesce=True,
+                    max_instances=1,
+                )
                 scheduler.add_job(
                     _run_scheduled_fundamentals_prefetch,
                     CronTrigger(minute='*/10'),
@@ -3727,6 +3750,7 @@ def _start_scheduler():
                     "✅ 定时任务调度器已启动 "
                     f"(每15分钟刷新赔率，每10分钟低频补齐基本面，"
                     f"每5分钟结算投注，"
+                    f"每5分钟独立刷新复盘，每15分钟AI深度复盘，"
                     f"每{prematch_check_minutes}分钟检查开赛前30分钟研判，"
                     f"每2小时刷新影子回测，每日06:23训练监督模型，"
                     f"固定全日研判{baseline_label})"

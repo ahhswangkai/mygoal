@@ -125,6 +125,98 @@ def summarize_ai_settled(rows: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
     }
 
 
+def analytical_selection_result(row: Dict[str, Any]) -> Dict[str, Any]:
+    """Recover an observation's hypothetical result, including legacy rows.
+
+    Keep the stored no-bet decision intact for risk-control diagnosis. Only
+    the all-analysis statistics use this copy; formal bets use their own rows.
+    """
+    result = dict(row)
+    if (
+        row.get("status") == "skipped"
+        and row.get("observation_status") in {"hit", "miss", "push"}
+    ):
+        status = row["observation_status"]
+        odds = _number(row.get("odds"))
+        payout = (
+            odds if status == "hit"
+            else 1.0 if status == "push" else 0.0
+        )
+        result.update({
+            "status": status,
+            "return": round(payout, 2) if payout is not None else None,
+            "profit": round(payout - 1, 2) if payout is not None else None,
+        })
+    return result
+
+
+def summarize_analysis_selections(rows: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
+    rows = list(rows)
+    return {
+        **summarize_ai_settled(analytical_selection_result(row) for row in rows),
+        "includes_observations": True,
+        "observation_count": sum(bool(row.get("no_bet")) for row in rows),
+    }
+
+
+def review_combination_rows(review: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Use current draw ticket lines, falling back to legacy global combos."""
+    tickets = [
+        ticket for ticket in review.get("draw_ticket_results") or []
+        if ticket.get("line_results")
+    ]
+    if not tickets:
+        return list(review.get("combo_results") or [])
+    rows = []
+    for ticket in tickets:
+        by_key = {
+            (str(pick.get("match_id") or ""), pick.get("selection")): pick
+            for pick in ticket.get("picks") or []
+        }
+        for line in ticket["line_results"]:
+            rows.append({
+                **line,
+                "key": f"{ticket.get('key')}-{line.get('key')}",
+                "ticket_key": ticket.get("key"),
+                "reason": ticket.get("title"),
+                "picks": line.get("picks") or [
+                    by_key.get((str(ref.get("match_id") or ""), ref.get("selection")), ref)
+                    for ref in line.get("pick_refs") or []
+                ],
+            })
+    return rows
+
+
+def normalize_daily_ai_review(review: Dict[str, Any]) -> Dict[str, Any]:
+    """Rebuild display statistics on read so old reviews need no Ark rerun."""
+    result = dict(review)
+    summary = dict(review.get("summary") or {})
+    two_option = list(review.get("two_option_results") or [])
+    unique_pairs = unique_two_option_rows(two_option)
+    combos = review_combination_rows(review)
+    summary.update({
+        "singles": summarize_analysis_selections(review.get("match_results") or []),
+        "handicap": summarize_analysis_selections(review.get("handicap_results") or []),
+        "two_option": {
+            **(summary.get("two_option") or {}),
+            "overall": summarize_two_option(unique_pairs),
+            "raw_rows": len(two_option),
+            "unique_matches": len(unique_pairs),
+        },
+        "combos": summarize_ai_settled(combos),
+        "by_play": {
+            play: summarize_ai_settled(row for row in combos if row.get("play") == play)
+            for play in ("2串1", "3串1")
+        },
+    })
+    result.update({
+        "summary": summary,
+        "combo_results": combos,
+        "statistics_version": "all-analysis-v2",
+    })
+    return result
+
+
 def summarize_two_option(rows: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
     """Summarize coverage accuracy for primary + hedge selections.
 
@@ -516,7 +608,7 @@ class FAEDailyAIReviewEngine:
         conflicts = [
             row for row in match_results if row.get("guardrail_triggered")
         ]
-        return {
+        return normalize_daily_ai_review({
             "owner_date": str(snapshot.get("owner_date") or "")[:10],
             "run_id": snapshot.get("run_id"),
             "engine_version": snapshot.get("engine_version"),
@@ -546,7 +638,7 @@ class FAEDailyAIReviewEngine:
             "draw_ticket_results": draw_ticket_results,
             "conflicts": conflicts,
             "summary": {
-                "singles": summarize_ai_settled(match_results),
+                "singles": summarize_analysis_selections(match_results),
                 "official_bets": summarize_ai_settled(
                     official_bet_results
                 ),
@@ -556,7 +648,7 @@ class FAEDailyAIReviewEngine:
                 "high_confidence_singles": summarize_ai_settled(
                     high_confidence_single_results
                 ),
-                "handicap": summarize_ai_settled(handicap_results),
+                "handicap": summarize_analysis_selections(handicap_results),
                 "two_option": {
                     "overall": summarize_two_option(unique_two_options),
                     "raw_rows": len(two_option_results),
@@ -671,7 +763,7 @@ class FAEDailyAIReviewEngine:
                 },
                 "guardrail_conflicts": len(conflicts),
             },
-        }
+        })
 
     @staticmethod
     def _settle_score_mixed_parlay(
@@ -1420,7 +1512,7 @@ def aggregate_daily_ai_reviews(
     reviews: Iterable[Dict[str, Any]],
     strategy_weights: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    rows = list(reviews)
+    rows = [normalize_daily_ai_review(review) for review in reviews]
     matches: List[Dict[str, Any]] = []
     official_bet_results: List[Dict[str, Any]] = []
     official_parlay_results: List[Dict[str, Any]] = []
@@ -1484,6 +1576,13 @@ def aggregate_daily_ai_reviews(
             "review_owner_date": owner_date,
         } for row in review.get("draw_ticket_results") or [])
         conflicts.extend(review.get("conflicts") or [])
+    # The headline covers every analyzed direction, including no-bet rows.
+    # Stored risk-control verdicts remain unchanged for AI diagnosis.
+    matches = [analytical_selection_result(row) for row in matches]
+    handicap_results = [analytical_selection_result(row) for row in handicap_results]
+    unique_pairs = []
+    for review in rows:
+        unique_pairs.extend(unique_two_option_rows(review.get("two_option_results") or []))
     labels = sorted({
         row.get("selection") for row in matches
         if row.get("selection") in SUPPORTED_SELECTIONS
@@ -1498,20 +1597,27 @@ def aggregate_daily_ai_reviews(
     history_rows = list(history_rows_by_key.values())
     return {
         "primary_source": "fae-daily-ai",
+        "statistics_version": "all-analysis-v2",
+        "includes_observations": True,
+        "first_date": min((row.get("owner_date") or "" for row in rows), default=None),
+        "last_date": max((row.get("owner_date") or "" for row in rows), default=None),
+        "latest_reviewed_at": max((row.get("reviewed_at") or "" for row in rows), default=None),
         "reviewed_days": sum(
             1 for review in rows
             if ((review.get("summary") or {}).get("singles") or {}).get(
                 "settled", 0
             )
         ),
-        "singles": summarize_ai_settled(matches),
+        "singles": summarize_analysis_selections(matches),
         "official_bets": summarize_ai_settled(official_bet_results),
         "official_parlays": summarize_ai_settled(
             official_parlay_results
         ),
-        "handicap": summarize_ai_settled(handicap_results),
+        "handicap": summarize_analysis_selections(handicap_results),
         "two_option": {
-            "overall": summarize_two_option(two_option_results),
+            "overall": summarize_two_option(unique_pairs),
+            "raw_rows": len(two_option_results),
+            "unique_matches": len(unique_pairs),
             "main": summarize_two_option([
                 row for row in two_option_results
                 if row.get("result_type") == "two_option_main"

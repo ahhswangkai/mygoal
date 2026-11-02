@@ -81,15 +81,18 @@
               v-if="faeDailyAi.review_memory?.review_days"
               class="daily-review-memory"
             >
-              <strong>已加载复盘记忆</strong>
+              <strong>已加载长期复盘记忆</strong>
               <span>
-                {{ faeDailyAi.review_memory.review_days }} 天历史 ·
-                {{ faeDailyAi.review_memory.observation_count || 0 }} 个观察日 ·
+                累计 {{ faeDailyAi.review_memory.history_review_days || faeDailyAi.review_memory.review_days }} 个复盘日 ·
+                近期 {{ faeDailyAi.review_memory.observation_count || 0 }} 个观察日 ·
                 {{ faeDailyAi.review_memory.validated_pattern_count || 0 }} 条已验证模式
               </span>
               <small>
-                来源 {{ faeDailyAi.review_memory.source_dates?.join('、') }}；
-                单日结论只作风险提醒，不直接决定今天推荐
+                <template v-if="faeDailyAi.review_memory.history_range?.first_date">
+                  历史 {{ faeDailyAi.review_memory.history_range.first_date }} 至 {{ faeDailyAi.review_memory.history_range.last_date }}；
+                </template>
+                <template v-else>来源 {{ faeDailyAi.review_memory.source_dates?.join('、') }}；</template>
+                长期经验按时效衰减，冲突与休眠模式仅供核验
               </small>
             </div>
             <div v-if="historicalModelCount" class="goal-margin-loaded">
@@ -790,11 +793,15 @@
           <header class="panel-heading review-panel-heading">
             <div>
               <strong>AI 研判主复盘</strong>
-              <small>确定性结算 + 火山方舟深度诊断，AI 建议不直接修改正式权重</small>
+              <small>单场与让球参考包含观察、不下注场次，按赛前方向统一结算</small>
+              <small v-if="faeReview?.reviewed_at">本日复盘更新 {{ formatReviewTime(faeReview.reviewed_at) }}</small>
             </div>
             <div class="review-heading-actions">
               <span v-if="faeReview">{{ faeReview.completed ? '已完成' : `待定${faeReview.pending_matches}场` }}</span>
               <span v-else>等待赛果</span>
+              <button type="button" :disabled="reviewLoading" @click="loadReviewData(true)">
+                {{ reviewLoading ? '刷新中…' : '刷新数据' }}
+              </button>
               <button
                 v-if="dailyAiCanManage && faeReview"
                 type="button"
@@ -820,22 +827,25 @@
               <small>按整张二串一1单位统计</small>
             </article>
             <article>
-              <span>累计单场</span>
+              <span>全量单场（含观察）</span>
               <strong>{{ faeStats.singles?.hit_rate || 0 }}%</strong>
-              <small>{{ faeStats.singles?.hits || 0 }}/{{ faeStats.singles?.settled || 0 }} 命中</small>
+              <small>
+                {{ faeStats.singles?.hits || 0 }}/{{ faeStats.singles?.settled || 0 }} 命中
+                <template v-if="faeStats.singles?.ungraded"> · {{ faeStats.singles.ungraded }}场缺方向或数据</template>
+              </small>
             </article>
             <article>
-              <span>累计单场ROI</span>
+              <span>全量单场模拟ROI</span>
               <strong :class="metricClass(faeStats.singles?.roi)">{{ signedMetric(faeStats.singles?.roi) }}%</strong>
               <small>按每场1单位模拟</small>
             </article>
             <article>
-              <span>累计让球参考</span>
+              <span>让球参考（含观察）</span>
               <strong>{{ faeStats.handicap?.hit_rate || 0 }}%</strong>
               <small>{{ faeStats.handicap?.hits || 0 }}/{{ faeStats.handicap?.settled || 0 }} 命中</small>
             </article>
             <article>
-              <span>让球参考ROI</span>
+              <span>让球参考模拟ROI</span>
               <strong :class="metricClass(faeStats.handicap?.roi)">{{ signedMetric(faeStats.handicap?.roi) }}%</strong>
               <small>让胜 / 让平 / 让负独立结算</small>
             </article>
@@ -850,12 +860,12 @@
               <small>{{ faeStats.two_option?.handicap?.hits || 0 }}/{{ faeStats.two_option?.handicap?.settled || 0 }} 覆盖</small>
             </article>
             <article>
-              <span>2串1命中</span>
+              <span>平/让平2串1命中</span>
               <strong>{{ faeStats.by_play?.['2串1']?.hit_rate || 0 }}%</strong>
               <small>{{ faeStats.by_play?.['2串1']?.hits || 0 }}/{{ faeStats.by_play?.['2串1']?.settled || 0 }}</small>
             </article>
             <article>
-              <span>3串1命中</span>
+              <span>平/让平3串1命中</span>
               <strong>{{ faeStats.by_play?.['3串1']?.hit_rate || 0 }}%</strong>
               <small>{{ faeStats.by_play?.['3串1']?.hits || 0 }}/{{ faeStats.by_play?.['3串1']?.settled || 0 }}</small>
             </article>
@@ -876,6 +886,11 @@
               </small>
             </article>
           </div>
+          <p v-if="faeStats.first_date" class="review-statistics-note">
+            累计范围 {{ faeStats.first_date }} 至 {{ faeStats.last_date }}；双选每场计一次，串关按方案逐注统计。
+            <br v-if="faeStats.latest_reviewed_at">
+            <template v-if="faeStats.latest_reviewed_at">累计更新 {{ formatReviewTime(faeStats.latest_reviewed_at) }}</template>
+          </p>
 
           <section v-if="faeBacktest" class="shadow-backtest-card">
             <header>
@@ -1377,7 +1392,7 @@
           </template>
           <div v-else class="review-pending">
             <strong>尚未生成 AI 主复盘</strong>
-            <p>仅使用全场均未开赛时保存的 AI 研判；系统每15分钟自动结算单场和2、3关组合。</p>
+            <p>使用当天最后一次研判保留的赛前记录；赛果入库后，系统每5分钟自动结算单场和2、3关组合。</p>
           </div>
         </section>
       </template>
@@ -1563,7 +1578,7 @@
 </template>
 
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import AccountButton from '../components/AccountButton.vue'
 import HistoricalGoalMarginCard from '../components/HistoricalGoalMarginCard.vue'
@@ -1583,6 +1598,7 @@ const expandedDailyMatches = ref(new Set())
 const faeReview = ref(null)
 const reviewLoading = ref(false)
 const reviewLoadedDate = ref('')
+const reviewLoadedAt = ref(0)
 const reviewAiBusy = ref(false)
 const reviewAiMessage = ref('')
 const reviewAiError = ref('')
@@ -1608,6 +1624,8 @@ const formalReviewStats = computed(() => (
 let requestController = null
 let reviewRequestController = null
 let skillsRequestController = null
+let reviewRefreshTimer = null
+let reviewViewActive = true
 
 const formatDateParam = date => {
   const year = date.getFullYear()
@@ -2011,7 +2029,7 @@ const twoOptionReviewRows = computed(() => {
     const matchId = String(item.match_id || '')
     if (!matchId) continue
     const existing = byMatch.get(matchId)
-    if (!existing || twoOptionRowRank(item) > twoOptionRowRank(existing)) {
+    if (!existing || (existing.result_type !== 'two_option_main' && item.result_type === 'two_option_main')) {
       byMatch.set(matchId, item)
     }
   }
@@ -2094,7 +2112,7 @@ async function fetchData() {
 
 async function loadReviewData(force = false) {
   const dateValue = selectedDate.value
-  if (!force && reviewLoadedDate.value === dateValue) return
+  if (!force && reviewLoadedDate.value === dateValue && Date.now() - reviewLoadedAt.value < 60000) return
   reviewRequestController?.abort()
   reviewRequestController = new AbortController()
   const controller = reviewRequestController
@@ -2102,30 +2120,33 @@ async function loadReviewData(force = false) {
   reviewAiError.value = ''
   try {
     const date = encodeURIComponent(dateValue)
+    const loadBacktest = force || reviewLoadedDate.value !== dateValue
     const [reviewResponse, statsResponse, backtestResponse] = await Promise.all([
-      fetch(`/api/fae/daily-ai/review?date=${date}`, { signal: controller.signal }),
-      fetch('/api/fae/daily-ai/review/stats', { signal: controller.signal }),
-      fetch('/api/fae/backtest?days=28', {
+      fetch(`/api/fae/daily-ai/review?date=${date}`, { signal: controller.signal, cache: 'no-store' }),
+      fetch('/api/fae/daily-ai/review/stats', { signal: controller.signal, cache: 'no-store' }),
+      loadBacktest ? fetch('/api/fae/backtest?days=28', {
         signal: controller.signal,
         credentials: 'same-origin'
-      })
+      }) : Promise.resolve(null)
     ])
     const [reviewPayload, statsPayload, backtestPayload] = await Promise.all([
       reviewResponse.json(),
       statsResponse.json(),
-      backtestResponse.json().catch(() => ({}))
+      backtestResponse ? backtestResponse.json().catch(() => ({})) : Promise.resolve(null)
     ])
     if (selectedDate.value !== dateValue) return
-    faeReview.value = reviewResponse.ok && reviewPayload.success
-      ? reviewPayload.data
-      : null
-    faeStats.value = statsResponse.ok && statsPayload.success
-      ? (statsPayload.data || {})
-      : {}
-    faeBacktest.value = backtestResponse.ok && backtestPayload.success
-      ? backtestPayload.data
-      : null
+    if (!reviewResponse.ok || !reviewPayload.success || !statsResponse.ok || !statsPayload.success) {
+      throw new Error(reviewPayload.message || statsPayload.message || '复盘数据刷新失败')
+    }
+    faeReview.value = reviewPayload.data
+    faeStats.value = statsPayload.data || {}
+    if (backtestResponse) {
+      faeBacktest.value = backtestResponse.ok && backtestPayload.success
+        ? backtestPayload.data
+        : null
+    }
     reviewLoadedDate.value = dateValue
+    reviewLoadedAt.value = Date.now()
     dailyAiConfigured.value = Boolean(
       dailyAiConfigured.value || reviewPayload.ai_review_configured
     )
@@ -2657,6 +2678,7 @@ async function runDailyAi(force) {
 }
 
 async function runAiReview(forceAi) {
+  const dateValue = selectedDate.value
   reviewAiBusy.value = true
   reviewAiMessage.value = ''
   reviewAiError.value = ''
@@ -2666,7 +2688,7 @@ async function runAiReview(forceAi) {
       credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        date: selectedDate.value,
+        date: dateValue,
         force_ai: Boolean(forceAi)
       })
     })
@@ -2678,8 +2700,9 @@ async function runAiReview(forceAi) {
     if (!response.ok || !payload.success) {
       throw new Error(payload.message || 'AI 深度复盘运行失败')
     }
+    if (selectedDate.value !== dateValue) return
     faeReview.value = payload.data || null
-    reviewLoadedDate.value = selectedDate.value
+    await loadReviewData(true)
     reviewAiMessage.value = payload.message || 'AI 深度复盘已完成'
   } catch (e) {
     reviewAiError.value = e.message || 'AI 深度复盘运行失败'
@@ -2760,21 +2783,6 @@ function twoOptionHitOdds(item) {
   if (item?.hit_odds != null && item.hit_odds !== '') return item.hit_odds
   const hit = (item?.selection_results || []).find(row => row?.status === 'hit')
   return hit?.odds ?? ''
-}
-
-function twoOptionRowRank(item) {
-  const statusRank = {
-    hit: 40,
-    push: 30,
-    pending: 20,
-    miss: 10,
-    ungraded: 0,
-    skipped: 0
-  }[item?.status] ?? 0
-  const formalRank = item?.formal_two_option ? 100 : 0
-  const marketRank = item?.result_type === 'two_option_main' ? 2 : 1
-  const oddsRank = twoOptionHitOdds(item) ? 1 : 0
-  return formalRank + statusRank + marketRank + oddsRank
 }
 
 function aiScopeLabel(scope) {
@@ -2941,8 +2949,37 @@ function formatSkillTime(value) {
     : date.toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' })
 }
 
-onMounted(fetchData)
+function formatReviewTime(value) {
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString('zh-CN', { hour12: false })
+}
+
+function refreshVisibleReview() {
+  if (reviewViewActive && document.visibilityState === 'visible' && activeSection.value === 'review' && !reviewLoading.value && !reviewAiBusy.value) {
+    void loadReviewData()
+  }
+}
+
+function startReviewRefresh() {
+  reviewViewActive = true
+  clearInterval(reviewRefreshTimer)
+  reviewRefreshTimer = setInterval(refreshVisibleReview, 60000)
+  refreshVisibleReview()
+}
+
+onMounted(() => {
+  fetchData()
+  startReviewRefresh()
+  document.addEventListener('visibilitychange', refreshVisibleReview)
+})
+onActivated(startReviewRefresh)
+onDeactivated(() => {
+  reviewViewActive = false
+  clearInterval(reviewRefreshTimer)
+})
 onBeforeUnmount(() => {
+  clearInterval(reviewRefreshTimer)
+  document.removeEventListener('visibilitychange', refreshVisibleReview)
   requestController?.abort()
   reviewRequestController?.abort()
   skillsRequestController?.abort()
@@ -2950,6 +2987,13 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
+.review-statistics-note {
+  margin: 0 16px 14px;
+  color: #888;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
 .recommendations-page {
   min-height: 100vh;
   padding-bottom: 86px;
@@ -6499,6 +6543,15 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 560px) {
+  .review-panel-heading {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .review-heading-actions {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+
   .review-stats-grid {
     grid-template-columns: repeat(2, 1fr);
   }

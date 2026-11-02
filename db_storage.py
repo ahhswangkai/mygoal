@@ -3,7 +3,7 @@ MongoDB数据存储模块
 """
 from pymongo import MongoClient, ASCENDING, DESCENDING
 from pymongo.errors import ConnectionFailure, DuplicateKeyError
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from utils import setup_logger
 import os
@@ -18,7 +18,7 @@ from football_ai.version import (
 )
 from football_ai.parlay import build_draw_parlays
 from football_ai.draw_review import aggregate_draw_reviews
-from football_ai.daily_review import aggregate_daily_ai_reviews
+from football_ai.daily_review import aggregate_daily_ai_reviews, normalize_daily_ai_review
 from football_ai.review_memory import build_review_memory
 from football_ai.league_profile import (
     build_match_goal_margin_models,
@@ -95,6 +95,7 @@ class MongoDBStorage:
         self.fae_daily_ai_matches_collection = self.db['fae_daily_ai_matches']
         self.fae_daily_ai_batches_collection = self.db['fae_daily_ai_batches']
         self.fae_daily_ai_reviews_collection = self.db['fae_daily_ai_reviews']
+        self.fae_review_memories_collection = self.db['fae_review_memories']
         self.fae_backtest_reports_collection = self.db['fae_backtest_reports']
         self.fae_supervised_models_collection = self.db['fae_supervised_models']
         self.fae_supervised_backtests_collection = self.db['fae_supervised_backtests']
@@ -233,6 +234,12 @@ class MongoDBStorage:
             )
             self.fae_daily_ai_reviews_collection.create_index([
                 ('owner_date', ASCENDING), ('reviewed_at', DESCENDING)
+            ])
+            self.fae_review_memories_collection.create_index(
+                [('memory_hash', ASCENDING)], unique=True
+            )
+            self.fae_review_memories_collection.create_index([
+                ('before_date', ASCENDING), ('saved_at', DESCENDING)
             ])
             self.fae_backtest_reports_collection.create_index(
                 [('report_id', ASCENDING)], unique=True
@@ -1365,11 +1372,12 @@ class MongoDBStorage:
             query = {'owner_date': str(owner_date or '')[:10]}
             if run_id:
                 query['run_id'] = str(run_id)
-            return self.fae_daily_ai_reviews_collection.find_one(
+            review = self.fae_daily_ai_reviews_collection.find_one(
                 query,
                 {'_id': 0},
                 sort=[('reviewed_at', DESCENDING)],
             )
+            return normalize_daily_ai_review(review) if review else None
         except Exception as e:
             self.logger.error(f"读取 FAE 全日AI复盘失败: {str(e)}")
             return None
@@ -1476,7 +1484,7 @@ class MongoDBStorage:
             self.logger.error(f"读取 FAE 监督回测失败: {str(e)}")
             return None
 
-    def _latest_fae_daily_ai_reviews(self, query=None, limit=None):
+    def _latest_fae_daily_ai_reviews(self, query=None, limit=None, projection=None):
         """Return one latest review per match day.
 
         Prematch refreshes create immutable run_ids during the same day.  Only
@@ -1488,7 +1496,7 @@ class MongoDBStorage:
             {'$sort': {'owner_date': 1, 'reviewed_at': -1}},
             {'$group': {'_id': '$owner_date', 'review': {'$first': '$$ROOT'}}},
             {'$replaceRoot': {'newRoot': '$review'}},
-            {'$project': {'_id': 0}},
+            {'$project': {'_id': 0, **(projection or {})}},
             {'$sort': {'owner_date': -1}},
         ]
         if limit:
@@ -1496,7 +1504,7 @@ class MongoDBStorage:
         return list(self.fae_daily_ai_reviews_collection.aggregate(pipeline))
 
     def get_fae_review_memory(self, before_date):
-        """Return compact review memory using only strictly earlier match days."""
+        """Distill all prior reviews; the old day window limits recent detail only."""
         try:
             window_days = max(
                 2, min(30, int(os.getenv('FAE_REVIEW_MEMORY_DAYS', '7')))
@@ -1522,23 +1530,56 @@ class MongoDBStorage:
                     'FAE_REVIEW_MEMORY_MIN_EVIDENCE', '10'
                 )),
             )
+            projection = {
+                key: 1 for key in (
+                    'owner_date', 'run_id', 'reviewed_at', 'summary',
+                    'ai_deep_review.status', 'ai_deep_review.summary',
+                    'ai_deep_review.market_lessons',
+                    'ai_deep_review.learning_candidates', 'ai_deep_review_stale',
+                )
+            }
+            for field in ('match_results', 'handicap_results'):
+                for key in ('match_id', 'selection', 'status', 'observation_status',
+                            'no_bet', 'odds', 'return', 'profit'):
+                    projection[f'{field}.{key}'] = 1
             reviews = self._latest_fae_daily_ai_reviews(
                 {
                     'owner_date': {
                         '$lt': str(before_date or '')[:10]
                     },
-                    'ai_deep_review.status': 'completed',
                 },
-                limit=window_days,
+                projection=projection,
             )
-            return build_review_memory(
+            # Upgrade legacy observation statistics without another Ark call.
+            for review in reviews:
+                if 'match_results' in review:
+                    summary = normalize_daily_ai_review(review)['summary']
+                    review['summary'] = {
+                        **(review.get('summary') or {}),
+                        'singles': summary['singles'],
+                        'handicap': summary['handicap'],
+                    }
+            memory = build_review_memory(
                 reviews,
                 str(before_date or '')[:10],
                 window_days=window_days,
                 observation_days=observation_days,
                 minimum_pattern_days=minimum_pattern_days,
                 minimum_evidence=minimum_evidence,
+                half_life_days=max(30, int(os.getenv('FAE_REVIEW_MEMORY_HALF_LIFE_DAYS', '90'))),
+                max_patterns=max(1, min(30, int(os.getenv('FAE_REVIEW_MEMORY_MAX_PATTERNS', '10')))),
             )
+            # Save the exact as-of memory used for subsequent prediction audit.
+            # Failure to write a cache must not discard usable history.
+            try:
+                self.fae_review_memories_collection.update_one(
+                    {'memory_hash': memory['memory_hash']},
+                    {'$set': {**memory, 'saved_at': datetime.now(timezone.utc).isoformat()}},
+                    upsert=True,
+                )
+            except Exception as exc:
+                self.logger.warning('保存 FAE 长期复盘记忆失败: %s', exc)
+            return memory
         except Exception as e:
             self.logger.error(f"读取 FAE 复盘记忆失败: {str(e)}")
             return build_review_memory([], str(before_date or '')[:10])

@@ -3,6 +3,7 @@ import unittest
 from football_ai.daily_review import (
     FAEDailyAIReviewEngine,
     aggregate_daily_ai_reviews,
+    normalize_daily_ai_review,
 )
 
 
@@ -372,7 +373,7 @@ class DailyAIReviewTests(unittest.TestCase):
         self.assertGreater(calibration["brier_improvement"], 0)
         self.assertTrue(calibration["validated"])
 
-    def test_no_bet_match_is_observed_but_excluded_from_roi(self):
+    def test_no_bet_match_is_included_in_all_analysis_but_not_formal_bets(self):
         snapshot = {
             **self.snapshot,
             "matches": [source("203", "客胜", no_bet=True)],
@@ -388,7 +389,54 @@ class DailyAIReviewTests(unittest.TestCase):
         self.assertEqual(row["status"], "skipped")
         self.assertEqual(row["observation_status"], "hit")
         self.assertTrue(row["no_bet"])
+        self.assertEqual(review["summary"]["singles"]["settled"], 1)
+        self.assertEqual(review["summary"]["singles"]["hits"], 1)
+        self.assertEqual(review["summary"]["singles"]["roi"], 300.0)
+        self.assertEqual(review["summary"]["official_bets"]["settled"], 0)
+
+    def test_recovers_legacy_observations_without_modifying_stored_verdicts(self):
+        review = {
+            "owner_date": "2026-11-01", "reviewed_at": "2026-11-02T01:00:00Z",
+            "match_results": [
+                {"match_id": "1", "selection": "客胜", "status": "skipped",
+                 "observation_status": "hit", "no_bet": True, "odds": 2.5, "return": None},
+                {"match_id": "2", "selection": "主胜", "status": "skipped",
+                 "observation_status": "miss", "no_bet": True, "odds": 2.0, "return": None},
+                {"match_id": "3", "selection": "观望", "status": "skipped", "no_bet": True},
+                {"match_id": "4", "selection": "平局", "status": "pending", "no_bet": True},
+            ],
+            "handicap_results": [
+                {"match_id": "1", "selection": "让平", "status": "skipped",
+                 "observation_status": "miss", "no_bet": True, "odds": 3.5},
+            ],
+            "summary": {"singles": {"settled": 0}},
+        }
+        normalized = normalize_daily_ai_review(review)
+        self.assertEqual(normalized["summary"]["singles"]["settled"], 2)
+        self.assertEqual(normalized["summary"]["singles"]["roi"], 25.0)
         self.assertEqual(review["summary"]["singles"]["settled"], 0)
+        self.assertEqual(review["match_results"][0]["status"], "skipped")
+        stats = aggregate_daily_ai_reviews([review])
+        self.assertEqual(stats["singles"]["hits"], 1)
+        self.assertEqual(stats["singles"]["pending"], 1)
+        self.assertEqual(stats["singles"]["ungraded"], 1)
+        self.assertEqual(stats["handicap"]["settled"], 1)
+        self.assertEqual(stats["handicap"]["roi"], -100.0)
+        self.assertEqual(stats["reviewed_days"], 1)
+        self.assertEqual(stats["latest_reviewed_at"], review["reviewed_at"])
+
+    def test_cumulative_two_option_uses_one_canonical_pair_per_match_day(self):
+        pair = {"match_id": "1", "selections": ["主胜", "平局"],
+                "status": "miss", "result_type": "two_option_main"}
+        other = {**pair, "result_type": "two_option_handicap", "status": "hit"}
+        stats = aggregate_daily_ai_reviews([
+            {"owner_date": "2026-11-01", "two_option_results": [other, pair]},
+            {"owner_date": "2026-11-02", "two_option_results": [pair]},
+        ])
+        self.assertEqual(stats["two_option"]["overall"]["settled"], 2)
+        self.assertEqual(stats["two_option"]["overall"]["hits"], 0)
+        self.assertEqual(stats["two_option"]["handicap"]["hits"], 1)
+        self.assertEqual(stats["two_option"]["raw_rows"], 3)
 
     def test_settles_handicap_reference_separately_from_primary_pick(self):
         snapshot = {
@@ -731,6 +779,12 @@ class DailyAIReviewTests(unittest.TestCase):
         self.assertEqual(
             tickets["draw-two-leg"]["summary"]["return_units"], 10.88
         )
+        self.assertEqual(review["summary"]["by_play"]["2串1"]["settled"], 4)
+        self.assertEqual(review["summary"]["by_play"]["3串1"]["settled"], 1)
+        self.assertEqual(len(review["combo_results"][0]["picks"]), 2)
+        stats = aggregate_daily_ai_reviews([review])
+        self.assertEqual(stats["by_play"]["2串1"]["hits"], 4)
+        self.assertEqual(stats["by_play"]["3串1"]["hits"], 1)
 
     def test_records_both_draw_ticket_types_when_candidates_are_insufficient(self):
         review = FAEDailyAIReviewEngine().review(
