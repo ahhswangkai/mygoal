@@ -8,14 +8,14 @@ from unittest.mock import Mock
 
 from fae_schedule import app_timezone
 from football_ai.strategy_trial import (
-    TRIAL_POLICY, TRIAL_VERSION, V3_1800_FINGERPRINT, archive_trial_job,
+    TRIAL_POLICY, TRIAL_VERSION, V3_1400_FINGERPRINT, V3_1800_FINGERPRINT, archive_trial_job,
     build_trial_day, decision_time, digest, reschedule_trial, settle_draw_ticket,
     settle_ticket, start_trial, trial_report,
 )
 from db_storage import MongoDBStorage
 
 
-NOW = datetime(2026, 11, 3, 14, tzinfo=app_timezone())
+NOW = datetime(2026, 11, 3, 16, tzinfo=app_timezone())
 
 
 def fixture(match_id, **updates):
@@ -113,7 +113,7 @@ class StrategyTrialTests(unittest.TestCase):
 
     def test_live_unknown_future_stale_or_near_kickoff_are_excluded(self):
         for updates in (
-            {'status': 1}, {'match_time': ''}, {'match_time': '11-03 14:05'},
+            {'status': 1}, {'match_time': ''}, {'match_time': '11-03 16:05'},
             {'updated_at': (NOW + timedelta(minutes=1)).isoformat()},
             {'updated_at': (NOW - timedelta(minutes=61)).isoformat()},
             {'updated_at': None}, {'owner_date': '2026-11-02'},
@@ -274,7 +274,7 @@ class TrialSchedulingTests(unittest.TestCase):
         exec(compile(ast.Module(body=[node], type_ignores=[]), str(source), 'exec'), namespace)
         return namespace, storage
 
-    def test_scheduler_waits_until_14_without_reading_markets(self):
+    def test_scheduler_waits_until_16_without_reading_markets(self):
         job, storage = self.load_job(NOW - timedelta(minutes=1))
         job['_run_scheduled_strategy_trial']()
         storage.get_matches.assert_not_called()
@@ -306,22 +306,22 @@ class TrialSchedulingTests(unittest.TestCase):
         self.assertEqual({call.args[0] for call in storage.get_strategy_trial.call_args_list}, {TRIAL_VERSION})
         self.assertEqual({call.args[0] for call in storage.get_strategy_trial_days.call_args_list}, {TRIAL_VERSION})
 
-    def test_after_14_does_not_generate_another_decision_at_18(self):
-        job, storage = self.load_job(NOW + timedelta(hours=4))
+    def test_after_16_does_not_generate_another_decision_at_18(self):
+        job, storage = self.load_job(NOW + timedelta(hours=2))
         storage.get_strategy_trial_days.return_value = [{
             'owner_date': '2026-11-03', 'ticket': None, 'baseline_ticket': None}]
         job['_run_scheduled_strategy_trial']()
         job['build_trial_day'].assert_not_called()
         storage.get_matches.assert_not_called()
 
-    def test_existing_18_trial_is_migrated_but_not_backfilled_after_14(self):
+    def test_existing_18_trial_is_migrated_but_not_backfilled_after_16(self):
         job, storage = self.load_job(NOW + timedelta(hours=1))
         storage.get_strategy_trial.return_value = TrialScheduleMigrationTests().old_trial()
         storage.update_strategy_trial_schedule.side_effect = lambda old, updated: updated
         job['_run_scheduled_strategy_trial']()
         storage.update_strategy_trial_schedule.assert_called_once()
         updated = storage.update_strategy_trial_schedule.call_args.args[1]
-        self.assertEqual(updated['policy']['decision_hour'], 14)
+        self.assertEqual(updated['policy']['decision_hour'], 16)
         self.assertEqual(updated['schedule_effective_date'], '2026-11-04')
         storage.get_matches.assert_not_called()
         job['build_trial_day'].assert_not_called()
@@ -342,24 +342,24 @@ class TrialSchedulingTests(unittest.TestCase):
         archived = storage.save_strategy_trial_day.call_args.args[0]
         self.assertEqual(archived['decision'], 'suspended')
         self.assertEqual(archived['source_snapshot_hash'], 'frozen18')
-        self.assertIn('14:00', archived['reason'])
+        self.assertIn('16:00', archived['reason'])
         self.assertEqual(snapshot, original)
         job['execute_trial_ai_job'].assert_not_called()
 
 
 class TrialScheduleMigrationTests(unittest.TestCase):
-    def old_trial(self):
+    def old_trial(self, hour=18):
         trial = start_trial(NOW - timedelta(hours=8))
-        trial['policy']['decision_hour'] = 18
+        trial['policy']['decision_hour'] = hour
         trial['policy_hash'] = digest(trial['policy'])
-        trial['model_fingerprint'] = V3_1800_FINGERPRINT
+        trial['model_fingerprint'] = {18: V3_1800_FINGERPRINT, 14: V3_1400_FINGERPRINT}[hour]
         return trial
 
-    def test_existing_v3_moves_to_14_without_resetting_dates_or_history(self):
+    def test_existing_v3_moves_to_16_without_resetting_dates_or_history(self):
         old = self.old_trial()
         original = deepcopy(old)
         updated = reschedule_trial(old, NOW - timedelta(minutes=1))
-        self.assertEqual(updated['policy']['decision_hour'], 14)
+        self.assertEqual(updated['policy']['decision_hour'], 16)
         self.assertEqual(updated['schedule_effective_date'], '2026-11-03')
         self.assertEqual(updated['start_date'], old['start_date'])
         self.assertEqual(updated['end_date'], old['end_date'])
@@ -368,9 +368,21 @@ class TrialScheduleMigrationTests(unittest.TestCase):
         self.assertEqual(old, original)
         self.assertIsNone(reschedule_trial(updated, NOW))
 
-    def test_at_or_after_14_only_takes_effect_tomorrow(self):
+    def test_at_or_after_16_only_takes_effect_tomorrow(self):
         for now in (NOW, NOW + timedelta(hours=4)):
             self.assertEqual(reschedule_trial(self.old_trial(), now)['schedule_effective_date'], '2026-11-04')
+
+    def test_14_schedule_moves_to_16_today_even_when_old_cutoff_has_passed(self):
+        old = self.old_trial(hour=14)
+        old['schedule_effective_date'] = '2026-11-04'
+        old['schedule_history'] = [{'previous_policy_hash': 'original18', 'effective_date': '2026-11-04'}]
+        updated = reschedule_trial(old, NOW - timedelta(hours=1))
+        self.assertEqual(updated['policy']['decision_hour'], 16)
+        self.assertEqual(updated['schedule_effective_date'], '2026-11-03')
+        self.assertEqual(updated['schedule_history'][0], old['schedule_history'][0])
+        self.assertEqual(updated['schedule_history'][-1]['previous_policy']['decision_hour'], 14)
+        self.assertEqual(updated['start_date'], old['start_date'])
+        self.assertEqual(updated['end_date'], old['end_date'])
 
     def test_unknown_implementation_rules_or_version_are_not_silently_accepted(self):
         for field, value in (('model_fingerprint', 'unknown-code'), ('policy_hash', 'bad-hash'),
@@ -416,7 +428,7 @@ class TrialCurrentVersionRouteTests(unittest.TestCase):
         route, storage = self.route('get_fae_strategy_trial', {})
         result = route()
         self.assertEqual(result['available_experiments'], [TRIAL_VERSION])
-        self.assertEqual(result['policy']['decision_hour'], 14)
+        self.assertEqual(result['policy']['decision_hour'], 16)
         storage.get_strategy_trial.assert_called_once_with(TRIAL_VERSION)
 
     def test_report_and_audit_reject_retired_versions(self):

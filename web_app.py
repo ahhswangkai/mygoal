@@ -2525,7 +2525,7 @@ def start_fae_strategy_trial():
     if updated:
         trial = mongo_storage.update_strategy_trial_schedule(trial, updated)
     return jsonify({'success': True, 'data': trial,
-                    'message': 'V3 AI版30天模拟已登记；每日北京时间14:00冻结输入并分批调用火山，产生API费用，不写入真实投注记录'})
+                    'message': 'V3 AI版30天模拟已登记；每日北京时间16:00冻结输入并分批调用火山，产生API费用，不写入真实投注记录'})
 
 
 @app.route('/api/fae/strategy-trial/audit', methods=['GET'])
@@ -2599,7 +2599,7 @@ def _run_scheduled_strategy_trial():
                 snapshot = full_job['input_snapshot']
                 old_schedule_hashes = {entry['previous_policy_hash'] for entry in trial.get('schedule_history', [])}
                 if snapshot.get('policy_hash') in old_schedule_hashes:
-                    result = archive_trial_job(snapshot, now, reason='V3已调整为14:00出单；原18:00未完成任务保留留档，不补跑或重复调用AI')
+                    result = archive_trial_job(snapshot, now, reason='V3已调整为16:00出单；原时段未完成任务保留留档，不补跑或重复调用AI')
                 else:
                     result = execute_trial_ai_job(trial, full_job, mongo_storage)
                 if result:

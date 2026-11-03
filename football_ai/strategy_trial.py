@@ -22,14 +22,15 @@ from .strategy_trial_draw import DRAW_TRIAL_POLICY, choose_draw_ticket, draw_can
 
 
 TRIAL_VERSION = "paper-multi-ark-v3"
-# Only this known v3 implementation may receive the requested schedule-only
+# Only these known v3 implementations may receive the requested schedule-only
 # migration. Do not silently accept unrelated model or strategy changes.
 V3_1800_FINGERPRINT = "72df899beec1712fe02d80f556cf6abf8fd736d79e74b9bc4a783ac4630fa368"
+V3_1400_FINGERPRINT = "88838f86d9ed69f540644745b4d851f2151389994c2451f02a84a9e32a5d83d6"
 # These are pre-registered experimental thresholds, NOT proven profitable ones.
 TRIAL_POLICY = {
     "version": TRIAL_VERSION,
     "days": 30,
-    "decision_hour": 14,
+    "decision_hour": 16,
     "decision_minute": 0,
     "grace_minutes": 5,
     "stake_units": 1,
@@ -106,13 +107,15 @@ def decision_time(owner_date, policy):
 
 
 def reschedule_trial(trial, now=None):
-    """Move the known 18:00 v3 enrollment forward, without rewriting any day."""
+    """Move known earlier v3 schedules to 16:00, without rewriting any day."""
     if not trial or trial.get("experiment_id") != TRIAL_VERSION:
         return None
-    previous_policy = {**deepcopy(TRIAL_POLICY), "decision_hour": 18}
-    if (trial.get("policy") != previous_policy
+    previous_hour = (trial.get("policy") or {}).get("decision_hour")
+    previous_fingerprint = {18: V3_1800_FINGERPRINT, 14: V3_1400_FINGERPRINT}.get(previous_hour)
+    previous_policy = {**deepcopy(TRIAL_POLICY), "decision_hour": previous_hour}
+    if (not previous_fingerprint or trial.get("policy") != previous_policy
             or trial.get("policy_hash") != digest(previous_policy)
-            or trial.get("model_fingerprint") != V3_1800_FINGERPRINT
+            or trial.get("model_fingerprint") != previous_fingerprint
             or digest(trial.get("rule_weights")) != trial.get("weights_hash")):
         return None
     current = now or datetime.now(app_timezone())
@@ -126,7 +129,7 @@ def reschedule_trial(trial, now=None):
         "previous_policy": deepcopy(trial["policy"]),
         "previous_policy_hash": trial["policy_hash"],
         "previous_model_fingerprint": trial["model_fingerprint"],
-        "reason": "按要求将V3出单时间从18:00调整为北京时间14:00；已冻结记录不变",
+        "reason": f"按要求将V3出单时间从{previous_hour:02d}:00调整为北京时间16:00；已冻结记录不变",
     })
     updated.update(policy=deepcopy(TRIAL_POLICY), policy_hash=digest(TRIAL_POLICY),
                    model_fingerprint=model_fingerprint(),

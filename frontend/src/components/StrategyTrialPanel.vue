@@ -8,7 +8,7 @@
     <p v-if="message" class="trial-note" role="status">{{ message }}</p>
     <div v-if="!report" class="trial-empty">
       <strong>尚未启动试运行</strong>
-      <p>固定Prompt与模型配置观察30天。每天北京时间14:00冻结输入，分批调用火山大模型（最多10场/批），独立生成“约3倍二串一”和“平／让平3场2、3关”两类方案。每类最多1张、各1模拟单位，不足条件不凑单。</p>
+      <p>固定Prompt与模型配置观察30天。每天北京时间16:00冻结输入，分批调用火山大模型（最多10场/批），独立生成“约3倍二串一”和“平／让平3场2、3关”两类方案。每类最多1张、各1模拟单位，不足条件不凑单。</p>
       <small>会产生火山API费用。调用失败不使用本地规则冒充AI结论，不创建真实投注。</small>
       <button v-if="canManage" type="button" :disabled="starting || loading" @click="start">{{ starting ? '登记中…' : '开始AI版30天模拟' }}</button>
       <small v-else>由管理员启动，启动后不能重置历史成绩。</small>
@@ -18,7 +18,7 @@
         <strong>{{ report.phase === 'collecting' ? '正在积累前瞻样本' : '观察窗口已结束，等待评估' }}</strong>
         <span>{{ report.trial.start_date }} 至 {{ report.trial.end_date }} · {{ report.trial.experiment_id }}</span>
         <small>北京时间{{ decisionTimeLabel }}冻结输入（5分钟容错）· 两类方案各最多1张/天，各1单位</small>
-        <small v-if="report.trial.schedule_effective_date">14:00时段自 {{ report.trial.schedule_effective_date }} 起生效；之前已留档的方案不变，不补跑。</small>
+        <small v-if="report.trial.schedule_effective_date">{{ decisionTimeLabel }}时段自 {{ report.trial.schedule_effective_date }} 起生效；之前已留档的方案不变，不补跑。</small>
         <small v-if="report.trial.ai_settings">模型 {{ report.trial.ai_settings.model }} · Prompt {{ report.trial.ai_settings.prompt_version }} · 最多10场/批</small>
       </div>
       <p v-if="!report.implementation_matches || report.ai_configuration_matches === false" class="trial-error">模型实现、Prompt或接口配置已改变，暂停后续出单。原赛前留档仍然保留并继续结算。</p>
@@ -110,7 +110,7 @@ const day = computed(() => report.value?.days?.find(item => item.owner_date === 
 const hasDrawStrategy = computed(() => Boolean(report.value?.trial?.policy?.draw_focus?.enabled))
 const decisionTimeLabel = computed(() => {
   const policy = report.value?.trial?.policy
-  return `${String(policy?.decision_hour ?? 14).padStart(2, '0')}:${String(policy?.decision_minute ?? 0).padStart(2, '0')}`
+  return `${String(policy?.decision_hour ?? 16).padStart(2, '0')}:${String(policy?.decision_minute ?? 0).padStart(2, '0')}`
 })
 let controller
 let timer
@@ -138,7 +138,7 @@ async function load() {
   finally { if (controller === active) loading.value = false }
 }
 async function start() {
-  if (!window.confirm('开始AI版V3的30天模拟？二串一与平/让平2、3关各最多1张、各1单位；每天北京时间14:00分批调用火山，会产生API费用，不创建真实投注。')) return
+  if (!window.confirm('开始AI版V3的30天模拟？二串一与平/让平2、3关各最多1张、各1单位；每天北京时间16:00分批调用火山，会产生API费用，不创建真实投注。')) return
   starting.value = true
   error.value = ''
   try {
