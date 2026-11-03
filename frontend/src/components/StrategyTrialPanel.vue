@@ -32,6 +32,7 @@
         <article><span>未出单记录</span><strong>{{ report.no_ticket_days + report.missed_days + report.suspended_days + (report.ai_failed_days || 0) }} 天</strong><small>无合格 {{ report.no_ticket_days }} · 错过 {{ report.missed_days }} · 暂停 {{ report.suspended_days }} · AI失败 {{ report.ai_failed_days || 0 }}</small></article>
       </div>
       <p class="trial-note">{{ report.verdict }}<template v-if="report.summary.hit_rate_interval_95">。命中率95%区间 {{ report.summary.hit_rate_interval_95[0] }}%～{{ report.summary.hit_rate_interval_95[1] }}%（小样本不确定性高）</template></p>
+      <p v-if="retriedDayCount" class="trial-note">统计包含 {{ retriedDayCount }} 天手动重试，按每天最新完成版本计算，不是纯定时出单成绩；原始留档仍保留供审计。</p>
       <p v-if="report.summary.roi_interval_95" class="trial-note">ROI重采样95%区间 {{ report.summary.roi_interval_95[0] }}%～{{ report.summary.roi_interval_95[1] }}%。仅描述现有样本，不包含全部跨日相关性和筛选偏差。</p>
       <template v-if="hasDrawStrategy && report.draw_summary">
         <h3 class="trial-section-title">平／让平 · 3场2、3关</h3>
@@ -49,6 +50,13 @@
         <template v-if="day">
           <p>{{ day.reason }}</p>
           <small>记录于 {{ formatTime(day.captured_at) }} · 不随重新研判覆盖</small>
+          <div v-if="canManage && (hasRetryableFailure || retryBusy)" class="trial-retry">
+            <button type="button" :disabled="retrying || retryBusy || loading" @click="retryFailed">{{ retrying ? '提交中…' : retryBusy ? '重试执行中…' : '重试失败研判' }}</button>
+            <small>仅重试失败且距开赛超过10分钟的场次；会产生API费用，成功结果和已发布方案保留。</small>
+          </div>
+          <p v-if="retryBusy" class="trial-note" role="status">{{ day.retry_state.status === 'queued' ? '重试已排队' : '正在重试失败研判' }} · {{ day.retry_state.completed_batches || 0 }}/{{ day.retry_state.batch_count }} 批。可以离开页面，刷新不会重复调用。</p>
+          <p v-if="day.retry_state?.status === 'failed'" class="trial-error" role="alert">{{ day.retry_state.error }}</p>
+          <p v-if="day.manual_retry" class="trial-note">手动重试完成于 {{ formatTime(day.retried_at) }}，仍使用原赛前输入。初始留档与历次重试单独保留，当前展示和统计使用最新完成版本。</p>
           <div v-if="day.ai_run" class="trial-notice"><strong>火山大模型已核验 {{ day.ai_run.verified_matches }} 场</strong><small>{{ day.ai_run.model }} · 完成 {{ day.ai_run.completed_batches }}/{{ day.ai_run.batch_count }} 批 · 调用失败 {{ day.ai_run.failed_batches }} 批</small><small v-if="hasDrawStrategy">平／让平独立评估 {{ day.ai_run.draw_assessed_matches || 0 }} 场</small><small v-if="day.published_at">AI结果留档 {{ formatTime(day.published_at) }}</small></div>
           <p v-if="day.decision === 'analyzing'" class="trial-note">输入已经保存，AI正在分批研判。刷新不会重新发起调用；已成功的批次不会重复付费。</p>
           <template v-if="day.ticket">
@@ -91,7 +99,7 @@
         <p>30天结束不自动发布。需要继续检查样本量、基准对比、收益集中度和不确定性；不使用倍投，不以回本为目标加注。</p>
         <small>规则指纹 {{ report.trial.policy_hash?.slice(0, 16) }} · 模型指纹 {{ report.trial.model_fingerprint?.slice(0, 16) }}</small>
       </details>
-      <section v-if="report.days.length" class="trial-history"><strong>完整模拟流水</strong><button v-for="item in [...report.days].reverse()" :key="item.owner_date" type="button" @click="$emit('select-date', item.owner_date)"><span>{{ item.owner_date }}<small>二串一 {{ decisionLabel(item.decision) }}<template v-if="hasDrawStrategy"> · 平/让平 {{ decisionLabel(item.draw_decision) }}</template></small></span><b><template v-if="item.ticket?.profit_units != null">二串 {{ units(item.ticket.profit_units) }}</template><small v-if="item.draw_ticket?.profit_units != null">平/让平 {{ units(item.draw_ticket.profit_units) }}</small></b></button></section>
+      <section v-if="report.days.length" class="trial-history"><strong>完整模拟流水</strong><button v-for="item in [...report.days].reverse()" :key="item.owner_date" type="button" @click="$emit('select-date', item.owner_date)"><span>{{ item.owner_date }}<small>二串一 {{ decisionLabel(item.decision) }}<template v-if="hasDrawStrategy"> · 平/让平 {{ decisionLabel(item.draw_decision) }}</template><template v-if="item.manual_retry"> · 手动重试</template></small></span><b><template v-if="item.ticket?.profit_units != null">二串 {{ units(item.ticket.profit_units) }}</template><small v-if="item.draw_ticket?.profit_units != null">平/让平 {{ units(item.draw_ticket.profit_units) }}</small></b></button></section>
     </template>
   </section>
 </template>
@@ -103,11 +111,19 @@ defineEmits(['select-date'])
 const report = ref(null)
 const loading = ref(false)
 const starting = ref(false)
+const retrying = ref(false)
 const canManage = ref(false)
 const error = ref('')
 const message = ref('')
 const day = computed(() => report.value?.days?.find(item => item.owner_date === props.selectedDate))
+const retriedDayCount = computed(() => report.value?.days?.filter(item => item.manual_retry).length || 0)
 const hasDrawStrategy = computed(() => Boolean(report.value?.trial?.policy?.draw_focus?.enabled))
+const retryBusy = computed(() => ['queued', 'running'].includes(day.value?.retry_state?.status))
+const hasRetryableFailure = computed(() => {
+  if (day.value?.ai_run?.failed_matches != null) return Number(day.value.ai_run.failed_matches) > 0
+  return day.value?.decision === 'ai_failed' || Number(day.value?.ai_run?.failed_batches) > 0
+    || day.value?.excluded_matches?.some(item => !item.ai_reason && item.reasons?.some(reason => /AI|未返回有效研判/.test(reason)))
+})
 const decisionTimeLabel = computed(() => {
   const policy = report.value?.trial?.policy
   return `${String(policy?.decision_hour ?? 16).padStart(2, '0')}:${String(policy?.decision_minute ?? 0).padStart(2, '0')}`
@@ -115,6 +131,7 @@ const decisionTimeLabel = computed(() => {
 let controller
 let timer
 let visible = true
+let lastLoadedAt = 0
 const percent = value => value == null ? '—' : `${Number(value).toFixed(1)}%`
 const units = value => `${Number(value) > 0 ? '+' : ''}${Number(value).toFixed(2)} 单位`
 const amountUnits = value => `${Number(value).toFixed(2)} 单位`
@@ -134,6 +151,7 @@ async function load() {
     if (controller !== active) return
     report.value = payload.data
     canManage.value = Boolean(payload.can_manage)
+    lastLoadedAt = Date.now()
   } catch (e) { if (e.name !== 'AbortError') error.value = e.message }
   finally { if (controller === active) loading.value = false }
 }
@@ -150,8 +168,25 @@ async function start() {
   } catch (e) { error.value = e.message }
   finally { starting.value = false }
 }
+async function retryFailed() {
+  if (retrying.value || retryBusy.value) return
+  const date = props.selectedDate
+  if (!window.confirm(`重试${date}的失败研判？会再次产生火山API费用；只重跑失败场次，使用原赛前快照，成功结果与已发布方案不变，已开赛或临近开赛不重跑。`)) return
+  retrying.value = true
+  error.value = ''
+  message.value = ''
+  try {
+    const response = await fetch('/api/fae/strategy-trial/retry', { method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ date, confirm_api_cost: true }) })
+    const payload = await response.json()
+    if (!response.ok || !payload.success) throw new Error(payload.message || '重试提交失败')
+    message.value = payload.message
+    await load()
+  } catch (e) { error.value = e.message }
+  finally { retrying.value = false }
+}
 watch(() => [props.selectedDate, props.refreshKey], load)
-onMounted(() => { load(); timer = setInterval(() => { if (visible && document.visibilityState === 'visible' && !loading.value) load() }, 60000) })
+onMounted(() => { load(); timer = setInterval(() => { if (visible && document.visibilityState === 'visible' && !loading.value && (retryBusy.value || Date.now() - lastLoadedAt >= 60000)) load() }, 5000) })
 onActivated(() => { visible = true })
 onDeactivated(() => { visible = false })
 onBeforeUnmount(() => { controller?.abort(); clearInterval(timer) })
@@ -173,6 +208,7 @@ onBeforeUnmount(() => { controller?.abort(); clearInterval(timer) })
 .trial-stat-grid article span { font-size: 12px; color: #888; }
 .trial-stat-grid article strong { display: block; margin-top: 8px; font-size: 21px; color: #323c4a; }
 .trial-note { font-size: 12px; color: #777; }
+.trial-retry { margin-top: 12px; padding: 12px; background: #fff8ee; border-radius: 8px; }
 .trial-ai-reason { grid-column: 1 / -1; }
 .trial-section-title { margin: 20px 0 0; font-size: 14px; color: #414b59; }
 .trial-draw-plan { margin-top: 18px; padding: 12px; border-radius: 10px; background: #fff8f8; border: 1px solid #eed8df; }

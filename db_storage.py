@@ -408,7 +408,10 @@ class MongoDBStorage:
             {'experiment_id': experiment_id, 'owner_date': owner_date}, {'_id': 0})
 
     def get_strategy_trial_ai_jobs(self, experiment_id, *, audit=True):
-        projection = {'_id': 0} if audit else {'_id': 0, 'input_snapshot.audit': 0, 'batches': 0}
+        projection = {'_id': 0} if audit else {
+            '_id': 0, 'input_snapshot.audit': 0, 'batches': 0,
+            'manual_retries': 0, 'retry_result.audit': 0,
+        }
         return list(self.fae_strategy_trial_ai_jobs_collection.find(
             {'experiment_id': experiment_id}, projection).sort('owner_date', ASCENDING))
 
@@ -427,6 +430,55 @@ class MongoDBStorage:
             'experiment_id': experiment_id, 'owner_date': owner_date,
             f'{path}.claim_token': token, f'{path}.status': 'running',
         }, {'$set': {path: dict(batch)}})
+
+    def request_strategy_trial_retry(self, experiment_id, owner_date, request):
+        """Atomically queue one explicit retry; preserve original batches/day."""
+        state = {key: request[key] for key in ('request_id', 'status', 'requested_at', 'batch_count')}
+        state.update(match_count=len(request['match_ids']), completed_batches=0)
+        result = self.fae_strategy_trial_ai_jobs_collection.update_one({
+            'experiment_id': experiment_id, 'owner_date': owner_date,
+            'input_snapshot.snapshot_hash': request['input_snapshot_hash'],
+            'retry_state.status': {'$nin': ['queued', 'running']},
+        }, {'$set': {f"manual_retries.{request['request_id']}": dict(request), 'retry_state': state}})
+        return result.modified_count == 1
+
+    def claim_strategy_trial_retry_batch(self, experiment_id, owner_date, request_id, index, batch):
+        path = f'manual_retries.{request_id}.batches.{index}'
+        result = self.fae_strategy_trial_ai_jobs_collection.update_one({
+            'experiment_id': experiment_id, 'owner_date': owner_date,
+            'retry_state.request_id': request_id, 'retry_state.status': {'$in': ['queued', 'running']},
+            path: {'$exists': False},
+        }, {'$set': {path: dict(batch), 'retry_state.status': 'running',
+                     f'manual_retries.{request_id}.status': 'running'}})
+        return result.modified_count == 1
+
+    def finish_strategy_trial_retry_batch(self, experiment_id, owner_date, request_id, index, token, batch):
+        path = f'manual_retries.{request_id}.batches.{index}'
+        self.fae_strategy_trial_ai_jobs_collection.update_one({
+            'experiment_id': experiment_id, 'owner_date': owner_date,
+            'retry_state.request_id': request_id,
+            f'{path}.claim_token': token, f'{path}.status': 'running',
+        }, {'$set': {path: dict(batch)}, '$inc': {'retry_state.completed_batches': 1}})
+
+    def fail_strategy_trial_retry(self, experiment_id, owner_date, request_id, message):
+        self.fae_strategy_trial_ai_jobs_collection.update_one({
+            'experiment_id': experiment_id, 'owner_date': owner_date,
+            'retry_state.request_id': request_id, 'retry_state.status': {'$in': ['queued', 'running']},
+        }, {'$set': {'retry_state.status': 'failed', 'retry_state.error': message,
+                     f'manual_retries.{request_id}.status': 'failed',
+                     f'manual_retries.{request_id}.error': message}})
+
+    def complete_strategy_trial_retry(self, experiment_id, owner_date, request_id, record, completed_at):
+        self.fae_strategy_trial_ai_jobs_collection.update_one({
+            'experiment_id': experiment_id, 'owner_date': owner_date,
+            'retry_state.request_id': request_id, 'retry_state.status': {'$in': ['queued', 'running']},
+        }, {'$set': {'retry_result': dict(record), 'retry_state.status': 'complete',
+                     'retry_state.completed_at': completed_at,
+                     'retry_state.verified_matches': record['ai_run']['verified_matches'],
+                     'retry_state.failed_matches': record['ai_run']['failed_matches'],
+                     f'manual_retries.{request_id}.status': 'complete',
+                     f'manual_retries.{request_id}.completed_at': completed_at,
+                     f'manual_retries.{request_id}.result': dict(record)}})
 
     def save_match_fundamentals(self, match_id, source_analysis):
         """缓存单场基本面，供详情页和全日研判复用。"""

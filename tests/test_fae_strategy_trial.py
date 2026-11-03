@@ -13,6 +13,7 @@ from football_ai.strategy_trial import (
     settle_ticket, start_trial, trial_report,
 )
 from db_storage import MongoDBStorage
+from football_ai.strategy_trial_retry import merge_trial_days
 
 
 NOW = datetime(2026, 11, 3, 16, tzinfo=app_timezone())
@@ -267,6 +268,7 @@ class TrialSchedulingTests(unittest.TestCase):
                          mongo_storage=storage, TRIAL_VERSION=TRIAL_VERSION,
                          reschedule_trial=reschedule_trial,
                          archive_trial_job=archive_trial_job, execute_trial_ai_job=Mock(),
+                         merge_trial_days=merge_trial_days, _run_strategy_trial_manual_retry=Mock(),
                          decision_time=decision_time, build_trial_day=Mock(return_value={
                              'decision': 'no_ticket', 'owner_date': '2026-11-03', 'ticket': None, 'baseline_ticket': None}),
                          settle_ticket=settle_ticket, settle_draw_ticket=settle_draw_ticket,
@@ -345,6 +347,35 @@ class TrialSchedulingTests(unittest.TestCase):
         self.assertIn('16:00', archived['reason'])
         self.assertEqual(snapshot, original)
         job['execute_trial_ai_job'].assert_not_called()
+
+    def test_scheduler_resumes_explicitly_queued_retry_after_browser_leaves(self):
+        job, storage = self.load_job(NOW + timedelta(minutes=20))
+        storage.get_strategy_trial.return_value['policy']['llm_enabled'] = True
+        storage.get_strategy_trial_days.return_value = [{
+            'owner_date': '2026-11-03', 'ticket': None, 'baseline_ticket': None}]
+        storage.get_strategy_trial_ai_jobs.return_value = [{
+            'owner_date': '2026-11-03', 'retry_state': {'status': 'queued'}}]
+        job['_run_scheduled_strategy_trial']()
+        job['_run_strategy_trial_manual_retry'].assert_called_once_with('2026-11-03')
+        job['execute_trial_ai_job'].assert_not_called()
+
+    def test_scheduler_settles_latest_retry_hash_without_overwriting_original_day(self):
+        job, storage = self.load_job(NOW + timedelta(minutes=20))
+        storage.get_strategy_trial.return_value['policy']['llm_enabled'] = True
+        old = {'owner_date': '2026-11-03', 'ticket': None, 'baseline_ticket': None, 'snapshot_hash': 'original'}
+        storage.get_strategy_trial_days.return_value = [old]
+        ticket = {'picks': [{'match_id': '001', 'selection': '主胜', 'odds': 1.75},
+                            {'match_id': '002', 'selection': '主胜', 'odds': 1.75}], 'stake': 1}
+        storage.get_strategy_trial_ai_jobs.return_value = [{
+            'owner_date': '2026-11-03', 'retry_state': {'status': 'complete'},
+            'retry_result': {**old, 'snapshot_hash': 'retry-result', 'ticket': ticket}}]
+        storage.get_matches.return_value = [fixture(mid, status=2, score='2:0') for mid in ('001', '002')]
+        job['_run_scheduled_strategy_trial']()
+        review = storage.save_strategy_trial_review.call_args.args[0]
+        self.assertEqual(review['snapshot_hash'], 'retry-result')
+        self.assertEqual(review['ticket']['status'], 'hit')
+        self.assertEqual(old['snapshot_hash'], 'original')
+        storage.save_strategy_trial_day.assert_not_called()
 
 
 class TrialScheduleMigrationTests(unittest.TestCase):
