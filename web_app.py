@@ -23,6 +23,10 @@ from crawler import (
     is_pregame_match,
 )
 from fae_schedule import app_timezone, prematch_analysis_due
+from football_ai.strategy_trial import (
+    TRIAL_VERSION, TRIAL_POLICY, build_trial_day, decision_time,
+    model_fingerprint, settle_ticket, start_trial, trial_report,
+)
 from match_time_utils import sort_matches_by_datetime
 from user_storage import UserStorage
 from football_ai import (
@@ -2486,6 +2490,85 @@ def get_fae_review_memory():
     })
 
 
+@app.route('/api/fae/strategy-trial', methods=['GET'])
+def get_fae_strategy_trial():
+    if not mongo_storage:
+        return jsonify({'success': False, 'message': 'MongoDB不可用'}), 503
+    trial = mongo_storage.get_strategy_trial(TRIAL_VERSION)
+    report = None
+    if trial:
+        report = trial_report(
+            trial, mongo_storage.get_strategy_trial_days(TRIAL_VERSION),
+            mongo_storage.get_strategy_trial_reviews(TRIAL_VERSION))
+        report['implementation_matches'] = trial['model_fingerprint'] == model_fingerprint()
+    return jsonify({'success': True, 'data': report, 'policy': TRIAL_POLICY,
+                    'can_manage': bool(_fae_admin_user())})
+
+
+@app.route('/api/fae/strategy-trial/start', methods=['POST'])
+@fae_admin_required
+def start_fae_strategy_trial():
+    if not mongo_storage:
+        return jsonify({'success': False, 'message': 'MongoDB不可用'}), 503
+    trial = mongo_storage.start_strategy_trial(start_trial())
+    return jsonify({'success': True, 'data': trial,
+                    'message': '30天模拟已登记；规则冻结，每日18:00自动留档，不写入真实投注记录'})
+
+
+@app.route('/api/fae/strategy-trial/audit', methods=['GET'])
+@fae_admin_required
+def get_fae_strategy_trial_audit():
+    if not mongo_storage:
+        return jsonify({'success': False, 'message': 'MongoDB不可用'}), 503
+    owner_date = request.args.get('date')
+    rows = mongo_storage.get_strategy_trial_days(TRIAL_VERSION, audit=True)
+    return jsonify({'success': True, 'data': next(
+        (row for row in rows if row['owner_date'] == owner_date), None)})
+
+
+def _run_scheduled_strategy_trial():
+    """Free, independent paper workflow. Never rerun or backfill a decision."""
+    if not mongo_storage:
+        return
+    trial = mongo_storage.get_strategy_trial(TRIAL_VERSION)
+    if not trial:
+        return
+    now = datetime.now(app_timezone())
+    days = mongo_storage.get_strategy_trial_days(TRIAL_VERSION)
+    saved = {day['owner_date'] for day in days}
+    date = datetime.strptime(trial['start_date'], '%Y-%m-%d').date()
+    last_date = min(now.date(), datetime.strptime(trial['end_date'], '%Y-%m-%d').date())
+    while date <= last_date:
+        date_str = date.isoformat()
+        if date_str not in saved and now >= decision_time(date_str, trial['policy']):
+            try:
+                # Only read today's data inside the registered window. Missed
+                # historical days get an explicit empty decision, never replay.
+                in_window = now < decision_time(date_str, trial['policy']) + timedelta(minutes=trial['policy']['grace_minutes'])
+                matches = mongo_storage.get_matches(filters={'owner_date': date_str}) if in_window else []
+                fundamentals = mongo_storage.get_match_fundamentals_bulk(
+                    [m['match_id'] for m in matches]) if matches else {}
+                record = build_trial_day(trial, date_str, matches, fundamentals, now=now)
+                days.append(mongo_storage.save_strategy_trial_day(record))
+            except Exception:
+                app.logger.exception('策略验收留档失败: %s', date_str)
+        date += timedelta(days=1)
+    for day in days:
+        if not day.get('ticket') and not day.get('baseline_ticket'):
+            continue
+        try:
+            results = {str(m['match_id']): m for m in mongo_storage.get_matches(
+                filters={'owner_date': day['owner_date']})}
+            mongo_storage.save_strategy_trial_review({
+                'experiment_id': TRIAL_VERSION, 'owner_date': day['owner_date'],
+                'snapshot_hash': day['snapshot_hash'], 'reviewed_at': now.isoformat(),
+                'ticket': settle_ticket(day.get('ticket'), results),
+                'baseline_ticket': settle_ticket(day.get('baseline_ticket'), results),
+            })
+        except Exception:
+            app.logger.exception('策略验收结算失败: %s', day['owner_date'])
+
+
 @app.route('/api/fae/daily-ai/review/stats', methods=['GET'])
 def get_fae_daily_ai_review_stats():
     if not mongo_storage:
@@ -3657,6 +3740,13 @@ def _start_scheduler():
             if scheduler is None:
                 scheduler = BackgroundScheduler()
                 scheduler.add_job(_crawl_latest, CronTrigger(minute='*/15'), id='crawl_every_15m', replace_existing=True)
+                scheduler.add_job(
+                    _run_scheduled_strategy_trial,
+                    CronTrigger(minute='*', timezone=app_timezone()),
+                    id='fae_strategy_trial', replace_existing=True,
+                    coalesce=True, max_instances=1,
+                    next_run_time=datetime.now() + timedelta(seconds=20),
+                )
                 scheduler.add_job(
                     _run_scheduled_fae_reviews,
                     CronTrigger(minute='*/5'),

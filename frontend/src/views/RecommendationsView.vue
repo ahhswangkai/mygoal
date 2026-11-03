@@ -38,12 +38,16 @@
         <button :class="{ active: activeSection === 'review' }" @click="selectSection('review')">
           赛后复盘
         </button>
+        <button :class="{ active: activeSection === 'trial' }" @click="selectSection('trial')">
+          策略验收
+        </button>
         <button :class="{ active: activeSection === 'skills' }" @click="selectSection('skills')">
           Skill 迭代
         </button>
       </nav>
 
-      <div v-if="loading && !hasData" class="recommendation-state">正在生成当天推荐…</div>
+      <StrategyTrialPanel v-if="activeSection === 'trial'" :selected-date="selectedDate" :refresh-key="trialRefreshKey" @select-date="selectDate" />
+      <div v-else-if="loading && !hasData" class="recommendation-state">正在生成当天推荐…</div>
       <div v-else-if="error && !hasData" class="recommendation-state error">
         <span>{{ error }}</span>
         <button type="button" @click="fetchData">重新加载</button>
@@ -1582,12 +1586,14 @@ import { computed, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref }
 import { useRouter } from 'vue-router'
 import AccountButton from '../components/AccountButton.vue'
 import HistoricalGoalMarginCard from '../components/HistoricalGoalMarginCard.vue'
+import StrategyTrialPanel from '../components/StrategyTrialPanel.vue'
 import { openAuth } from '../auth'
 
 const router = useRouter()
 const loading = ref(false)
 const error = ref('')
 const activeSection = ref('dailyAi')
+const trialRefreshKey = ref(0)
 const faeDailyAi = ref(null)
 const dailyAiConfigured = ref(false)
 const dailyAiCanManage = ref(false)
@@ -2078,6 +2084,10 @@ const hasData = computed(() =>
 )
 
 async function fetchData() {
+  if (activeSection.value === 'trial') {
+    trialRefreshKey.value += 1
+    return
+  }
   requestController?.abort()
   requestController = new AbortController()
   const controller = requestController
@@ -3126,7 +3136,7 @@ onBeforeUnmount(() => {
 
 .recommendation-tabs {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   margin: 10px 0;
   padding: 4px;
   background: #e9eaed;

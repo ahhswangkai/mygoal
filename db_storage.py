@@ -96,6 +96,9 @@ class MongoDBStorage:
         self.fae_daily_ai_batches_collection = self.db['fae_daily_ai_batches']
         self.fae_daily_ai_reviews_collection = self.db['fae_daily_ai_reviews']
         self.fae_review_memories_collection = self.db['fae_review_memories']
+        self.fae_strategy_trials_collection = self.db['fae_strategy_trials']
+        self.fae_strategy_trial_days_collection = self.db['fae_strategy_trial_days']
+        self.fae_strategy_trial_reviews_collection = self.db['fae_strategy_trial_reviews']
         self.fae_backtest_reports_collection = self.db['fae_backtest_reports']
         self.fae_supervised_models_collection = self.db['fae_supervised_models']
         self.fae_supervised_backtests_collection = self.db['fae_supervised_backtests']
@@ -238,6 +241,12 @@ class MongoDBStorage:
             self.fae_review_memories_collection.create_index(
                 [('memory_hash', ASCENDING)], unique=True
             )
+            self.fae_strategy_trials_collection.create_index('experiment_id', unique=True)
+            for collection in (self.fae_strategy_trial_days_collection,
+                               self.fae_strategy_trial_reviews_collection):
+                collection.create_index([
+                    ('experiment_id', ASCENDING), ('owner_date', ASCENDING)
+                ], unique=True)
             self.fae_review_memories_collection.create_index([
                 ('before_date', ASCENDING), ('saved_at', DESCENDING)
             ])
@@ -338,6 +347,41 @@ class MongoDBStorage:
         
         self.logger.info(f"批量保存比赛数据完成: {success_count}/{len(matches)}")
         return success_count
+
+    def get_strategy_trial(self, experiment_id):
+        return self.fae_strategy_trials_collection.find_one(
+            {'experiment_id': experiment_id}, {'_id': 0})
+
+    def start_strategy_trial(self, trial):
+        """Starting twice (or from two workers) never resets the experiment."""
+        self.fae_strategy_trials_collection.update_one(
+            {'experiment_id': trial['experiment_id']},
+            {'$setOnInsert': dict(trial)}, upsert=True)
+        return self.get_strategy_trial(trial['experiment_id'])
+
+    def save_strategy_trial_day(self, record):
+        """Append-only decisions, including no-ticket and missed days."""
+        key = {'experiment_id': record['experiment_id'],
+               'owner_date': record['owner_date']}
+        self.fae_strategy_trial_days_collection.update_one(
+            key, {'$setOnInsert': dict(record)}, upsert=True)
+        return self.fae_strategy_trial_days_collection.find_one(key, {'_id': 0})
+
+    def get_strategy_trial_days(self, experiment_id, *, audit=False):
+        projection = {'_id': 0} if audit else {'_id': 0, 'audit': 0}
+        return list(self.fae_strategy_trial_days_collection.find(
+            {'experiment_id': experiment_id}, projection).sort('owner_date', ASCENDING))
+
+    def save_strategy_trial_review(self, review):
+        key = {'experiment_id': review['experiment_id'],
+               'owner_date': review['owner_date']}
+        # Outcomes live separately; never update picks, prices or their hash.
+        self.fae_strategy_trial_reviews_collection.update_one(
+            key, {'$set': dict(review)}, upsert=True)
+
+    def get_strategy_trial_reviews(self, experiment_id):
+        return list(self.fae_strategy_trial_reviews_collection.find(
+            {'experiment_id': experiment_id}, {'_id': 0}).sort('owner_date', ASCENDING))
 
     def save_match_fundamentals(self, match_id, source_analysis):
         """缓存单场基本面，供详情页和全日研判复用。"""

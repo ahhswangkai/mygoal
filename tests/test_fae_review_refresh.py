@@ -67,6 +67,8 @@ class ReviewRefreshTests(unittest.TestCase):
             "os": SimpleNamespace(getenv=lambda key, default=None: default),
             "_env_enabled": lambda key, default=False: default,
             "print": Mock(),
+            "app_timezone": lambda: None,
+            "_run_scheduled_strategy_trial": Mock(),
         })
         for name in ("_crawl_latest", "_run_scheduled_fundamentals_prefetch",
                      "_settle_pending_calculator_bets", "_run_scheduled_fae_prematch_ai",
