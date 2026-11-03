@@ -24,8 +24,8 @@ from crawler import (
 )
 from fae_schedule import app_timezone, prematch_analysis_due
 from football_ai.strategy_trial import (
-    TRIAL_VERSION, HISTORICAL_TRIAL_VERSIONS, TRIAL_POLICY, build_trial_day, decision_time,
-    execute_trial_ai_job, model_fingerprint, settle_ticket, settle_draw_ticket, archive_trial_job, start_trial, trial_report,
+    TRIAL_VERSION, TRIAL_POLICY, build_trial_day, decision_time,
+    execute_trial_ai_job, model_fingerprint, reschedule_trial, settle_ticket, settle_draw_ticket, archive_trial_job, start_trial, trial_report,
 )
 from football_ai.strategy_trial_ai import make_trial_ai_client, trial_ai_settings
 from match_time_utils import sort_matches_by_datetime
@@ -2496,8 +2496,8 @@ def get_fae_strategy_trial():
     if not mongo_storage:
         return jsonify({'success': False, 'message': 'MongoDB不可用'}), 503
     experiment_id = request.args.get('experiment_id') or TRIAL_VERSION
-    if experiment_id not in (TRIAL_VERSION, *HISTORICAL_TRIAL_VERSIONS):
-        return jsonify({'success': False, 'message': '未知试验版本'}), 422
+    if experiment_id != TRIAL_VERSION:
+        return jsonify({'success': False, 'message': '仅保留V3策略验收'}), 422
     trial = mongo_storage.get_strategy_trial(experiment_id)
     report = None
     if trial:
@@ -2505,12 +2505,10 @@ def get_fae_strategy_trial():
             trial, _strategy_trial_days(trial),
             mongo_storage.get_strategy_trial_reviews(experiment_id))
         report['implementation_matches'] = trial['model_fingerprint'] == model_fingerprint()
-        report['legacy_read_only'] = experiment_id != TRIAL_VERSION
         report['ai_configuration_matches'] = not trial['policy'].get('llm_enabled') or trial.get('ai_settings') == trial_ai_settings(make_trial_ai_client())
     return jsonify({'success': True, 'data': report, 'policy': TRIAL_POLICY,
                     'current_experiment_id': TRIAL_VERSION,
-                    'available_experiments': [key for key in (TRIAL_VERSION, *HISTORICAL_TRIAL_VERSIONS)
-                                              if key == TRIAL_VERSION or mongo_storage.get_strategy_trial(key)],
+                    'available_experiments': [TRIAL_VERSION],
                     'can_manage': bool(_fae_admin_user())})
 
 
@@ -2523,8 +2521,11 @@ def start_fae_strategy_trial():
     if not client.configured:
         return jsonify({'success': False, 'message': '请先配置火山方舟ARK_API_KEY和模型，AI试验不使用本地降级'}), 422
     trial = mongo_storage.start_strategy_trial(start_trial(client=client))
+    updated = reschedule_trial(trial)
+    if updated:
+        trial = mongo_storage.update_strategy_trial_schedule(trial, updated)
     return jsonify({'success': True, 'data': trial,
-                    'message': 'AI版30天模拟已登记；每日18:00冻结输入并分批调用火山，产生API费用，不写入真实投注记录'})
+                    'message': 'V3 AI版30天模拟已登记；每日北京时间14:00冻结输入并分批调用火山，产生API费用，不写入真实投注记录'})
 
 
 @app.route('/api/fae/strategy-trial/audit', methods=['GET'])
@@ -2534,8 +2535,8 @@ def get_fae_strategy_trial_audit():
         return jsonify({'success': False, 'message': 'MongoDB不可用'}), 503
     owner_date = request.args.get('date')
     experiment_id = request.args.get('experiment_id') or TRIAL_VERSION
-    if experiment_id not in (TRIAL_VERSION, *HISTORICAL_TRIAL_VERSIONS):
-        return jsonify({'success': False, 'message': '未知试验版本'}), 422
+    if experiment_id != TRIAL_VERSION:
+        return jsonify({'success': False, 'message': '仅保留V3策略验收'}), 422
     rows = mongo_storage.get_strategy_trial_days(experiment_id, audit=True)
     return jsonify({'success': True, 'data': next(
         (row for row in rows if row['owner_date'] == owner_date), None),
@@ -2555,11 +2556,16 @@ def _run_scheduled_strategy_trial():
     """Immutable paid AI forecasts, with separate free result settlement."""
     if not mongo_storage:
         return
-    trial = mongo_storage.get_strategy_trial(TRIAL_VERSION)
     now = datetime.now(app_timezone())
+    trial = mongo_storage.get_strategy_trial(TRIAL_VERSION)
+    updated = reschedule_trial(trial, now)
+    if updated:
+        trial = mongo_storage.update_strategy_trial_schedule(trial, updated)
     days = mongo_storage.get_strategy_trial_days(TRIAL_VERSION) if trial else []
     saved = {day['owner_date'] for day in days}
     date = datetime.strptime(trial['start_date'], '%Y-%m-%d').date() if trial else now.date() + timedelta(days=1)
+    if trial and trial.get('schedule_effective_date'):
+        date = max(date, datetime.strptime(trial['schedule_effective_date'], '%Y-%m-%d').date())
     last_date = min(now.date(), datetime.strptime(trial['end_date'], '%Y-%m-%d').date()) if trial else now.date()
     while date <= last_date:
         date_str = date.isoformat()
@@ -2589,22 +2595,18 @@ def _run_scheduled_strategy_trial():
             if job['owner_date'] in saved:
                 continue
             try:
-                result = execute_trial_ai_job(trial, mongo_storage.get_strategy_trial_ai_job(TRIAL_VERSION, job['owner_date']), mongo_storage)
+                full_job = mongo_storage.get_strategy_trial_ai_job(TRIAL_VERSION, job['owner_date'])
+                snapshot = full_job['input_snapshot']
+                old_schedule_hashes = {entry['previous_policy_hash'] for entry in trial.get('schedule_history', [])}
+                if snapshot.get('policy_hash') in old_schedule_hashes:
+                    result = archive_trial_job(snapshot, now, reason='V3已调整为14:00出单；原18:00未完成任务保留留档，不补跑或重复调用AI')
+                else:
+                    result = execute_trial_ai_job(trial, full_job, mongo_storage)
                 if result:
                     days.append(mongo_storage.save_strategy_trial_day(result))
             except Exception:
                 app.logger.exception('策略AI批次执行失败: %s', job['owner_date'])
-    # Keep earlier strategies readable and settled, never relabel them v3.
-    for experiment_id in HISTORICAL_TRIAL_VERSIONS:
-        old_days = mongo_storage.get_strategy_trial_days(experiment_id)
-        old_trial = mongo_storage.get_strategy_trial(experiment_id)
-        if old_trial and old_trial['policy'].get('llm_enabled'):
-            archived_dates = {row['owner_date'] for row in old_days}
-            for job in mongo_storage.get_strategy_trial_ai_jobs(experiment_id, audit=False):
-                if job['owner_date'] not in archived_dates:
-                    snapshot = mongo_storage.get_strategy_trial_ai_job(experiment_id, job['owner_date'])['input_snapshot']
-                    old_days.append(mongo_storage.save_strategy_trial_day(archive_trial_job(snapshot, now)))
-        days.extend(old_days)
+    # Retired versions remain stored, but are no longer shown or scheduled.
     for day in days:
         if not any(day.get(key) for key in ('ticket', 'baseline_ticket', 'draw_ticket', 'draw_baseline_ticket')):
             continue

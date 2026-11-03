@@ -361,6 +361,18 @@ class MongoDBStorage:
             {'$setOnInsert': dict(trial)}, upsert=True)
         return self.get_strategy_trial(trial['experiment_id'])
 
+    def update_strategy_trial_schedule(self, previous, updated):
+        """Compare-and-set only the explicitly approved schedule migration."""
+        self.fae_strategy_trials_collection.update_one({
+            'experiment_id': previous['experiment_id'],
+            'policy_hash': previous['policy_hash'],
+            'model_fingerprint': previous['model_fingerprint'],
+        }, {'$set': {key: updated[key] for key in (
+            'policy', 'policy_hash', 'model_fingerprint',
+            'schedule_history', 'schedule_effective_date',
+        )}})
+        return self.get_strategy_trial(previous['experiment_id'])
+
     def save_strategy_trial_day(self, record):
         """Append-only decisions, including no-ticket and missed days."""
         key = {'experiment_id': record['experiment_id'],

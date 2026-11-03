@@ -21,15 +21,15 @@ from .strategy_trial_ai import TrialAIForecaster, make_trial_ai_client, trial_ai
 from .strategy_trial_draw import DRAW_TRIAL_POLICY, choose_draw_ticket, draw_candidates, settle_draw_plan
 
 
-LEGACY_TRIAL_VERSION = "paper-two-leg-v1"
-PREVIOUS_AI_TRIAL_VERSION = "paper-two-leg-ark-v2"
-HISTORICAL_TRIAL_VERSIONS = (PREVIOUS_AI_TRIAL_VERSION, LEGACY_TRIAL_VERSION)
 TRIAL_VERSION = "paper-multi-ark-v3"
+# Only this known v3 implementation may receive the requested schedule-only
+# migration. Do not silently accept unrelated model or strategy changes.
+V3_1800_FINGERPRINT = "72df899beec1712fe02d80f556cf6abf8fd736d79e74b9bc4a783ac4630fa368"
 # These are pre-registered experimental thresholds, NOT proven profitable ones.
 TRIAL_POLICY = {
     "version": TRIAL_VERSION,
     "days": 30,
-    "decision_hour": 18,
+    "decision_hour": 14,
     "decision_minute": 0,
     "grace_minutes": 5,
     "stake_units": 1,
@@ -103,6 +103,35 @@ def decision_time(owner_date, policy):
     return datetime.strptime(owner_date, "%Y-%m-%d").replace(
         hour=policy["decision_hour"], minute=policy["decision_minute"],
         tzinfo=app_timezone())
+
+
+def reschedule_trial(trial, now=None):
+    """Move the known 18:00 v3 enrollment forward, without rewriting any day."""
+    if not trial or trial.get("experiment_id") != TRIAL_VERSION:
+        return None
+    previous_policy = {**deepcopy(TRIAL_POLICY), "decision_hour": 18}
+    if (trial.get("policy") != previous_policy
+            or trial.get("policy_hash") != digest(previous_policy)
+            or trial.get("model_fingerprint") != V3_1800_FINGERPRINT
+            or digest(trial.get("rule_weights")) != trial.get("weights_hash")):
+        return None
+    current = now or datetime.now(app_timezone())
+    current = current.replace(tzinfo=app_timezone()) if current.tzinfo is None else current.astimezone(app_timezone())
+    effective_date = current.date()
+    if current >= decision_time(effective_date.isoformat(), TRIAL_POLICY):
+        effective_date += timedelta(days=1)
+    updated = deepcopy(trial)
+    updated.setdefault("schedule_history", []).append({
+        "changed_at": current.isoformat(), "effective_date": effective_date.isoformat(),
+        "previous_policy": deepcopy(trial["policy"]),
+        "previous_policy_hash": trial["policy_hash"],
+        "previous_model_fingerprint": trial["model_fingerprint"],
+        "reason": "按要求将V3出单时间从18:00调整为北京时间14:00；已冻结记录不变",
+    })
+    updated.update(policy=deepcopy(TRIAL_POLICY), policy_hash=digest(TRIAL_POLICY),
+                   model_fingerprint=model_fingerprint(),
+                   schedule_effective_date=effective_date.isoformat())
+    return updated
 
 
 def trial_slot(trial, owner_date, now):
@@ -212,7 +241,7 @@ def build_trial_day(trial, owner_date, matches, fundamentals=None, *, now=None,
         "analysis_source": "volcengine-ark" if policy.get("llm_enabled") else "fae-core",
     }
     if slot == "missed":
-        record.update(decision="missed", reason="错过18:00出单窗口，不用后来数据补选")
+        record.update(decision="missed", reason=f"错过{policy['decision_hour']:02d}:{policy['decision_minute']:02d}出单窗口，不用后来数据补选")
     elif (digest(policy) != trial["policy_hash"]
           or digest(trial["rule_weights"]) != trial["weights_hash"]
           or (fingerprint or model_fingerprint()) != trial["model_fingerprint"]):
@@ -454,11 +483,11 @@ def settle_draw_ticket(ticket, results):
     return settle_draw_plan(ticket, results, settle_ticket)
 
 
-def archive_trial_job(snapshot, now=None):
+def archive_trial_job(snapshot, now=None, reason=None):
     """Do not leave an old-version paid job labelled 'running' forever."""
     output = deepcopy(snapshot)
     output.update(decision='suspended', ticket=None,
-                  reason='旧版试验已归档，未完成AI任务不使用新版Prompt补跑；只结算已冻结的对照单',
+                  reason=reason or '旧版试验已归档，未完成AI任务不使用新版Prompt补跑；只结算已冻结的对照单',
                   archived_at=(now or datetime.now(app_timezone())).isoformat(),
                   source_snapshot_hash=snapshot['snapshot_hash'])
     if 'draw_ticket' in output:

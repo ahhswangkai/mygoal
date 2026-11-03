@@ -141,7 +141,7 @@ class TrialAITests(unittest.TestCase):
         # Simulate a saved, successful batch whose publication was interrupted.
         execute_trial_ai_job(self.trial, storage.job, storage, forecaster=self.forecaster, clock=lambda: NOW)
         result = execute_trial_ai_job(self.trial, storage.job, storage, forecaster=self.forecaster,
-                                      clock=lambda: NOW + timedelta(hours=4))
+                                      clock=lambda: NOW + timedelta(hours=8))
         self.assertIsNone(result['ticket'])
 
     def test_inflight_claim_is_never_stolen_or_repaid(self):

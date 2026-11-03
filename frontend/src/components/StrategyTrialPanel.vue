@@ -1,28 +1,27 @@
 <template>
   <section class="strategy-trial">
     <header class="trial-heading">
-      <div><strong>火山AI · 前瞻验收</strong><small>AI逐场研判，固定规则组单，仅模拟</small></div>
+      <div><strong>火山AI · 前瞻验收 V3</strong><small>AI逐场研判，固定规则组单，仅模拟</small></div>
       <button type="button" :disabled="loading || starting" @click="load">{{ loading ? '加载中…' : '刷新' }}</button>
     </header>
     <p v-if="error" class="trial-error" role="alert">{{ error }}</p>
     <p v-if="message" class="trial-note" role="status">{{ message }}</p>
-    <label v-if="experiments.length > 1" class="trial-version">试验版本 <select v-model="experimentId" @change="load"><option v-for="id in experiments" :key="id" :value="id">{{ experimentLabel(id) }}</option></select></label>
     <div v-if="!report" class="trial-empty">
       <strong>尚未启动试运行</strong>
-      <p>固定Prompt与模型配置观察30天。每天18:00冻结输入，分批调用火山大模型（最多10场/批），独立生成“约3倍二串一”和“平／让平3场2、3关”两类方案。每类最多1张、各1模拟单位，不足条件不凑单。</p>
+      <p>固定Prompt与模型配置观察30天。每天北京时间14:00冻结输入，分批调用火山大模型（最多10场/批），独立生成“约3倍二串一”和“平／让平3场2、3关”两类方案。每类最多1张、各1模拟单位，不足条件不凑单。</p>
       <small>会产生火山API费用。调用失败不使用本地规则冒充AI结论，不创建真实投注。</small>
-      <button v-if="canManage && experimentId === currentExperimentId" type="button" :disabled="starting || loading" @click="start">{{ starting ? '登记中…' : '开始AI版30天模拟' }}</button>
+      <button v-if="canManage" type="button" :disabled="starting || loading" @click="start">{{ starting ? '登记中…' : '开始AI版30天模拟' }}</button>
       <small v-else>由管理员启动，启动后不能重置历史成绩。</small>
     </div>
     <template v-else>
       <div class="trial-notice">
         <strong>{{ report.phase === 'collecting' ? '正在积累前瞻样本' : '观察窗口已结束，等待评估' }}</strong>
         <span>{{ report.trial.start_date }} 至 {{ report.trial.end_date }} · {{ report.trial.experiment_id }}</span>
-        <small>18:00冻结输入（5分钟容错）· {{ hasDrawStrategy ? '两类方案各最多1张/天，各1单位' : '二串一最多1张/天，每张1单位' }}</small>
+        <small>北京时间{{ decisionTimeLabel }}冻结输入（5分钟容错）· 两类方案各最多1张/天，各1单位</small>
+        <small v-if="report.trial.schedule_effective_date">14:00时段自 {{ report.trial.schedule_effective_date }} 起生效；之前已留档的方案不变，不补跑。</small>
         <small v-if="report.trial.ai_settings">模型 {{ report.trial.ai_settings.model }} · Prompt {{ report.trial.ai_settings.prompt_version }} · 最多10场/批</small>
       </div>
-      <p v-if="report.legacy_read_only" class="trial-note">旧版试验仅保留历史和结算；新版增加了平／让平分支和独立AI评估，需单独启动，成绩不合并。</p>
-      <p v-else-if="!report.implementation_matches || report.ai_configuration_matches === false" class="trial-error">模型实现、Prompt或接口配置已改变，暂停后续出单。原赛前留档仍然保留并继续结算。</p>
+      <p v-if="!report.implementation_matches || report.ai_configuration_matches === false" class="trial-error">模型实现、Prompt或接口配置已改变，暂停后续出单。原赛前留档仍然保留并继续结算。</p>
       <h3 class="trial-section-title">约3倍二串一 · 独立统计</h3>
       <div class="trial-stat-grid">
         <article><span>整张命中</span><strong>{{ percent(report.summary.hit_rate) }}</strong><small>{{ report.summary.hits }}/{{ report.summary.decided ?? report.summary.settled }} 胜负已定 · 退回 {{ report.summary.pushes || 0 }}</small></article>
@@ -84,13 +83,10 @@
         <p v-else>这一天尚无留档。固定出单前不提前生成，历史日期不补选。</p>
       </section>
       <details class="trial-rules"><summary>已冻结的实验规则与统计口径</summary>
-        <p v-if="report.legacy_read_only">当前查看 {{ experimentLabel(report.trial.experiment_id) }}，只包含该版已冻结的策略。v1使用本地规则，v2调用AI但仅验收约3倍二串一；都不补算新版的平／让平方案。</p>
-        <template v-else>
         <p>AI版调用火山大模型判断六项概率和主选，冻结Prompt、请求模型与接口配置。输入、Prompt、响应、调用ID逐批落库，不自动调权；配置或代码改变暂停新出单，失败不降级为本地规则。现有平／让平规则不修改。</p>
         <p>只接受大模型原始主选，赔率≥1.50、单腿融合估计≥45%、未校准期望≥1.00，且亚盘/大小球完整、主选投注偏离≤+10个百分点、快照60分钟内、冻结时距开赛超过10分钟。失败后不换成次选，AI完成时已开赛也不出单。</p>
         <p>融合估计＝35%AI估计＋65%同市场去水概率。不同比赛两两组合，合计2.8～3.3倍内取独立近似命中估计最高的一张；这些门槛是实验设定，不是已验证规律。模型使用latest别名时，服务商底层版本仍可能更新，不能声称完全锁定模型权重。</p>
         <p v-if="hasDrawStrategy">平／让平独立分支：AI明确同意候选，赔率2.50～5.00，普通平融合估计≥28%、让平≥25%，期望≥1.00，其余数据与热度门槛不变。同场只占一项，选3场组成2、3关，不要求它是二串一主选，不强制平和让平各占几场。</p>
-        </template>
         <p>每张固定1单位，整张两场均出结果才计入收益；改期按赔率1.00处理。命中率不包含全退票，ROI包含全部已结算单。纯赔率基准同样每场只保留第一方向，再按相同赔率范围组单。</p>
         <p>30天结束不自动发布。需要继续检查样本量、基准对比、收益集中度和不确定性；不使用倍投，不以回本为目标加注。</p>
         <small>规则指纹 {{ report.trial.policy_hash?.slice(0, 16) }} · 模型指纹 {{ report.trial.model_fingerprint?.slice(0, 16) }}</small>
@@ -110,12 +106,12 @@ const starting = ref(false)
 const canManage = ref(false)
 const error = ref('')
 const message = ref('')
-const currentExperimentId = ref('paper-multi-ark-v3')
-const experimentId = ref('paper-multi-ark-v3')
-const experiments = ref([])
 const day = computed(() => report.value?.days?.find(item => item.owner_date === props.selectedDate))
 const hasDrawStrategy = computed(() => Boolean(report.value?.trial?.policy?.draw_focus?.enabled))
-const experimentLabel = id => id === currentExperimentId.value ? 'AI版 v3（二串一＋平/让平）' : id === 'paper-two-leg-ark-v2' ? 'AI版 v2（仅二串一历史）' : '规则版 v1（仅历史）'
+const decisionTimeLabel = computed(() => {
+  const policy = report.value?.trial?.policy
+  return `${String(policy?.decision_hour ?? 14).padStart(2, '0')}:${String(policy?.decision_minute ?? 0).padStart(2, '0')}`
+})
 let controller
 let timer
 let visible = true
@@ -132,19 +128,17 @@ async function load() {
   loading.value = true
   error.value = ''
   try {
-    const response = await fetch(`/api/fae/strategy-trial?experiment_id=${encodeURIComponent(experimentId.value)}`, { credentials: 'same-origin', cache: 'no-store', signal: active.signal })
+    const response = await fetch('/api/fae/strategy-trial', { credentials: 'same-origin', cache: 'no-store', signal: active.signal })
     const payload = await response.json()
     if (!response.ok || !payload.success) throw new Error(payload.message || '试运行加载失败')
     if (controller !== active) return
     report.value = payload.data
-    currentExperimentId.value = payload.current_experiment_id || 'paper-multi-ark-v3'
-    experiments.value = payload.available_experiments || [currentExperimentId.value]
     canManage.value = Boolean(payload.can_manage)
   } catch (e) { if (e.name !== 'AbortError') error.value = e.message }
   finally { if (controller === active) loading.value = false }
 }
 async function start() {
-  if (!window.confirm('开始AI版v3的30天模拟？二串一与平/让平2、3关各最多1张、各1单位；每天18:00分批调用火山，会产生API费用；旧版成绩分开保留，不创建真实投注。')) return
+  if (!window.confirm('开始AI版V3的30天模拟？二串一与平/让平2、3关各最多1张、各1单位；每天北京时间14:00分批调用火山，会产生API费用，不创建真实投注。')) return
   starting.value = true
   error.value = ''
   try {
@@ -179,8 +173,6 @@ onBeforeUnmount(() => { controller?.abort(); clearInterval(timer) })
 .trial-stat-grid article span { font-size: 12px; color: #888; }
 .trial-stat-grid article strong { display: block; margin-top: 8px; font-size: 21px; color: #323c4a; }
 .trial-note { font-size: 12px; color: #777; }
-.trial-version { display: flex; align-items: center; gap: 10px; margin-top: 14px; font-size: 12px; }
-.trial-version select { min-width: 0; padding: 7px; border: 1px solid #e6d5da; border-radius: 7px; background: #fff; color: #555; }
 .trial-ai-reason { grid-column: 1 / -1; }
 .trial-section-title { margin: 20px 0 0; font-size: 14px; color: #414b59; }
 .trial-draw-plan { margin-top: 18px; padding: 12px; border-radius: 10px; background: #fff8f8; border: 1px solid #eed8df; }
