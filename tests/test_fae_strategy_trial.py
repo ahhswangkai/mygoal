@@ -261,7 +261,7 @@ class TrialSchedulingTests(unittest.TestCase):
         storage.get_match_fundamentals_bulk.return_value = {}
         storage.save_strategy_trial_day.side_effect = lambda day: day
         namespace = dict(datetime=Clock, timedelta=timedelta, app_timezone=app_timezone,
-                         mongo_storage=storage, TRIAL_VERSION='paper-two-leg-v1', LEGACY_TRIAL_VERSION='legacy',
+                         mongo_storage=storage, TRIAL_VERSION='paper-two-leg-v1', HISTORICAL_TRIAL_VERSIONS=('legacy',),
                          decision_time=decision_time, build_trial_day=Mock(return_value={
                              'decision': 'no_ticket', 'owner_date': '2026-11-03', 'ticket': None, 'baseline_ticket': None}),
                          settle_ticket=settle_ticket, app=SimpleNamespace(logger=Mock()))

@@ -18,10 +18,13 @@ from .daily_review import FAEDailyAIReviewEngine, _score
 from .engine import FootballAIEngine
 from .version import DEFAULT_RULE_WEIGHTS, ENGINE_VERSION
 from .strategy_trial_ai import TrialAIForecaster, make_trial_ai_client, trial_ai_settings
+from .strategy_trial_draw import DRAW_TRIAL_POLICY, choose_draw_ticket, draw_candidates, settle_draw_plan
 
 
 LEGACY_TRIAL_VERSION = "paper-two-leg-v1"
-TRIAL_VERSION = "paper-two-leg-ark-v2"
+PREVIOUS_AI_TRIAL_VERSION = "paper-two-leg-ark-v2"
+HISTORICAL_TRIAL_VERSIONS = (PREVIOUS_AI_TRIAL_VERSION, LEGACY_TRIAL_VERSION)
+TRIAL_VERSION = "paper-multi-ark-v3"
 # These are pre-registered experimental thresholds, NOT proven profitable ones.
 TRIAL_POLICY = {
     "version": TRIAL_VERSION,
@@ -42,6 +45,7 @@ TRIAL_POLICY = {
     "probabilities_calibrated": False,
     "llm_enabled": True,
     "automatic_learning": False,
+    "draw_focus": DRAW_TRIAL_POLICY,
 }
 SELECTIONS = {"ordinary": ("主胜", "平局", "客胜"),
               "handicap": ("让胜", "让平", "让负")}
@@ -65,7 +69,7 @@ def model_fingerprint():
     root = Path(__file__).resolve().parent
     files = [root / name for name in (
         "strategy_trial.py", "engine.py", "market_rules.py", "version.py",
-        "provider.py", "daily_review.py", "strategy_trial_ai.py",
+        "provider.py", "daily_review.py", "strategy_trial_ai.py", "strategy_trial_draw.py",
     )] + [root.parent / "fae_schedule.py"]
     return digest({str(path.name): sha256(path.read_bytes()).hexdigest()
                    for path in files})
@@ -215,7 +219,7 @@ def build_trial_day(trial, owner_date, matches, fundamentals=None, *, now=None,
         record.update(decision="suspended", reason="规则或模型代码与冻结版本不一致，暂停出单；原记录仍继续结算")
     else:
         calculator = engine or FootballAIEngine()
-        candidates, baseline = [], []
+        candidates, baseline, draw_pool = [], [], []
         for match in sorted(matches, key=lambda row: str(row.get("match_id") or "")):
             audit = {"match_id": str(match.get("match_id") or ""),
                      "match_number": match.get("match_number"),
@@ -257,6 +261,8 @@ def build_trial_day(trial, owner_date, matches, fundamentals=None, *, now=None,
             baseline.extend(rows)
             if policy.get("llm_enabled") and (capture_only or not result.get("ai_verified")):
                 continue
+            if policy.get('llm_enabled') and (policy.get('draw_focus') or {}).get('enabled'):
+                draw_pool.extend(draw_candidates(audit, rows, policy, current, published_at))
             # Only the top prediction is eligible; failures must not promote
             # the second/third option into a fabricated primary recommendation.
             primary = (next((row for row in rows if row["selection"] == result.get("primary_selection")), None)
@@ -311,6 +317,21 @@ def build_trial_day(trial, owner_date, matches, fundamentals=None, *, now=None,
             record["reason"] = f"{len(candidates)}场通过单腿条件，但保留各场第一方向后，没有2.8～3.3倍组合，不换项凑单"
         if capture_only and policy.get("llm_enabled"):
             record.update(decision="analyzing", reason="赛前输入已冻结，等待火山大模型逐场研判")
+        if (policy.get('draw_focus') or {}).get('enabled'):
+            record['draw_candidates'] = draw_pool
+            record['draw_ticket'] = choose_draw_ticket(draw_pool, policy)
+            record['draw_baseline_ticket'] = choose_draw_ticket(baseline, policy, baseline=True)
+            record['draw_eligible_match_count'] = len({row['match_id'] for row in draw_pool if row['eligible']})
+    if (policy.get('draw_focus') or {}).get('enabled'):
+        record.setdefault('draw_ticket', None)
+        record.setdefault('draw_baseline_ticket', None)
+        record.setdefault('draw_candidates', [])
+        record['draw_decision'] = (record['decision'] if record['decision'] in {'missed', 'suspended', 'analyzing'}
+                                   else 'ticket' if record['draw_ticket'] else 'no_ticket')
+        record['draw_reason'] = ('平/让平独立候选已凑齐3场，按3个二串一和1个三串一模拟'
+                                 if record['draw_ticket'] else record['reason']
+                                 if record['draw_decision'] in {'missed', 'suspended', 'analyzing'}
+                                 else '平/让平合格的不同比赛不足3场，不换项、不凑单')
     if published_at:
         record["published_at"] = published_at.isoformat()
     record["excluded_matches"] = [{
@@ -380,17 +401,22 @@ def execute_trial_ai_job(trial, job, storage, *, forecaster=None, clock=None):
         {row['match_id']: row.get('fundamentals_snapshot') or {} for row in snapshot['audit']},
         now=captured_at, ai_predictions=predictions, published_at=now())
     result['baseline_ticket'] = deepcopy(snapshot.get('baseline_ticket'))
+    if 'draw_baseline_ticket' in snapshot:
+        result['draw_baseline_ticket'] = deepcopy(snapshot['draw_baseline_ticket'])
     if configuration_changed or implementation_changed:
         result.update(decision='suspended', ticket=None,
                       reason='模型、接口或Prompt配置与冻结版本不同，未调用AI；旧记录保留')
     elif audits and not any(row.get('ai_verified') for row in predictions.values()):
         result.update(decision='ai_failed', ticket=None, reason='未获得有效火山研判，不使用本地规则替代，不生成模拟单')
+    if result['decision'] in {'suspended', 'ai_failed'} and 'draw_decision' in result:
+        result.update(draw_decision=result['decision'], draw_ticket=None, draw_reason=result['reason'])
     result['ai_run'] = {
         'model': settings['model'], 'prompt_version': settings['prompt_version'],
         'prompt_hash': settings['prompt_hash'], 'batch_count': len(batches),
         'completed_batches': sum(b.get('status') == 'complete' for b in saved_batches.values()),
         'failed_batches': sum(b.get('status') == 'failed' for b in saved_batches.values()),
         'verified_matches': sum(bool(r.get('ai_verified')) for r in predictions.values()),
+        'draw_assessed_matches': sum(bool(r.get('draw_focus_valid')) for r in predictions.values()),
         'batch_audit_hash': digest(saved_batches),
         'response_models': sorted({str((b.get('provider_meta') or {}).get('response_model')) for b in saved_batches.values()
                                    if (b.get('provider_meta') or {}).get('response_model')})}
@@ -424,6 +450,23 @@ def settle_ticket(ticket, results):
     return output
 
 
+def settle_draw_ticket(ticket, results):
+    return settle_draw_plan(ticket, results, settle_ticket)
+
+
+def archive_trial_job(snapshot, now=None):
+    """Do not leave an old-version paid job labelled 'running' forever."""
+    output = deepcopy(snapshot)
+    output.update(decision='suspended', ticket=None,
+                  reason='旧版试验已归档，未完成AI任务不使用新版Prompt补跑；只结算已冻结的对照单',
+                  archived_at=(now or datetime.now(app_timezone())).isoformat(),
+                  source_snapshot_hash=snapshot['snapshot_hash'])
+    if 'draw_ticket' in output:
+        output.update(draw_ticket=None, draw_decision='suspended', draw_reason=output['reason'])
+    output['snapshot_hash'] = digest({k: v for k, v in output.items() if k != 'snapshot_hash'})
+    return output
+
+
 def trial_report(trial, days, reviews, *, now=None):
     current = now or datetime.now(app_timezone())
     review_by_day = {r["owner_date"]: r for r in reviews}
@@ -432,7 +475,7 @@ def trial_report(trial, days, reviews, *, now=None):
         review = review_by_day.get(day["owner_date"]) or {}
         if review.get("snapshot_hash") != day["snapshot_hash"]:
             review = {}
-        settlement = {key: review[key] for key in ("ticket", "baseline_ticket", "reviewed_at") if key in review}
+        settlement = {key: review[key] for key in ("ticket", "baseline_ticket", "draw_ticket", "draw_baseline_ticket", "reviewed_at") if key in review}
         rows.append({k: v for k, v in {**day, **settlement}.items() if k != "audit"})
     def summarize(key):
         tickets = [row[key] for row in rows if row.get(key)]
@@ -447,7 +490,7 @@ def trial_report(trial, days, reviews, *, now=None):
             equity += ticket["profit_units"]
             peak = max(peak, equity)
             drawdown = max(drawdown, peak - equity)
-            streak = streak + 1 if ticket["status"] == "miss" else 0
+            streak = streak + 1 if ticket['profit_units'] < 0 else 0
             longest = max(longest, streak)
         interval = None
         roi_interval = None
@@ -465,15 +508,20 @@ def trial_report(trial, days, reviews, *, now=None):
             boot = sorted(sum(rng.choice(profits) for _ in profits) / len(profits) * 100 for _ in range(2000))
             roi_interval = [round(boot[49], 1), round(boot[1949], 1)]
         return {"tickets": len(tickets), "settled": len(settled), "hits": hits,
+                "decided": len(decided), "pushes": len(settled) - len(decided),
                 "pending": len(tickets) - len(settled), "stake_units": round(stake, 4),
                 "profit_units": round(profit, 4), "roi": round(profit / stake * 100, 2) if stake else None,
                 "hit_rate": round(hits / len(decided) * 100, 2) if decided else None,
                 "hit_rate_interval_95": interval, "max_drawdown_units": round(drawdown, 4),
                 "roi_interval_95": roi_interval,
+                "profitable_tickets": sum(t['profit_units'] > 0 for t in settled),
                 "max_losing_streak": longest,
                 "best_ticket_profit_units": max((t["profit_units"] for t in settled), default=None)}
     return {"trial": trial, "days": rows, "summary": summarize("ticket"),
             "baseline": summarize("baseline_ticket"),
+            "draw_summary": summarize('draw_ticket'),
+            "draw_baseline": summarize('draw_baseline_ticket'),
+            "draw_no_ticket_days": sum(r.get('draw_decision') == 'no_ticket' for r in rows),
             "no_ticket_days": sum(r["decision"] == "no_ticket" for r in rows),
             "missed_days": sum(r["decision"] == "missed" for r in rows),
             "suspended_days": sum(r["decision"] == "suspended" for r in rows),
