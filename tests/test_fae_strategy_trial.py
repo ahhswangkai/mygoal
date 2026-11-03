@@ -57,6 +57,7 @@ class StrategyTrialTests(unittest.TestCase):
         self.trial = start_trial(NOW - timedelta(hours=8))
         # Preserve the original deterministic tests as explicit v1 regressions.
         self.trial['policy']['llm_enabled'] = False
+        self.trial['policy'].pop('selection_mode', None)
         self.trial['policy_hash'] = digest(self.trial['policy'])
         self.trial['model_fingerprint'] = 'fixed'
 
@@ -381,6 +382,7 @@ class TrialSchedulingTests(unittest.TestCase):
 class TrialScheduleMigrationTests(unittest.TestCase):
     def old_trial(self, hour=18):
         trial = start_trial(NOW - timedelta(hours=8))
+        trial['policy'].pop('selection_mode', None)
         trial['policy']['decision_hour'] = hour
         trial['policy_hash'] = digest(trial['policy'])
         trial['model_fingerprint'] = {18: V3_1800_FINGERPRINT, 14: V3_1400_FINGERPRINT}[hour]

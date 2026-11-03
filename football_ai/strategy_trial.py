@@ -22,10 +22,11 @@ from .strategy_trial_draw import DRAW_TRIAL_POLICY, choose_draw_ticket, draw_can
 
 
 TRIAL_VERSION = "paper-multi-ark-v3"
-# Only these known v3 implementations may receive the requested schedule-only
-# migration. Do not silently accept unrelated model or strategy changes.
+# Only these known v3 implementations may receive the explicitly requested
+# schedule/research-policy migration. Unknown changes still suspend forecasts.
 V3_1800_FINGERPRINT = "72df899beec1712fe02d80f556cf6abf8fd736d79e74b9bc4a783ac4630fa368"
 V3_1400_FINGERPRINT = "88838f86d9ed69f540644745b4d851f2151389994c2451f02a84a9e32a5d83d6"
+V3_STRICT_1600_FINGERPRINT = "97b84d82b5152ce5aa6b2cb2a752f2903452db4338f51ab48fa923830d7e66a4"
 # These are pre-registered experimental thresholds, NOT proven profitable ones.
 TRIAL_POLICY = {
     "version": TRIAL_VERSION,
@@ -46,6 +47,7 @@ TRIAL_POLICY = {
     "probabilities_calibrated": False,
     "llm_enabled": True,
     "automatic_learning": False,
+    "selection_mode": "daily_research_v1",
     "draw_focus": DRAW_TRIAL_POLICY,
 }
 SELECTIONS = {"ordinary": ("主胜", "平局", "客胜"),
@@ -107,12 +109,14 @@ def decision_time(owner_date, policy):
 
 
 def reschedule_trial(trial, now=None):
-    """Move known earlier v3 schedules to 16:00, without rewriting any day."""
+    """Activate the requested research policy prospectively; never replay a day."""
     if not trial or trial.get("experiment_id") != TRIAL_VERSION:
         return None
     previous_hour = (trial.get("policy") or {}).get("decision_hour")
-    previous_fingerprint = {18: V3_1800_FINGERPRINT, 14: V3_1400_FINGERPRINT}.get(previous_hour)
+    previous_fingerprint = {18: V3_1800_FINGERPRINT, 14: V3_1400_FINGERPRINT,
+                            16: V3_STRICT_1600_FINGERPRINT}.get(previous_hour)
     previous_policy = {**deepcopy(TRIAL_POLICY), "decision_hour": previous_hour}
+    previous_policy.pop('selection_mode', None)
     if (not previous_fingerprint or trial.get("policy") != previous_policy
             or trial.get("policy_hash") != digest(previous_policy)
             or trial.get("model_fingerprint") != previous_fingerprint
@@ -129,7 +133,7 @@ def reschedule_trial(trial, now=None):
         "previous_policy": deepcopy(trial["policy"]),
         "previous_policy_hash": trial["policy_hash"],
         "previous_model_fingerprint": trial["model_fingerprint"],
-        "reason": f"按要求将V3出单时间从{previous_hour:02d}:00调整为北京时间16:00；已冻结记录不变",
+        "reason": f"V3从原{previous_hour:02d}:00严格门槛切换为16:00每日复盘候选；旧留档不补算、不覆盖",
     })
     updated.update(policy=deepcopy(TRIAL_POLICY), policy_hash=digest(TRIAL_POLICY),
                    model_fingerprint=model_fingerprint(),
@@ -209,20 +213,25 @@ def _choose_ticket(candidates, policy, *, baseline=False):
     choices = []
     for picks in combinations(sorted(by_match.values(), key=lambda row: row["match_id"]), 2):
         odds = picks[0]["odds"] * picks[1]["odds"]
-        if not policy["min_combined_odds"] <= odds <= policy["max_combined_odds"]:
-            continue
         key = "market_probability" if baseline else "probability"
         probability = picks[0][key] * picks[1][key] / 100
         choices.append((probability, odds, picks))
-    if not choices:
+    in_range = [item for item in choices if policy['min_combined_odds'] <= item[1] <= policy['max_combined_odds']]
+    research = policy.get('selection_mode') == 'daily_research_v1'
+    pool = in_range or (choices if research else [])
+    if not pool:
         return None
-    probability, odds, picks = max(choices, key=lambda item: (item[0], -abs(item[1] - 3)))
+    probability, odds, picks = max(pool, key=lambda item: (item[0], -abs(item[1] - 3)))
+    warnings = sorted({warning for pick in picks for warning in pick.get('warnings', [])})
+    if not in_range:
+        warnings.append('没有2.8～3.3倍组合，保留原主选方向并展示实际合计赔率')
     return {
         "picks": deepcopy(list(picks)), "combined_odds": round(odds, 6),
         "stake": policy["stake_units"], "status": "pending",
         "estimated_hit_probability": round(probability, 4),
         "breakeven_probability": round(100 / odds, 4),
         "probability_note": "未校准估计，按独立近似相乘，不是真实胜率或盈利承诺",
+        "research_only": research, "warnings": warnings,
     }
 
 
@@ -231,6 +240,7 @@ def build_trial_day(trial, owner_date, matches, fundamentals=None, *, now=None,
                     capture_only=False, published_at=None):
     current = now or datetime.now(app_timezone())
     policy = trial["policy"]
+    research = policy.get('selection_mode') == 'daily_research_v1'
     slot = trial_slot(trial, owner_date, current)
     if slot in {"outside", "waiting"}:
         raise ValueError("尚未到固定出单时刻，或不在试运行日期内")
@@ -337,6 +347,14 @@ def build_trial_day(trial, owner_date, matches, fundamentals=None, *, now=None,
                 reasons.append("单腿融合估计低于45%")
             if primary["estimated_return"] is None or primary["estimated_return"] < policy["min_leg_expected_return"]:
                 reasons.append("单腿未校准模型期望小于1.00")
+            # Coverage mode relaxes numerical selection gates, never input
+            # integrity, semantic validity, severe risk or pre-match timing.
+            soft = {'主选投注偏离超过+10个百分点', '单腿融合估计低于45%', '单腿未校准模型期望小于1.00'}
+            if research and primary['probability'] is not None and primary['estimated_return'] is not None:
+                primary['warnings'] = [reason for reason in reasons if reason in soft]
+                reasons[:] = [reason for reason in reasons if reason not in soft]
+                audit['research_warnings'] = deepcopy(primary['warnings'])
+            primary['strict_eligible'] = not reasons and not primary.get('warnings')
             audit["primary"] = primary
             if not reasons:
                 candidates.append(primary)
@@ -344,9 +362,12 @@ def build_trial_day(trial, owner_date, matches, fundamentals=None, *, now=None,
         record["ticket"] = _choose_ticket(candidates, policy)
         record["eligible_match_count"] = len(candidates)
         if record["ticket"]:
-            record.update(decision="ticket", reason="固定门槛通过；仅模拟，不是正式盈利策略")
+            record.update(decision="ticket", reason=("每日复盘候选已生成；按有效AI主选相对排序，未达原门槛项保留为风险提示，不代表正期望或高把握"
+                                                     if research else "固定门槛通过；仅模拟，不是正式盈利策略"))
         elif len(candidates) >= 2:
             record["reason"] = f"{len(candidates)}场通过单腿条件，但保留各场第一方向后，没有2.8～3.3倍组合，不换项凑单"
+        elif research:
+            record['reason'] = f"仅{len(candidates)}场具备未开赛、完整数据且赔率≥1.50的有效AI主选，不足两场；不使用失败结果凑单"
         if capture_only and policy.get("llm_enabled"):
             record.update(decision="analyzing", reason="赛前输入已冻结，等待火山大模型逐场研判")
         if (policy.get('draw_focus') or {}).get('enabled'):
@@ -360,9 +381,12 @@ def build_trial_day(trial, owner_date, matches, fundamentals=None, *, now=None,
         record.setdefault('draw_candidates', [])
         record['draw_decision'] = (record['decision'] if record['decision'] in {'missed', 'suspended', 'analyzing'}
                                    else 'ticket' if record['draw_ticket'] else 'no_ticket')
-        record['draw_reason'] = ('平/让平独立候选已凑齐3场，按3个二串一和1个三串一模拟'
+        record['draw_reason'] = (('平/让平每日复盘候选仅2场，生成1个二串一；不虚构第三场'
+                                  if len(record['draw_ticket']['picks']) == 2 else
+                                  '平/让平独立候选已凑齐3场，按3个二串一和1个三串一模拟')
                                  if record['draw_ticket'] else record['reason']
                                  if record['draw_decision'] in {'missed', 'suspended', 'analyzing'}
+                                 else '平/让平有效且经AI同意的不同比赛不足2场，不凑单' if research
                                  else '平/让平合格的不同比赛不足3场，不换项、不凑单')
     if published_at:
         record["published_at"] = published_at.isoformat()
@@ -508,9 +532,12 @@ def trial_report(trial, days, reviews, *, now=None):
         if review.get("snapshot_hash") != day["snapshot_hash"]:
             review = {}
         settlement = {key: review[key] for key in ("ticket", "baseline_ticket", "draw_ticket", "draw_baseline_ticket", "reviewed_at") if key in review}
-        rows.append({k: v for k, v in {**day, **settlement}.items() if k != "audit"})
+        rows.append({**{k: v for k, v in {**day, **settlement}.items() if k != "audit"},
+                     'selection_mode': (day.get('policy') or trial['policy']).get('selection_mode', 'strict')})
+    selection_mode = trial['policy'].get('selection_mode', 'strict')
+    active_rows = [row for row in rows if row['selection_mode'] == selection_mode]
     def summarize(key):
-        tickets = [row[key] for row in rows if row.get(key)]
+        tickets = [row[key] for row in active_rows if row.get(key)]
         settled = [t for t in tickets if t["status"] in {"hit", "miss", "push"}]
         decided = [t for t in settled if t["status"] != "push"]
         stake = sum(t["stake"] for t in settled)
@@ -550,13 +577,14 @@ def trial_report(trial, days, reviews, *, now=None):
                 "max_losing_streak": longest,
                 "best_ticket_profit_units": max((t["profit_units"] for t in settled), default=None)}
     return {"trial": trial, "days": rows, "summary": summarize("ticket"),
+            "selection_mode": selection_mode, "previous_mode_days": len(rows) - len(active_rows),
             "baseline": summarize("baseline_ticket"),
             "draw_summary": summarize('draw_ticket'),
             "draw_baseline": summarize('draw_baseline_ticket'),
-            "draw_no_ticket_days": sum(r.get('draw_decision') == 'no_ticket' for r in rows),
-            "no_ticket_days": sum(r["decision"] == "no_ticket" for r in rows),
-            "missed_days": sum(r["decision"] == "missed" for r in rows),
-            "suspended_days": sum(r["decision"] == "suspended" for r in rows),
-            "ai_failed_days": sum(r["decision"] == "ai_failed" for r in rows),
+            "draw_no_ticket_days": sum(r.get('draw_decision') == 'no_ticket' for r in active_rows),
+            "no_ticket_days": sum(r["decision"] == "no_ticket" for r in active_rows),
+            "missed_days": sum(r["decision"] == "missed" for r in active_rows),
+            "suspended_days": sum(r["decision"] == "suspended" for r in active_rows),
+            "ai_failed_days": sum(r["decision"] == "ai_failed" for r in active_rows),
             "phase": "awaiting_evaluation" if current.date().isoformat() > trial["end_date"] else "collecting",
             "verdict": "尚未证明盈利；30天仅是观察窗口，不自动发布或提升投注金额"}

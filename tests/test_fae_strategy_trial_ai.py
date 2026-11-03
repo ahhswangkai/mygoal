@@ -6,7 +6,7 @@ from unittest.mock import Mock
 
 from football_ai.provider import ArkNarrativeClient, FAEProviderError
 from football_ai.strategy_trial import (
-    build_trial_day, execute_trial_ai_job, model_fingerprint, start_trial,
+    build_trial_day, digest, execute_trial_ai_job, model_fingerprint, start_trial,
 )
 from football_ai.strategy_trial_ai import TrialAIForecaster, trial_ai_settings
 from tests.test_fae_strategy_trial import NOW, fixture, fake_engine
@@ -48,6 +48,8 @@ class TrialAITests(unittest.TestCase):
                                                   {'response_id': 'unit-call', 'response_model': 'unit-model'}))
         self.forecaster = TrialAIForecaster(self.client)
         self.trial = start_trial(NOW - timedelta(hours=8), client=self.client)
+        self.trial['policy'].pop('selection_mode', None)
+        self.trial['policy_hash'] = digest(self.trial['policy'])
 
     def capture(self, count=2):
         engine = fake_engine()

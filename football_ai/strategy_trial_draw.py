@@ -36,6 +36,7 @@ def draw_candidates(audit, rows, policy, now, published_at=None):
     analysis = result.get('analysis') or {}
     focus = result.get('draw_focus') or {}
     draw_policy = policy['draw_focus']
+    research = policy.get('selection_mode') == 'daily_research_v1'
     candidates = []
     for row in rows:
         selection = row['selection']
@@ -83,7 +84,12 @@ def draw_candidates(audit, rows, policy, now, published_at=None):
         kickoff = parse_match_datetime(match)
         if published_at and (not kickoff or kickoff <= published_at):
             reasons.append('AI完成时已开赛，不补赛前方案')
+        soft = {f'本玩法融合估计低于{minimum:g}%', '本玩法未校准模型期望小于1.00', '本玩法投注偏离超过+10个百分点'}
+        if research and row.get('probability') is not None and row.get('estimated_return') is not None:
+            item['warnings'] = [reason for reason in reasons if reason in soft]
+            reasons = [reason for reason in reasons if reason not in soft]
         item.update(eligible=not reasons, rejections=reasons,
+                    strict_eligible=not reasons and not item.get('warnings'),
                     ai_reason=str(approved.get('reason') or result.get('draw_focus_error') or ''),
                     scope='draw_focus')
         candidates.append(item)
@@ -93,6 +99,7 @@ def draw_candidates(audit, rows, policy, now, published_at=None):
 def choose_draw_ticket(candidates, policy, *, baseline=False):
     """Maximize estimated >=2 hits; each fixture occupies at most one leg."""
     draw_policy = policy['draw_focus']
+    research = policy.get('selection_mode') == 'daily_research_v1'
     best = {}
     key = 'market_probability' if baseline else 'probability'
     for raw in candidates:
@@ -106,26 +113,30 @@ def choose_draw_ticket(candidates, policy, *, baseline=False):
         current = best.get(row['match_id'])
         if current is None or (row[key], row['odds'], row['selection']) > (current[key], current['odds'], current['selection']):
             best[row['match_id']] = row
-    if len(best) < 3:
+    if len(best) < (2 if research else 3):
         return None
     # P(at least two) is monotone in each independent leg's probability, so
     # the best three distinct fixtures suffice; avoid O(n^3) slate expansion.
     picks = sorted(best.values(), key=lambda row: (-row[key], -row['odds'], row['match_id'], row['selection']))[:3]
-    a, b, c = [row[key] / 100 for row in picks]
-    at_least_two = a * b + a * c + b * c - 2 * a * b * c
-    all_three = a * b * c
+    values = [row[key] / 100 for row in picks]
+    at_least_two = (values[0] * values[1] if len(picks) == 2 else
+                    values[0] * values[1] + values[0] * values[2] + values[1] * values[2] - 2 * prod(values))
+    all_three = prod(values) if len(picks) == 3 else None
     lines = []
-    for count in (2, 3):
+    line_count = 1 if len(picks) == 2 else 4
+    for count in range(2, len(picks) + 1):
         for group in combinations(picks, count):
             lines.append({'picks': deepcopy(list(group)), 'play': f'{count}串1',
                           'combined_odds': round(prod(row['odds'] for row in group), 6),
-                          'stake': draw_policy['stake_units'] / 4, 'status': 'pending'})
-    return {'strategy': draw_policy['version'], 'play': '3场2、3关',
-            'picks': deepcopy(list(picks)), 'lines': lines, 'line_count': 4,
+                          'stake': draw_policy['stake_units'] / line_count, 'status': 'pending'})
+    return {'strategy': draw_policy['version'], 'play': '2场2关' if len(picks) == 2 else '3场2、3关',
+            'picks': deepcopy(list(picks)), 'lines': lines, 'line_count': line_count,
             'stake': draw_policy['stake_units'], 'status': 'pending',
             'estimated_at_least_two_probability': round(at_least_two * 100, 4),
-            'estimated_all_three_probability': round(all_three * 100, 4),
+            'estimated_all_three_probability': round(all_three * 100, 4) if all_three is not None else None,
             'max_return_units': round(sum(line['stake'] * line['combined_odds'] for line in lines), 6),
+            'research_only': research,
+            'warnings': sorted({warning for pick in picks for warning in pick.get('warnings', [])}),
             'probability_note': '未校准估计、独立近似；有返奖不等于盈利，不保证收益'}
 
 

@@ -148,6 +148,8 @@ def execute_manual_retry(trial, job, storage, *, forecaster=None, clock=None):
     forecaster = forecaster or TrialAIForecaster()
     settings = trial['ai_settings']
     if (trial_ai_settings(forecaster.client) != settings or model_fingerprint() != trial['model_fingerprint']
+            or job['input_snapshot'].get('policy_hash') != trial['policy_hash']
+            or job['input_snapshot'].get('model_fingerprint') != trial['model_fingerprint']
             or digest(trial['policy']) != trial['policy_hash']
             or digest(trial['rule_weights']) != trial['weights_hash']
             or job['input_snapshot']['snapshot_hash'] != request['input_snapshot_hash']):

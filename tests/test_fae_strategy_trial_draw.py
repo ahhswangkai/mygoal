@@ -11,6 +11,7 @@ from tests.test_fae_strategy_trial import NOW
 from tests import test_fae_strategy_trial_ai as ai_tests
 from tests.test_fae_strategy_trial_ai import MemoryJobs, response
 
+STRICT_POLICY = {key: deepcopy(value) for key, value in TRIAL_POLICY.items() if key != 'selection_mode'}
 
 def pick(match_id, selection='平局', **updates):
     value = {'match_id': match_id, 'match_number': f'周二{match_id}',
@@ -24,7 +25,7 @@ def pick(match_id, selection='平局', **updates):
 
 class DrawTrialTicketTests(unittest.TestCase):
     def ticket(self):
-        return choose_draw_ticket([pick('001'), pick('002'), pick('003', '让平')], TRIAL_POLICY)
+        return choose_draw_ticket([pick('001'), pick('002'), pick('003', '让平')], STRICT_POLICY)
 
     def test_three_matches_expand_to_three_doubles_and_one_treble(self):
         ticket = self.ticket()
@@ -34,14 +35,14 @@ class DrawTrialTicketTests(unittest.TestCase):
         self.assertEqual(ticket['max_return_units'], (9 + 9 + 9 + 27) / 4)
 
     def test_same_fixture_draw_and_handicap_draw_cannot_count_twice(self):
-        self.assertIsNone(choose_draw_ticket([pick('001'), pick('001', '让平'), pick('002')], TRIAL_POLICY))
-        ticket = choose_draw_ticket([pick('001'), pick('001', '让平', probability=45), pick('002'), pick('003')], TRIAL_POLICY)
+        self.assertIsNone(choose_draw_ticket([pick('001'), pick('001', '让平'), pick('002')], STRICT_POLICY))
+        ticket = choose_draw_ticket([pick('001'), pick('001', '让平', probability=45), pick('002'), pick('003')], STRICT_POLICY)
         self.assertEqual(len({p['match_id'] for p in ticket['picks']}), 3)
         self.assertEqual(ticket['picks'][0]['selection'], '让平')
 
     def test_unapproved_or_zero_handicap_alias_does_not_make_a_third_match(self):
         for third in (pick('003', eligible=False), pick('003', '让平', handicap=0), pick('003', odds=7)):
-            self.assertIsNone(choose_draw_ticket([pick('001'), pick('002'), third], TRIAL_POLICY))
+            self.assertIsNone(choose_draw_ticket([pick('001'), pick('002'), third], STRICT_POLICY))
 
     def test_exactly_two_hits_pay_only_the_winning_double(self):
         result = settle_draw_ticket(self.ticket(), {

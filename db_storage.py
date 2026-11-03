@@ -362,7 +362,7 @@ class MongoDBStorage:
         return self.get_strategy_trial(trial['experiment_id'])
 
     def update_strategy_trial_schedule(self, previous, updated):
-        """Compare-and-set only the explicitly approved schedule migration."""
+        """Compare-and-set an audited, explicitly approved trial policy rollout."""
         self.fae_strategy_trials_collection.update_one({
             'experiment_id': previous['experiment_id'],
             'policy_hash': previous['policy_hash'],
