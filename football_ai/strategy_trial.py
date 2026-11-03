@@ -1,4 +1,4 @@
-"""Prospective paper trading. No paid LLM, actual bets, or retrospective picks."""
+"""Prospective paper trading with immutable, genuinely Ark-authored forecasts."""
 
 from __future__ import annotations
 
@@ -10,15 +10,18 @@ import json
 import math
 from pathlib import Path
 import random
+from uuid import uuid4
 from typing import Any, Dict, List
 
 from fae_schedule import app_timezone, parse_generated_at, parse_match_datetime
 from .daily_review import FAEDailyAIReviewEngine, _score
 from .engine import FootballAIEngine
 from .version import DEFAULT_RULE_WEIGHTS, ENGINE_VERSION
+from .strategy_trial_ai import TrialAIForecaster, make_trial_ai_client, trial_ai_settings
 
 
-TRIAL_VERSION = "paper-two-leg-v1"
+LEGACY_TRIAL_VERSION = "paper-two-leg-v1"
+TRIAL_VERSION = "paper-two-leg-ark-v2"
 # These are pre-registered experimental thresholds, NOT proven profitable ones.
 TRIAL_POLICY = {
     "version": TRIAL_VERSION,
@@ -37,7 +40,7 @@ TRIAL_POLICY = {
     "max_market_age_minutes": 60,
     "min_lead_minutes": 10,
     "probabilities_calibrated": False,
-    "llm_enabled": False,
+    "llm_enabled": True,
     "automatic_learning": False,
 }
 SELECTIONS = {"ordinary": ("主胜", "平局", "客胜"),
@@ -62,13 +65,13 @@ def model_fingerprint():
     root = Path(__file__).resolve().parent
     files = [root / name for name in (
         "strategy_trial.py", "engine.py", "market_rules.py", "version.py",
-        "provider.py", "daily_review.py",
+        "provider.py", "daily_review.py", "strategy_trial_ai.py",
     )] + [root.parent / "fae_schedule.py"]
     return digest({str(path.name): sha256(path.read_bytes()).hexdigest()
                    for path in files})
 
 
-def start_trial(now=None):
+def start_trial(now=None, client=None):
     current = now or datetime.now(app_timezone())
     current = current.replace(tzinfo=app_timezone()) if current.tzinfo is None else current.astimezone(app_timezone())
     day = current.date()
@@ -87,6 +90,7 @@ def start_trial(now=None):
         "engine_version": ENGINE_VERSION,
         "rule_weights": deepcopy(DEFAULT_RULE_WEIGHTS),
         "weights_hash": digest(DEFAULT_RULE_WEIGHTS),
+        "ai_settings": trial_ai_settings(client or make_trial_ai_client()),
         "mode": "paper_only",
     }
 
@@ -150,6 +154,7 @@ def _market_rows(match, analysis, policy):
                 "support_rate": support,
                 "heat_deviation_pp": round(support - market_probability, 4) if support is not None else None,
                 "estimated_return": blended / 100 * price if blended is not None else None,
+                "analysis_source": "volcengine-ark" if policy.get("llm_enabled") else "fae-core",
             })
     return output
 
@@ -186,7 +191,8 @@ def _choose_ticket(candidates, policy, *, baseline=False):
 
 
 def build_trial_day(trial, owner_date, matches, fundamentals=None, *, now=None,
-                    engine=None, fingerprint=None):
+                    engine=None, fingerprint=None, ai_predictions=None,
+                    capture_only=False, published_at=None):
     current = now or datetime.now(app_timezone())
     policy = trial["policy"]
     slot = trial_slot(trial, owner_date, current)
@@ -199,6 +205,7 @@ def build_trial_day(trial, owner_date, matches, fundamentals=None, *, now=None,
         "model_fingerprint": trial["model_fingerprint"], "policy": deepcopy(policy),
         "decision": "no_ticket", "reason": "合格的独立主选不足两场，或合计赔率不在固定范围内",
         "ticket": None, "baseline_ticket": None, "audit": [], "mode": "paper_only",
+        "analysis_source": "volcengine-ark" if policy.get("llm_enabled") else "fae-core",
     }
     if slot == "missed":
         record.update(decision="missed", reason="错过18:00出单窗口，不用后来数据补选")
@@ -237,18 +244,31 @@ def build_trial_day(trial, owner_date, matches, fundamentals=None, *, now=None,
                 if recent:
                     source.setdefault("recent", {})[side] = [r for r in recent if str(r.get("date") or "")[:10] < owner_date]
             context = calculator.build_context(match, source_analysis=source)
-            result = calculator.generate_from_context(context, rule_weights=trial["rule_weights"], use_ai=False)
+            audit["fundamentals_snapshot"] = source
+            if policy.get("llm_enabled"):
+                result = deepcopy((ai_predictions or {}).get(audit["match_id"]) or {})
+                if not capture_only and not result.get("ai_verified"):
+                    audit["rejections"].append(str(result.get("error") or "AI研判缺失，不用本地规则补选"))
+            else:
+                result = calculator.generate_from_context(context, rule_weights=trial["rule_weights"], use_ai=False)
             analysis = result.get("analysis") or {}
             audit.update(context=context, model_result=result)
             rows = [r for r in _market_rows(match, analysis, policy) if r["odds"] >= policy["min_leg_odds"]]
             baseline.extend(rows)
+            if policy.get("llm_enabled") and (capture_only or not result.get("ai_verified")):
+                continue
             # Only the top prediction is eligible; failures must not promote
             # the second/third option into a fabricated primary recommendation.
-            primary = max(rows, key=lambda row: (row["probability"] or -1, row["selection"]), default=None)
+            primary = (next((row for row in rows if row["selection"] == result.get("primary_selection")), None)
+                       if policy.get("llm_enabled") else
+                       max(rows, key=lambda row: (row["probability"] or -1, row["selection"]), default=None))
             if not primary:
-                audit["rejections"].append("没有赔率不低于1.50的完整胜平负/竞彩让球市场")
+                audit["rejections"].append("AI未给主选或其主选赔率低于1.50/市场不完整，不自动换项" if policy.get("llm_enabled") else "没有赔率不低于1.50的完整胜平负/竞彩让球市场")
                 continue
             reasons = audit["rejections"]
+            primary["ai_reason"] = (analysis.get("summary") or "") if policy.get("llm_enabled") else None
+            if published_at and kickoff <= published_at:
+                reasons.append("AI完成时本场已开赛，不发布为赛前模拟单")
             if not _odds(match, "ordinary") or not _odds(match, "handicap"):
                 reasons.append("胜平负或竞彩让球市场不完整")
             total = number(match.get("ou_current_total"))
@@ -274,7 +294,7 @@ def build_trial_day(trial, owner_date, matches, fundamentals=None, *, now=None,
                     and number(ratio_market["handicap_value"]) != primary["handicap"]):
                 reasons.append("投注比例让球数与当前所选盘口不一致")
             if (analysis.get("risk") or {}).get("dangerous"):
-                reasons.append("确定性引擎标记危险盘口")
+                reasons.append("AI标记严重数据风险" if policy.get("llm_enabled") else "确定性引擎标记危险盘口")
             if primary["probability"] is None or primary["probability"] < policy["min_leg_probability"]:
                 reasons.append("单腿融合估计低于45%")
             if primary["estimated_return"] is None or primary["estimated_return"] < policy["min_leg_expected_return"]:
@@ -289,12 +309,93 @@ def build_trial_day(trial, owner_date, matches, fundamentals=None, *, now=None,
             record.update(decision="ticket", reason="固定门槛通过；仅模拟，不是正式盈利策略")
         elif len(candidates) >= 2:
             record["reason"] = f"{len(candidates)}场通过单腿条件，但保留各场第一方向后，没有2.8～3.3倍组合，不换项凑单"
+        if capture_only and policy.get("llm_enabled"):
+            record.update(decision="analyzing", reason="赛前输入已冻结，等待火山大模型逐场研判")
+    if published_at:
+        record["published_at"] = published_at.isoformat()
     record["excluded_matches"] = [{
         "match_id": row["match_id"], "match_number": row.get("match_number"),
         "reasons": row["rejections"], "selection": (row.get("primary") or {}).get("selection"),
+        "ai_reason": ((row.get("model_result") or {}).get("analysis") or {}).get("summary") if policy.get("llm_enabled") else None,
     } for row in record["audit"] if row["rejections"]]
     record["snapshot_hash"] = digest(record)
     return record
+
+
+def execute_trial_ai_job(trial, job, storage, *, forecaster=None, clock=None):
+    """Resume saved batches without repaying completed/failed/inflight calls."""
+    now = clock or (lambda: datetime.now(app_timezone()))
+    snapshot = job['input_snapshot']
+    owner_date = snapshot['owner_date']
+    forecaster = forecaster or TrialAIForecaster()
+    audits = list({row['match_id']: row for row in snapshot['audit']
+                   if row.get('context') and not row.get('rejections')}.values())
+    settings = trial['ai_settings']
+    configuration_changed = trial_ai_settings(forecaster.client) != settings
+    implementation_changed = model_fingerprint() != trial['model_fingerprint']
+    batches = [audits[offset:offset + 10] for offset in range(0, len(audits), 10)]
+    if not configuration_changed and not implementation_changed:
+        for index, batch_audits in enumerate(batches):
+            saved = (storage.get_strategy_trial_ai_job(trial['experiment_id'], owner_date).get('batches') or {}).get(str(index))
+            if saved:
+                if saved['status'] == 'running':
+                    started = parse_generated_at(saved['started_at'])
+                    if not started or now() < started + timedelta(seconds=settings['timeout'] + 60):
+                        return None
+                    storage.finish_strategy_trial_ai_batch(
+                        trial['experiment_id'], owner_date, index, saved['claim_token'],
+                        {**saved, 'status': 'failed', 'error': '调用中断或超时，状态未知，不自动重复付费',
+                         'completed_at': now().isoformat()})
+                continue
+            prompt = forecaster.prompt(owner_date, snapshot['captured_at'], batch_audits)
+            batch = {'claim_token': uuid4().hex, 'status': 'running',
+                     'started_at': now().isoformat(), 'prompt': prompt,
+                     'prompt_hash': digest(prompt), 'match_ids': [r['match_id'] for r in batch_audits]}
+            if not storage.claim_strategy_trial_ai_batch(trial['experiment_id'], owner_date, index, batch):
+                return None
+            try:
+                if any((parse_match_datetime(row['raw_snapshot']) or now()) <= now() for row in batch_audits):
+                    raise ValueError('批次包含已开赛比赛，不再调用赛前AI')
+                result = forecaster.run(prompt, batch_audits, settings)
+                batch.update(result, status='complete')
+            except Exception as exc:
+                error = str(exc)
+                key = getattr(forecaster.client, 'api_key', '')
+                if isinstance(key, str) and key:
+                    error = error.replace(key, '[redacted]')
+                batch.update(status='failed', error=error[:500], completed_at=now().isoformat())
+            storage.finish_strategy_trial_ai_batch(
+                trial['experiment_id'], owner_date, index, batch['claim_token'], batch)
+    job = storage.get_strategy_trial_ai_job(trial['experiment_id'], owner_date)
+    predictions = {}
+    saved_batches = job.get('batches') or {}
+    for batch in saved_batches.values():
+        predictions.update(batch.get('forecasts') or {})
+        for match_id in batch.get('match_ids') or []:
+            if match_id not in predictions:
+                predictions[match_id] = {'error': (batch.get('errors') or {}).get(match_id) or batch.get('error') or 'AI未返回有效研判'}
+    captured_at = parse_generated_at(snapshot['captured_at'])
+    result = build_trial_day(
+        trial, owner_date, [row['raw_snapshot'] for row in snapshot['audit']],
+        {row['match_id']: row.get('fundamentals_snapshot') or {} for row in snapshot['audit']},
+        now=captured_at, ai_predictions=predictions, published_at=now())
+    result['baseline_ticket'] = deepcopy(snapshot.get('baseline_ticket'))
+    if configuration_changed or implementation_changed:
+        result.update(decision='suspended', ticket=None,
+                      reason='模型、接口或Prompt配置与冻结版本不同，未调用AI；旧记录保留')
+    elif audits and not any(row.get('ai_verified') for row in predictions.values()):
+        result.update(decision='ai_failed', ticket=None, reason='未获得有效火山研判，不使用本地规则替代，不生成模拟单')
+    result['ai_run'] = {
+        'model': settings['model'], 'prompt_version': settings['prompt_version'],
+        'prompt_hash': settings['prompt_hash'], 'batch_count': len(batches),
+        'completed_batches': sum(b.get('status') == 'complete' for b in saved_batches.values()),
+        'failed_batches': sum(b.get('status') == 'failed' for b in saved_batches.values()),
+        'verified_matches': sum(bool(r.get('ai_verified')) for r in predictions.values()),
+        'batch_audit_hash': digest(saved_batches),
+        'response_models': sorted({str((b.get('provider_meta') or {}).get('response_model')) for b in saved_batches.values()
+                                   if (b.get('provider_meta') or {}).get('response_model')})}
+    result['snapshot_hash'] = digest({key: value for key, value in result.items() if key != 'snapshot_hash'})
+    return result
 
 
 def settle_ticket(ticket, results):
@@ -376,5 +477,6 @@ def trial_report(trial, days, reviews, *, now=None):
             "no_ticket_days": sum(r["decision"] == "no_ticket" for r in rows),
             "missed_days": sum(r["decision"] == "missed" for r in rows),
             "suspended_days": sum(r["decision"] == "suspended" for r in rows),
+            "ai_failed_days": sum(r["decision"] == "ai_failed" for r in rows),
             "phase": "awaiting_evaluation" if current.date().isoformat() > trial["end_date"] else "collecting",
             "verdict": "尚未证明盈利；30天仅是观察窗口，不自动发布或提升投注金额"}

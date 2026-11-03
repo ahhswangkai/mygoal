@@ -24,9 +24,10 @@ from crawler import (
 )
 from fae_schedule import app_timezone, prematch_analysis_due
 from football_ai.strategy_trial import (
-    TRIAL_VERSION, TRIAL_POLICY, build_trial_day, decision_time,
-    model_fingerprint, settle_ticket, start_trial, trial_report,
+    TRIAL_VERSION, LEGACY_TRIAL_VERSION, TRIAL_POLICY, build_trial_day, decision_time,
+    execute_trial_ai_job, model_fingerprint, settle_ticket, start_trial, trial_report,
 )
+from football_ai.strategy_trial_ai import make_trial_ai_client, trial_ai_settings
 from match_time_utils import sort_matches_by_datetime
 from user_storage import UserStorage
 from football_ai import (
@@ -2494,14 +2495,22 @@ def get_fae_review_memory():
 def get_fae_strategy_trial():
     if not mongo_storage:
         return jsonify({'success': False, 'message': 'MongoDB不可用'}), 503
-    trial = mongo_storage.get_strategy_trial(TRIAL_VERSION)
+    experiment_id = request.args.get('experiment_id') or TRIAL_VERSION
+    if experiment_id not in (TRIAL_VERSION, LEGACY_TRIAL_VERSION):
+        return jsonify({'success': False, 'message': '未知试验版本'}), 422
+    trial = mongo_storage.get_strategy_trial(experiment_id)
     report = None
     if trial:
         report = trial_report(
-            trial, mongo_storage.get_strategy_trial_days(TRIAL_VERSION),
-            mongo_storage.get_strategy_trial_reviews(TRIAL_VERSION))
+            trial, _strategy_trial_days(trial),
+            mongo_storage.get_strategy_trial_reviews(experiment_id))
         report['implementation_matches'] = trial['model_fingerprint'] == model_fingerprint()
+        report['legacy_read_only'] = experiment_id == LEGACY_TRIAL_VERSION
+        report['ai_configuration_matches'] = not trial['policy'].get('llm_enabled') or trial.get('ai_settings') == trial_ai_settings(make_trial_ai_client())
     return jsonify({'success': True, 'data': report, 'policy': TRIAL_POLICY,
+                    'current_experiment_id': TRIAL_VERSION,
+                    'available_experiments': [key for key in (TRIAL_VERSION, LEGACY_TRIAL_VERSION)
+                                              if key == TRIAL_VERSION or mongo_storage.get_strategy_trial(key)],
                     'can_manage': bool(_fae_admin_user())})
 
 
@@ -2510,9 +2519,12 @@ def get_fae_strategy_trial():
 def start_fae_strategy_trial():
     if not mongo_storage:
         return jsonify({'success': False, 'message': 'MongoDB不可用'}), 503
-    trial = mongo_storage.start_strategy_trial(start_trial())
+    client = make_trial_ai_client()
+    if not client.configured:
+        return jsonify({'success': False, 'message': '请先配置火山方舟ARK_API_KEY和模型，AI试验不使用本地降级'}), 422
+    trial = mongo_storage.start_strategy_trial(start_trial(client=client))
     return jsonify({'success': True, 'data': trial,
-                    'message': '30天模拟已登记；规则冻结，每日18:00自动留档，不写入真实投注记录'})
+                    'message': 'AI版30天模拟已登记；每日18:00冻结输入并分批调用火山，产生API费用，不写入真实投注记录'})
 
 
 @app.route('/api/fae/strategy-trial/audit', methods=['GET'])
@@ -2521,23 +2533,34 @@ def get_fae_strategy_trial_audit():
     if not mongo_storage:
         return jsonify({'success': False, 'message': 'MongoDB不可用'}), 503
     owner_date = request.args.get('date')
-    rows = mongo_storage.get_strategy_trial_days(TRIAL_VERSION, audit=True)
+    experiment_id = request.args.get('experiment_id') or TRIAL_VERSION
+    if experiment_id not in (TRIAL_VERSION, LEGACY_TRIAL_VERSION):
+        return jsonify({'success': False, 'message': '未知试验版本'}), 422
+    rows = mongo_storage.get_strategy_trial_days(experiment_id, audit=True)
     return jsonify({'success': True, 'data': next(
-        (row for row in rows if row['owner_date'] == owner_date), None)})
+        (row for row in rows if row['owner_date'] == owner_date), None),
+        'ai_job': mongo_storage.get_strategy_trial_ai_job(experiment_id, owner_date)})
+
+
+def _strategy_trial_days(trial):
+    days = mongo_storage.get_strategy_trial_days(trial['experiment_id'])
+    saved = {row['owner_date'] for row in days}
+    if trial['policy'].get('llm_enabled'):
+        days.extend(job['input_snapshot'] for job in mongo_storage.get_strategy_trial_ai_jobs(
+            trial['experiment_id'], audit=False) if job['owner_date'] not in saved)
+    return days
 
 
 def _run_scheduled_strategy_trial():
-    """Free, independent paper workflow. Never rerun or backfill a decision."""
+    """Immutable paid AI forecasts, with separate free result settlement."""
     if not mongo_storage:
         return
     trial = mongo_storage.get_strategy_trial(TRIAL_VERSION)
-    if not trial:
-        return
     now = datetime.now(app_timezone())
-    days = mongo_storage.get_strategy_trial_days(TRIAL_VERSION)
+    days = mongo_storage.get_strategy_trial_days(TRIAL_VERSION) if trial else []
     saved = {day['owner_date'] for day in days}
-    date = datetime.strptime(trial['start_date'], '%Y-%m-%d').date()
-    last_date = min(now.date(), datetime.strptime(trial['end_date'], '%Y-%m-%d').date())
+    date = datetime.strptime(trial['start_date'], '%Y-%m-%d').date() if trial else now.date() + timedelta(days=1)
+    last_date = min(now.date(), datetime.strptime(trial['end_date'], '%Y-%m-%d').date()) if trial else now.date()
     while date <= last_date:
         date_str = date.isoformat()
         if date_str not in saved and now >= decision_time(date_str, trial['policy']):
@@ -2545,14 +2568,35 @@ def _run_scheduled_strategy_trial():
                 # Only read today's data inside the registered window. Missed
                 # historical days get an explicit empty decision, never replay.
                 in_window = now < decision_time(date_str, trial['policy']) + timedelta(minutes=trial['policy']['grace_minutes'])
+                existing_job = mongo_storage.get_strategy_trial_ai_job(TRIAL_VERSION, date_str) if trial['policy'].get('llm_enabled') else None
+                if existing_job:
+                    date += timedelta(days=1)
+                    continue
                 matches = mongo_storage.get_matches(filters={'owner_date': date_str}) if in_window else []
                 fundamentals = mongo_storage.get_match_fundamentals_bulk(
                     [m['match_id'] for m in matches]) if matches else {}
-                record = build_trial_day(trial, date_str, matches, fundamentals, now=now)
-                days.append(mongo_storage.save_strategy_trial_day(record))
+                record = build_trial_day(trial, date_str, matches, fundamentals, now=now,
+                                         capture_only=trial['policy'].get('llm_enabled', False))
+                if record['decision'] == 'analyzing':
+                    mongo_storage.save_strategy_trial_ai_job(record)
+                else:
+                    days.append(mongo_storage.save_strategy_trial_day(record))
             except Exception:
                 app.logger.exception('策略验收留档失败: %s', date_str)
         date += timedelta(days=1)
+    if trial and trial['policy'].get('llm_enabled'):
+        for job in mongo_storage.get_strategy_trial_ai_jobs(TRIAL_VERSION, audit=False):
+            if job['owner_date'] in saved:
+                continue
+            try:
+                result = execute_trial_ai_job(trial, mongo_storage.get_strategy_trial_ai_job(TRIAL_VERSION, job['owner_date']), mongo_storage)
+                if result:
+                    days.append(mongo_storage.save_strategy_trial_day(result))
+            except Exception:
+                app.logger.exception('策略AI批次执行失败: %s', job['owner_date'])
+    # Legacy rules-only records remain readable and settled, but never issue
+    # another v1 ticket or mix their performance into the Ark v2 experiment.
+    days.extend(mongo_storage.get_strategy_trial_days(LEGACY_TRIAL_VERSION))
     for day in days:
         if not day.get('ticket') and not day.get('baseline_ticket'):
             continue
@@ -2560,7 +2604,7 @@ def _run_scheduled_strategy_trial():
             results = {str(m['match_id']): m for m in mongo_storage.get_matches(
                 filters={'owner_date': day['owner_date']})}
             mongo_storage.save_strategy_trial_review({
-                'experiment_id': TRIAL_VERSION, 'owner_date': day['owner_date'],
+                'experiment_id': day.get('experiment_id') or TRIAL_VERSION, 'owner_date': day['owner_date'],
                 'snapshot_hash': day['snapshot_hash'], 'reviewed_at': now.isoformat(),
                 'ticket': settle_ticket(day.get('ticket'), results),
                 'baseline_ticket': settle_ticket(day.get('baseline_ticket'), results),

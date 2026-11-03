@@ -99,6 +99,7 @@ class MongoDBStorage:
         self.fae_strategy_trials_collection = self.db['fae_strategy_trials']
         self.fae_strategy_trial_days_collection = self.db['fae_strategy_trial_days']
         self.fae_strategy_trial_reviews_collection = self.db['fae_strategy_trial_reviews']
+        self.fae_strategy_trial_ai_jobs_collection = self.db['fae_strategy_trial_ai_jobs']
         self.fae_backtest_reports_collection = self.db['fae_backtest_reports']
         self.fae_supervised_models_collection = self.db['fae_supervised_models']
         self.fae_supervised_backtests_collection = self.db['fae_supervised_backtests']
@@ -243,7 +244,8 @@ class MongoDBStorage:
             )
             self.fae_strategy_trials_collection.create_index('experiment_id', unique=True)
             for collection in (self.fae_strategy_trial_days_collection,
-                               self.fae_strategy_trial_reviews_collection):
+                               self.fae_strategy_trial_reviews_collection,
+                               self.fae_strategy_trial_ai_jobs_collection):
                 collection.create_index([
                     ('experiment_id', ASCENDING), ('owner_date', ASCENDING)
                 ], unique=True)
@@ -382,6 +384,37 @@ class MongoDBStorage:
     def get_strategy_trial_reviews(self, experiment_id):
         return list(self.fae_strategy_trial_reviews_collection.find(
             {'experiment_id': experiment_id}, {'_id': 0}).sort('owner_date', ASCENDING))
+
+    def save_strategy_trial_ai_job(self, snapshot):
+        key = {'experiment_id': snapshot['experiment_id'], 'owner_date': snapshot['owner_date']}
+        self.fae_strategy_trial_ai_jobs_collection.update_one(
+            key, {'$setOnInsert': {**key, 'input_snapshot': dict(snapshot), 'batches': {}}}, upsert=True)
+        return self.get_strategy_trial_ai_job(snapshot['experiment_id'], snapshot['owner_date'])
+
+    def get_strategy_trial_ai_job(self, experiment_id, owner_date):
+        return self.fae_strategy_trial_ai_jobs_collection.find_one(
+            {'experiment_id': experiment_id, 'owner_date': owner_date}, {'_id': 0})
+
+    def get_strategy_trial_ai_jobs(self, experiment_id, *, audit=True):
+        projection = {'_id': 0} if audit else {'_id': 0, 'input_snapshot.audit': 0, 'batches': 0}
+        return list(self.fae_strategy_trial_ai_jobs_collection.find(
+            {'experiment_id': experiment_id}, projection).sort('owner_date', ASCENDING))
+
+    def claim_strategy_trial_ai_batch(self, experiment_id, owner_date, index, batch):
+        """A unique atomic claim BEFORE a paid request; never steal/retry it."""
+        path = f'batches.{index}'
+        result = self.fae_strategy_trial_ai_jobs_collection.update_one({
+            'experiment_id': experiment_id, 'owner_date': owner_date,
+            path: {'$exists': False},
+        }, {'$set': {path: dict(batch)}})
+        return result.modified_count == 1
+
+    def finish_strategy_trial_ai_batch(self, experiment_id, owner_date, index, token, batch):
+        path = f'batches.{index}'
+        self.fae_strategy_trial_ai_jobs_collection.update_one({
+            'experiment_id': experiment_id, 'owner_date': owner_date,
+            f'{path}.claim_token': token, f'{path}.status': 'running',
+        }, {'$set': {path: dict(batch)}})
 
     def save_match_fundamentals(self, match_id, source_analysis):
         """缓存单场基本面，供详情页和全日研判复用。"""

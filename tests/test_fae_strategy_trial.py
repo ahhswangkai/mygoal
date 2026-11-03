@@ -8,7 +8,7 @@ from unittest.mock import Mock
 
 from fae_schedule import app_timezone
 from football_ai.strategy_trial import (
-    build_trial_day, decision_time, settle_ticket, start_trial, trial_report,
+    build_trial_day, decision_time, digest, settle_ticket, start_trial, trial_report,
 )
 from db_storage import MongoDBStorage
 
@@ -52,6 +52,9 @@ def fake_engine():
 class StrategyTrialTests(unittest.TestCase):
     def setUp(self):
         self.trial = start_trial(NOW - timedelta(hours=8))
+        # Preserve the original deterministic tests as explicit v1 regressions.
+        self.trial['policy']['llm_enabled'] = False
+        self.trial['policy_hash'] = digest(self.trial['policy'])
         self.trial['model_fingerprint'] = 'fixed'
 
     def build(self, matches=None, **kwargs):
@@ -250,15 +253,17 @@ class TrialSchedulingTests(unittest.TestCase):
             def now(cls, tz=None):
                 return now
         storage = Mock()
-        storage.get_strategy_trial.return_value = start_trial(NOW - timedelta(hours=8))
+        trial = start_trial(NOW - timedelta(hours=8))
+        trial['policy']['llm_enabled'] = False
+        storage.get_strategy_trial.return_value = trial
         storage.get_strategy_trial_days.return_value = []
         storage.get_matches.return_value = [fixture('001'), fixture('002')]
         storage.get_match_fundamentals_bulk.return_value = {}
         storage.save_strategy_trial_day.side_effect = lambda day: day
         namespace = dict(datetime=Clock, timedelta=timedelta, app_timezone=app_timezone,
-                         mongo_storage=storage, TRIAL_VERSION='paper-two-leg-v1',
+                         mongo_storage=storage, TRIAL_VERSION='paper-two-leg-v1', LEGACY_TRIAL_VERSION='legacy',
                          decision_time=decision_time, build_trial_day=Mock(return_value={
-                             'owner_date': '2026-11-03', 'ticket': None, 'baseline_ticket': None}),
+                             'decision': 'no_ticket', 'owner_date': '2026-11-03', 'ticket': None, 'baseline_ticket': None}),
                          settle_ticket=settle_ticket, app=SimpleNamespace(logger=Mock()))
         exec(compile(ast.Module(body=[node], type_ignores=[]), str(source), 'exec'), namespace)
         return namespace, storage

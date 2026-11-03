@@ -142,6 +142,7 @@ class ArkNarrativeClient:
     ) -> Tuple[str, Dict[str, Any]]:
         parts = []
         response_id = None
+        response_model = None
         usage: Dict[str, Any] = {}
         # Coding gateway's event-stream response omits a UTF-8 charset, so
         # requests may otherwise decode Chinese as ISO-8859-1 mojibake.
@@ -162,6 +163,7 @@ class ArkNarrativeClient:
             except json.JSONDecodeError:
                 continue
             response_id = data.get("id") or response_id
+            response_model = data.get("model") or response_model
             if isinstance(data.get("usage"), dict):
                 usage.update({
                     key: value for key, value in data["usage"].items()
@@ -183,6 +185,7 @@ class ArkNarrativeClient:
             raise FAEOutputError("火山方舟流式响应中没有可用文本")
         return text, {
             "response_id": response_id,
+            "response_model": response_model,
             "usage": usage,
             "streamed": True,
         }
@@ -223,6 +226,7 @@ class ArkNarrativeClient:
         usage = data.get("usage") if isinstance(data.get("usage"), dict) else {}
         return {
             "response_id": data.get("id"),
+            "response_model": data.get("model"),
             "usage": {
                 key: value for key, value in usage.items()
                 if isinstance(value, (int, float))
