@@ -18,7 +18,7 @@
         <strong>{{ report.phase === 'collecting' ? '正在积累前瞻样本' : '观察窗口已结束，等待评估' }}</strong>
         <span>{{ report.trial.start_date }} 至 {{ report.trial.end_date }} · {{ report.trial.experiment_id }}</span>
         <small>北京时间{{ decisionTimeLabel }}冻结输入（5分钟容错）· 两类方案各最多1张/天，各1单位</small>
-        <small v-if="report.trial.schedule_effective_date">当前规则自 {{ report.trial.schedule_effective_date }} 的{{ decisionTimeLabel }}起生效；之前已留档的方案不变，不补跑。</small>
+        <small v-if="report.trial.schedule_effective_date">固定任务规则自 {{ report.trial.schedule_effective_date }} 的{{ decisionTimeLabel }}起生效；手动运行可立即使用当前规则，单独留档。</small>
         <small v-if="report.trial.ai_settings">模型 {{ report.trial.ai_settings.model }} · Prompt {{ report.trial.ai_settings.prompt_version }} · 最多10场/批</small>
       </div>
       <p v-if="!report.implementation_matches || report.ai_configuration_matches === false" class="trial-error">模型实现、Prompt或接口配置已改变，暂停后续出单。原赛前留档仍然保留并继续结算。</p>
@@ -34,7 +34,7 @@
         <article><span>未出单记录</span><strong>{{ report.no_ticket_days + report.missed_days + report.suspended_days + (report.ai_failed_days || 0) }} 天</strong><small>无合格 {{ report.no_ticket_days }} · 错过 {{ report.missed_days }} · 暂停 {{ report.suspended_days }} · AI失败 {{ report.ai_failed_days || 0 }}</small></article>
       </div>
       <p class="trial-note">{{ report.verdict }}<template v-if="report.summary.hit_rate_interval_95">。命中率95%区间 {{ report.summary.hit_rate_interval_95[0] }}%～{{ report.summary.hit_rate_interval_95[1] }}%（小样本不确定性高）</template></p>
-      <p v-if="retriedDayCount" class="trial-note">统计包含 {{ retriedDayCount }} 天手动重试，按每天最新完成版本计算，不是纯定时出单成绩；原始留档仍保留供审计。</p>
+      <p v-if="retriedDayCount" class="trial-note">统计包含 {{ retriedDayCount }} 天手动运行／重试，按每天最新完成版本计算，不是纯定时出单成绩；原始留档仍保留供审计。</p>
       <p v-if="report.summary.roi_interval_95" class="trial-note">ROI重采样95%区间 {{ report.summary.roi_interval_95[0] }}%～{{ report.summary.roi_interval_95[1] }}%。仅描述现有样本，不包含全部跨日相关性和筛选偏差。</p>
       <template v-if="hasDrawStrategy && report.draw_summary">
         <h3 class="trial-section-title">平／让平 · {{ researchMode ? '每日复盘组合' : '3场2、3关' }}</h3>
@@ -49,14 +49,18 @@
       </template>
       <section class="trial-day">
         <header><strong>{{ selectedDate }} 赛前留档</strong><span>二串一 {{ decisionLabel(day?.decision) }}</span></header>
+        <div v-if="canManage" class="trial-retry">
+          <button type="button" :disabled="!canRunNow" @click="runNow">{{ runningNow ? '提交中…' : manualBusy ? 'AI运行中…' : '按当前规则立即运行' }}</button>
+          <small v-if="!isToday">仅可立即运行今天的比赛；历史留档不可重跑。</small>
+          <small v-else>读取最新已入库数据，重新分析距开赛超过10分钟的比赛，会产生API费用。旧留档保留，固定{{ decisionTimeLabel }}任务不变。</small>
+        </div>
+        <p v-if="manualBusy" class="trial-note" role="status">{{ manualState.status === 'queued' ? '任务已排队' : '火山AI正在研判' }} · {{ manualState.completed_batches || 0 }}/{{ manualState.batch_count }} 批 · {{ manualState.match_count }}场。可以离开或刷新页面，不会重复发起调用。</p>
+        <p v-if="manualState?.status === 'failed'" class="trial-error" role="alert">{{ manualState.error || '手动运行失败，旧记录仍然保留。' }}</p>
+        <p v-if="manualState?.status === 'complete'" class="trial-note" role="status">手动运行完成于 {{ formatTime(manualState.completed_at) }} · 有效研判 {{ manualState.verified_matches || 0 }} 场<template v-if="manualState.failed_matches"> · 无效／失败 {{ manualState.failed_matches }} 场，可再次手动运行</template>。</p>
         <template v-if="day">
           <p>{{ day.reason }}</p>
-          <small>记录于 {{ formatTime(day.captured_at) }} · 不随重新研判覆盖</small>
+          <small>{{ day.manual_run ? '手动新快照' : '记录于' }} {{ formatTime(day.captured_at) }} · 历史原件保留</small>
           <small v-if="day.selection_mode !== report.selection_mode">此日属于旧规则阶段，保留原结果，不按新门槛补算。</small>
-          <div v-if="canManage && (hasRetryableFailure || retryBusy)" class="trial-retry">
-            <button type="button" :disabled="retrying || retryBusy || loading" @click="retryFailed">{{ retrying ? '提交中…' : retryBusy ? '重试执行中…' : '重试失败研判' }}</button>
-            <small>仅重试失败且距开赛超过10分钟的场次；会产生API费用，成功结果和已发布方案保留。</small>
-          </div>
           <p v-if="retryBusy" class="trial-note" role="status">{{ day.retry_state.status === 'queued' ? '重试已排队' : '正在重试失败研判' }} · {{ day.retry_state.completed_batches || 0 }}/{{ day.retry_state.batch_count }} 批。可以离开页面，刷新不会重复调用。</p>
           <p v-if="day.retry_state?.status === 'failed'" class="trial-error" role="alert">{{ day.retry_state.error }}</p>
           <p v-if="day.manual_retry" class="trial-note">手动重试完成于 {{ formatTime(day.retried_at) }}，仍使用原赛前输入。初始留档与历次重试单独保留，当前展示和统计使用最新完成版本。</p>
@@ -95,7 +99,8 @@
           </section>
           <small class="trial-hash">快照 {{ day.snapshot_hash?.slice(0, 16) }}</small>
         </template>
-        <p v-else>这一天尚无留档。固定出单前不提前生成，历史日期不补选。</p>
+        <p v-else>这一天尚无留档。固定任务在{{ decisionTimeLabel }}生成；管理员也可手动立即运行今天的比赛。</p>
+        <details v-if="manualHistory.length"><summary>手动运行历史 · {{ manualHistory.length }}次</summary><article v-for="run in manualHistory" :key="run.request_id" class="trial-run-history"><b>{{ formatTime(run.requested_at) }} · {{ runStatusLabel(run.status) }}</b><small v-if="run.error">{{ run.error }}</small><small v-if="run.status === 'complete'">有效研判 {{ run.verified_matches || 0 }} 场 · {{ run.picks?.length ? run.picks.map(pick => `${pick.match_number}${pick.selection_text} @${pick.odds}`).join(' × ') : '二串一未出单' }}</small><small v-if="run.draw_picks?.length">平／让平：{{ run.draw_picks.map(pick => `${pick.match_number}${pick.selection_text} @${pick.odds}`).join(' / ') }}</small></article></details>
       </section>
       <details class="trial-rules"><summary>已冻结的实验规则与统计口径</summary>
         <p v-if="researchMode">每日复盘模式：45%概率、估计期望≥1.00和热度+10个百分点只作提示，不硬性淘汰；二串一优先合计2.8～3.3倍，没有该范围组合就展示相对排名最高两场的实际赔率。平/让平仍需AI明确同意，3场做2、3关，仅2场则做一个二串一。以下严格阈值仅作对照，不表示复盘样本已达标。</p>
@@ -108,7 +113,7 @@
         <p>30天结束不自动发布。需要继续检查样本量、基准对比、收益集中度和不确定性；不使用倍投，不以回本为目标加注。</p>
         <small>规则指纹 {{ report.trial.policy_hash?.slice(0, 16) }} · 模型指纹 {{ report.trial.model_fingerprint?.slice(0, 16) }}</small>
       </details>
-      <section v-if="report.days.length" class="trial-history"><strong>完整模拟流水</strong><button v-for="item in [...report.days].reverse()" :key="item.owner_date" type="button" @click="$emit('select-date', item.owner_date)"><span>{{ item.owner_date }}<small>二串一 {{ decisionLabel(item.decision) }}<template v-if="hasDrawStrategy"> · 平/让平 {{ decisionLabel(item.draw_decision) }}</template><template v-if="item.manual_retry"> · 手动重试</template></small></span><b><template v-if="item.ticket?.profit_units != null">二串 {{ units(item.ticket.profit_units) }}</template><small v-if="item.draw_ticket?.profit_units != null">平/让平 {{ units(item.draw_ticket.profit_units) }}</small></b></button></section>
+      <section v-if="report.days.length" class="trial-history"><strong>完整模拟流水</strong><button v-for="item in [...report.days].reverse()" :key="item.owner_date" type="button" @click="$emit('select-date', item.owner_date)"><span>{{ item.owner_date }}<small>二串一 {{ decisionLabel(item.decision) }}<template v-if="hasDrawStrategy"> · 平/让平 {{ decisionLabel(item.draw_decision) }}</template><template v-if="item.manual_run"> · 手动新快照</template><template v-else-if="item.manual_retry"> · 手动重试</template></small></span><b><template v-if="item.ticket?.profit_units != null">二串 {{ units(item.ticket.profit_units) }}</template><small v-if="item.draw_ticket?.profit_units != null">平/让平 {{ units(item.draw_ticket.profit_units) }}</small></b></button></section>
     </template>
   </section>
 </template>
@@ -120,21 +125,23 @@ defineEmits(['select-date'])
 const report = ref(null)
 const loading = ref(false)
 const starting = ref(false)
-const retrying = ref(false)
+const runningNow = ref(false)
+const currentOwnerDate = ref('')
 const canManage = ref(false)
 const error = ref('')
 const message = ref('')
 const day = computed(() => report.value?.days?.find(item => item.owner_date === props.selectedDate))
-const retriedDayCount = computed(() => report.value?.days?.filter(item => item.manual_retry && item.selection_mode === report.value?.selection_mode).length || 0)
+const retriedDayCount = computed(() => report.value?.days?.filter(item => (item.manual_retry || item.manual_run) && item.selection_mode === report.value?.selection_mode).length || 0)
 const hasDrawStrategy = computed(() => Boolean(report.value?.trial?.policy?.draw_focus?.enabled))
 const researchMode = computed(() => report.value?.selection_mode === 'daily_research_v1')
 const retryBusy = computed(() => ['queued', 'running'].includes(day.value?.retry_state?.status))
-const hasRetryableFailure = computed(() => {
-  if (day.value?.policy_hash && day.value.policy_hash !== report.value?.trial?.policy_hash) return false
-  if (day.value?.ai_run?.failed_matches != null) return Number(day.value.ai_run.failed_matches) > 0
-  return day.value?.decision === 'ai_failed' || Number(day.value?.ai_run?.failed_batches) > 0
-    || day.value?.excluded_matches?.some(item => !item.ai_reason && item.reasons?.some(reason => /AI|未返回有效研判/.test(reason)))
-})
+const manualState = computed(() => report.value?.manual_run_states?.[props.selectedDate])
+const manualBusy = computed(() => ['queued', 'running'].includes(manualState.value?.status))
+const anyManualBusy = computed(() => Object.values(report.value?.manual_run_states || {}).some(state => ['queued', 'running'].includes(state.status)))
+const manualHistory = computed(() => (report.value?.manual_runs || []).filter(run => run.owner_date === props.selectedDate && run.status !== 'rejected').slice().reverse())
+const isToday = computed(() => props.selectedDate === currentOwnerDate.value)
+const canRunNow = computed(() => isToday.value && !runningNow.value && !manualBusy.value && !retryBusy.value && !loading.value
+  && day.value?.decision !== 'analyzing' && report.value?.implementation_matches && report.value?.ai_configuration_matches !== false)
 const decisionTimeLabel = computed(() => {
   const policy = report.value?.trial?.policy
   return `${String(policy?.decision_hour ?? 16).padStart(2, '0')}:${String(policy?.decision_minute ?? 0).padStart(2, '0')}`
@@ -149,6 +156,7 @@ const amountUnits = value => `${Number(value).toFixed(2)} 单位`
 const formatTime = value => value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '—'
 const decisionLabel = value => ({ ticket: '模拟单', no_ticket: '未出单', missed: '错过窗口', suspended: '版本暂停', analyzing: 'AI研判中', ai_failed: 'AI研判失败' }[value] || '等待留档')
 const statusLabel = value => ({ hit: '✓ 命中', miss: '× 未中', push: '已退回', pending: '待结算' }[value] || '待赛')
+const runStatusLabel = value => ({ queued: '排队中', running: '运行中', complete: '已完成', failed: '运行失败', rejected: '未执行' }[value] || value)
 async function load() {
   controller?.abort()
   const active = new AbortController()
@@ -161,6 +169,7 @@ async function load() {
     if (!response.ok || !payload.success) throw new Error(payload.message || '试运行加载失败')
     if (controller !== active) return
     report.value = payload.data
+    currentOwnerDate.value = payload.current_owner_date || ''
     canManage.value = Boolean(payload.can_manage)
     lastLoadedAt = Date.now()
   } catch (e) { if (e.name !== 'AbortError') error.value = e.message }
@@ -179,25 +188,25 @@ async function start() {
   } catch (e) { error.value = e.message }
   finally { starting.value = false }
 }
-async function retryFailed() {
-  if (retrying.value || retryBusy.value) return
+async function runNow() {
+  if (!canRunNow.value) return
   const date = props.selectedDate
-  if (!window.confirm(`重试${date}的失败研判？会再次产生火山API费用；只重跑失败场次，使用原赛前快照，成功结果与已发布方案不变，已开赛或临近开赛不重跑。`)) return
-  retrying.value = true
+  if (!window.confirm(`立即按当前规则分析${date}的未开赛比赛？将读取最新已入库数据，重新调用火山API并产生费用（不只是重试失败场次）。旧记录单独保留，展示和统计使用最新完成版本，固定16:00任务不变；不会创建真实投注。`)) return
+  runningNow.value = true
   error.value = ''
   message.value = ''
   try {
-    const response = await fetch('/api/fae/strategy-trial/retry', { method: 'POST', credentials: 'same-origin',
+    const response = await fetch('/api/fae/strategy-trial/run-now', { method: 'POST', credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ date, confirm_api_cost: true }) })
     const payload = await response.json()
-    if (!response.ok || !payload.success) throw new Error(payload.message || '重试提交失败')
+    if (!response.ok || !payload.success) throw new Error(payload.message || '立即运行提交失败')
     message.value = payload.message
     await load()
   } catch (e) { error.value = e.message }
-  finally { retrying.value = false }
+  finally { runningNow.value = false }
 }
 watch(() => [props.selectedDate, props.refreshKey], load)
-onMounted(() => { load(); timer = setInterval(() => { if (visible && document.visibilityState === 'visible' && !loading.value && (retryBusy.value || Date.now() - lastLoadedAt >= 60000)) load() }, 5000) })
+onMounted(() => { load(); timer = setInterval(() => { if (visible && document.visibilityState === 'visible' && !loading.value && (anyManualBusy.value || retryBusy.value || day.value?.decision === 'analyzing' || Date.now() - lastLoadedAt >= 60000)) load() }, 5000) })
 onActivated(() => { visible = true })
 onDeactivated(() => { visible = false })
 onBeforeUnmount(() => { controller?.abort(); clearInterval(timer) })
@@ -220,6 +229,8 @@ onBeforeUnmount(() => { controller?.abort(); clearInterval(timer) })
 .trial-stat-grid article strong { display: block; margin-top: 8px; font-size: 21px; color: #323c4a; }
 .trial-note { font-size: 12px; color: #777; }
 .trial-retry { margin-top: 12px; padding: 12px; background: #fff8ee; border-radius: 8px; }
+.trial-run-history { padding: 10px 0; border-bottom: 1px dashed #e4e4e7; }
+.trial-run-history:last-child { border-bottom: 0; }
 .trial-ai-reason { grid-column: 1 / -1; }
 .trial-section-title { margin: 20px 0 0; font-size: 14px; color: #414b59; }
 .trial-draw-plan { margin-top: 18px; padding: 12px; border-radius: 10px; background: #fff8f8; border: 1px solid #eed8df; }

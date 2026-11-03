@@ -14,6 +14,7 @@ from football_ai.strategy_trial import (
 )
 from db_storage import MongoDBStorage
 from football_ai.strategy_trial_retry import merge_trial_days
+from football_ai.strategy_trial_manual import merge_manual_runs
 
 
 NOW = datetime(2026, 11, 3, 16, tzinfo=app_timezone())
@@ -264,12 +265,15 @@ class TrialSchedulingTests(unittest.TestCase):
         storage.get_matches.return_value = [fixture('001'), fixture('002')]
         storage.get_match_fundamentals_bulk.return_value = {}
         storage.get_strategy_trial_ai_jobs.return_value = []
+        storage.get_strategy_trial_manual_runs.return_value = []
+        storage.get_strategy_trial_manual_controls.return_value = []
         storage.save_strategy_trial_day.side_effect = lambda day: day
         namespace = dict(datetime=Clock, timedelta=timedelta, app_timezone=app_timezone,
                          mongo_storage=storage, TRIAL_VERSION=TRIAL_VERSION,
                          reschedule_trial=reschedule_trial,
                          archive_trial_job=archive_trial_job, execute_trial_ai_job=Mock(),
                          merge_trial_days=merge_trial_days, _run_strategy_trial_manual_retry=Mock(),
+                         merge_manual_runs=merge_manual_runs, _run_strategy_trial_manual_now=Mock(),
                          decision_time=decision_time, build_trial_day=Mock(return_value={
                              'decision': 'no_ticket', 'owner_date': '2026-11-03', 'ticket': None, 'baseline_ticket': None}),
                          settle_ticket=settle_ticket, settle_draw_ticket=settle_draw_ticket,
@@ -378,6 +382,37 @@ class TrialSchedulingTests(unittest.TestCase):
         self.assertEqual(old['snapshot_hash'], 'original')
         storage.save_strategy_trial_day.assert_not_called()
 
+    def test_scheduler_recovers_manual_run_and_settles_latest_result(self):
+        job, storage = self.load_job(NOW + timedelta(hours=2))
+        storage.get_strategy_trial.return_value['policy']['llm_enabled'] = True
+        old = {'owner_date': '2026-11-03', 'ticket': None, 'baseline_ticket': None,
+               'snapshot_hash': 'original', 'published_at': NOW.isoformat()}
+        storage.get_strategy_trial_days.return_value = [old]
+        ticket = {'picks': [{'match_id': mid, 'selection': '主胜', 'odds': 1.75}
+                             for mid in ('001', '002')], 'stake': 1}
+        run = {'request_id': 'new-run', 'owner_date': old['owner_date'], 'status': 'queued',
+               'requested_at': (NOW + timedelta(hours=1)).isoformat(),
+               'result': {**old, 'snapshot_hash': 'manual', 'ticket': ticket,
+                          'published_at': (NOW + timedelta(hours=1, minutes=1)).isoformat()}}
+        storage.get_strategy_trial_manual_runs.return_value = [run]
+        storage.get_matches.return_value = [fixture(mid, status=2, score='2:0') for mid in ('001', '002')]
+        job['_run_scheduled_strategy_trial']()
+        job['_run_strategy_trial_manual_now'].assert_called_once_with('new-run')
+        review = storage.save_strategy_trial_review.call_args.args[0]
+        self.assertEqual(review['snapshot_hash'], 'manual')
+        self.assertEqual(review['ticket']['status'], 'hit')
+        self.assertEqual(old['snapshot_hash'], 'original')
+        storage.save_strategy_trial_day.assert_not_called()
+
+    def test_scheduler_recovers_stale_control_after_run_already_finished(self):
+        job, storage = self.load_job(NOW + timedelta(hours=2))
+        storage.get_strategy_trial.return_value['policy']['llm_enabled'] = True
+        storage.get_strategy_trial_days.return_value = [{'owner_date': '2026-11-03', 'ticket': None}]
+        storage.get_strategy_trial_manual_controls.return_value = [
+            {'request_id': 'completed-but-locked', 'owner_date': '2026-11-03', 'status': 'running'}]
+        job['_run_scheduled_strategy_trial']()
+        job['_run_strategy_trial_manual_now'].assert_called_once_with('completed-but-locked')
+
 
 class TrialScheduleMigrationTests(unittest.TestCase):
     def old_trial(self, hour=18):
@@ -453,6 +488,7 @@ class TrialCurrentVersionRouteTests(unittest.TestCase):
         storage.get_strategy_trial.return_value = None
         namespace = dict(mongo_storage=storage, request=SimpleNamespace(args=args),
                          TRIAL_VERSION=TRIAL_VERSION, TRIAL_POLICY=TRIAL_POLICY,
+                         datetime=datetime, app_timezone=app_timezone,
                          jsonify=lambda value: value, _fae_admin_user=lambda: None)
         exec(compile(ast.Module(body=[node], type_ignores=[]), str(source), 'exec'), namespace)
         return namespace[name], storage

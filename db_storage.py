@@ -100,6 +100,8 @@ class MongoDBStorage:
         self.fae_strategy_trial_days_collection = self.db['fae_strategy_trial_days']
         self.fae_strategy_trial_reviews_collection = self.db['fae_strategy_trial_reviews']
         self.fae_strategy_trial_ai_jobs_collection = self.db['fae_strategy_trial_ai_jobs']
+        self.fae_strategy_trial_manual_runs_collection = self.db['fae_strategy_trial_manual_runs']
+        self.fae_strategy_trial_manual_controls_collection = self.db['fae_strategy_trial_manual_controls']
         self.fae_backtest_reports_collection = self.db['fae_backtest_reports']
         self.fae_supervised_models_collection = self.db['fae_supervised_models']
         self.fae_supervised_backtests_collection = self.db['fae_supervised_backtests']
@@ -243,6 +245,9 @@ class MongoDBStorage:
                 [('memory_hash', ASCENDING)], unique=True
             )
             self.fae_strategy_trials_collection.create_index('experiment_id', unique=True)
+            self.fae_strategy_trial_manual_runs_collection.create_index([
+                ('experiment_id', ASCENDING), ('owner_date', ASCENDING), ('requested_at', DESCENDING)
+            ])
             for collection in (self.fae_strategy_trial_days_collection,
                                self.fae_strategy_trial_reviews_collection,
                                self.fae_strategy_trial_ai_jobs_collection):
@@ -479,6 +484,99 @@ class MongoDBStorage:
                      f'manual_retries.{request_id}.status': 'complete',
                      f'manual_retries.{request_id}.completed_at': completed_at,
                      f'manual_retries.{request_id}.result': dict(record)}})
+
+    def request_strategy_trial_manual_run(self, run):
+        """Persist first, then acquire a unique per-day execution lease."""
+        request_id = run['request_id']
+        self.fae_strategy_trial_manual_runs_collection.insert_one({'_id': request_id, **dict(run)})
+        state = {key: run[key] for key in ('request_id', 'experiment_id', 'owner_date',
+                                          'status', 'requested_at', 'match_count', 'batch_count')}
+        state['completed_batches'] = 0
+        try:
+            result = self.fae_strategy_trial_manual_controls_collection.update_one({
+                '_id': f"{run['experiment_id']}:{run['owner_date']}",
+                'status': {'$nin': ['queued', 'running']},
+            }, {'$set': state, '$unset': {'error': '', 'completed_at': '', 'verified_matches': '', 'failed_matches': ''}}, upsert=True)
+            accepted = result.modified_count == 1 or result.upserted_id is not None
+        except DuplicateKeyError:
+            accepted = False
+        if not accepted:
+            self.fae_strategy_trial_manual_runs_collection.update_one({'_id': request_id},
+                {'$set': {'status': 'rejected', 'error': '已有正在执行的当日任务，未调用AI'}})
+        return accepted
+
+    def get_strategy_trial_manual_run(self, request_id):
+        return self.fae_strategy_trial_manual_runs_collection.find_one({'_id': request_id}, {'_id': 0})
+
+    def get_strategy_trial_manual_runs(self, experiment_id, *, owner_date=None, pending=False, audit=False):
+        query = {'experiment_id': experiment_id}
+        if owner_date:
+            query['owner_date'] = owner_date
+        if pending:
+            query['status'] = {'$in': ['queued', 'running']}
+        projection = {'_id': 0} if audit else {
+            '_id': 0, 'trial_snapshot': 0, 'input_snapshot.audit': 0,
+            'batches': 0, 'result.audit': 0, 'requested_by': 0,
+        }
+        return list(self.fae_strategy_trial_manual_runs_collection.find(query, projection).sort('requested_at', ASCENDING))
+
+    def get_strategy_trial_manual_control(self, experiment_id, owner_date):
+        return self.fae_strategy_trial_manual_controls_collection.find_one(
+            {'_id': f'{experiment_id}:{owner_date}'}, {'_id': 0})
+
+    def get_strategy_trial_manual_controls(self, experiment_id):
+        return list(self.fae_strategy_trial_manual_controls_collection.find({'experiment_id': experiment_id}, {'_id': 0}))
+
+    def claim_strategy_trial_manual_batch(self, request_id, index, batch):
+        path = f'batches.{index}'
+        result = self.fae_strategy_trial_manual_runs_collection.update_one({
+            '_id': request_id, 'status': {'$in': ['queued', 'running']}, path: {'$exists': False},
+        }, {'$set': {path: dict(batch), 'status': 'running'}})
+        if result.modified_count == 1:
+            self.fae_strategy_trial_manual_controls_collection.update_one({'request_id': request_id},
+                {'$set': {'status': 'running'}})
+        return result.modified_count == 1
+
+    def finish_strategy_trial_manual_batch(self, request_id, index, token, batch):
+        path = f'batches.{index}'
+        result = self.fae_strategy_trial_manual_runs_collection.update_one({
+            '_id': request_id, f'{path}.claim_token': token, f'{path}.status': 'running',
+        }, {'$set': {path: dict(batch)}, '$inc': {'completed_batches': 1}})
+        if result.modified_count == 1:
+            self.fae_strategy_trial_manual_controls_collection.update_one({'request_id': request_id},
+                {'$inc': {'completed_batches': 1}})
+
+    def fail_strategy_trial_manual_run(self, request_id, message):
+        self.fae_strategy_trial_manual_runs_collection.update_one({
+            '_id': request_id, 'status': {'$in': ['queued', 'running']},
+        }, {'$set': {'status': 'failed', 'error': message}})
+        self.fae_strategy_trial_manual_controls_collection.update_one({
+            'request_id': request_id, 'status': {'$in': ['queued', 'running']},
+        }, {'$set': {'status': 'failed', 'error': message}})
+
+    def complete_strategy_trial_manual_run(self, request_id, record, completed_at):
+        result = self.fae_strategy_trial_manual_runs_collection.update_one({
+            '_id': request_id, 'status': {'$in': ['queued', 'running']},
+        }, {'$set': {'status': 'complete', 'result': dict(record), 'completed_at': completed_at}})
+        if result.modified_count == 1:
+            self.fae_strategy_trial_manual_controls_collection.update_one({'request_id': request_id}, {'$set': {
+                'status': 'complete', 'completed_at': completed_at,
+                'verified_matches': record['ai_run']['verified_matches'],
+                'failed_matches': record['ai_run']['failed_matches'],
+            }})
+
+    def reconcile_strategy_trial_manual_control(self, run):
+        """Repair a crash between saving a terminal run and releasing its lease."""
+        if run.get('status') not in ('complete', 'failed', 'rejected'):
+            return
+        result = run.get('result') or {}
+        state = {key: run[key] for key in ('status', 'completed_at', 'error') if key in run}
+        if run['status'] == 'complete':
+            state.update(verified_matches=(result.get('ai_run') or {}).get('verified_matches', 0),
+                         failed_matches=(result.get('ai_run') or {}).get('failed_matches', 0))
+        self.fae_strategy_trial_manual_controls_collection.update_one({
+            'request_id': run['request_id'], 'status': {'$in': ['queued', 'running']},
+        }, {'$set': state})
 
     def save_match_fundamentals(self, match_id, source_analysis):
         """缓存单场基本面，供详情页和全日研判复用。"""

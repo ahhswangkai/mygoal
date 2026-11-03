@@ -31,6 +31,9 @@ from football_ai.strategy_trial_ai import make_trial_ai_client, trial_ai_setting
 from football_ai.strategy_trial_retry import (
     TrialRetryError, execute_manual_retry, make_retry_request, merge_trial_days,
 )
+from football_ai.strategy_trial_manual import (
+    execute_manual_run, make_manual_run, manual_run_summary, merge_manual_runs,
+)
 from match_time_utils import sort_matches_by_datetime
 from user_storage import UserStorage
 from football_ai import (
@@ -2509,7 +2512,10 @@ def get_fae_strategy_trial():
             mongo_storage.get_strategy_trial_reviews(experiment_id))
         report['implementation_matches'] = trial['model_fingerprint'] == model_fingerprint()
         report['ai_configuration_matches'] = not trial['policy'].get('llm_enabled') or trial.get('ai_settings') == trial_ai_settings(make_trial_ai_client())
+        report['manual_runs'] = [manual_run_summary(run) for run in mongo_storage.get_strategy_trial_manual_runs(experiment_id)]
+        report['manual_run_states'] = {row['owner_date']: row for row in mongo_storage.get_strategy_trial_manual_controls(experiment_id)}
     return jsonify({'success': True, 'data': report, 'policy': TRIAL_POLICY,
+                    'current_owner_date': datetime.now(app_timezone()).date().isoformat(),
                     'current_experiment_id': TRIAL_VERSION,
                     'available_experiments': [TRIAL_VERSION],
                     'can_manage': bool(_fae_admin_user())})
@@ -2543,7 +2549,61 @@ def get_fae_strategy_trial_audit():
     rows = mongo_storage.get_strategy_trial_days(experiment_id, audit=True)
     return jsonify({'success': True, 'data': next(
         (row for row in rows if row['owner_date'] == owner_date), None),
-        'ai_job': mongo_storage.get_strategy_trial_ai_job(experiment_id, owner_date)})
+        'ai_job': mongo_storage.get_strategy_trial_ai_job(experiment_id, owner_date),
+        'manual_runs': mongo_storage.get_strategy_trial_manual_runs(experiment_id, owner_date=owner_date, audit=True)})
+
+
+@app.route('/api/fae/strategy-trial/run-now', methods=['POST'])
+@fae_admin_required
+def run_fae_strategy_trial_now():
+    if not mongo_storage:
+        return jsonify({'success': False, 'message': 'MongoDB不可用'}), 503
+    payload = request.get_json(silent=True) or {}
+    if not isinstance(payload, dict) or payload.get('confirm_api_cost') is not True:
+        return jsonify({'success': False, 'message': '请确认立即运行会重新调用火山并产生API费用'}), 422
+    current = datetime.now(app_timezone())
+    owner_date = str(payload.get('date') or current.date().isoformat())
+    if owner_date != current.date().isoformat():
+        return jsonify({'success': False, 'message': '仅可立即运行今天尚未开赛的比赛'}), 422
+    trial = mongo_storage.get_strategy_trial(TRIAL_VERSION)
+    client = make_trial_ai_client()
+    if not trial or not client.configured or trial.get('ai_settings') != trial_ai_settings(client):
+        return jsonify({'success': False, 'message': 'AI试验未登记或当前模型配置尚未就绪'}), 409
+    control = mongo_storage.get_strategy_trial_manual_control(TRIAL_VERSION, owner_date) or {}
+    if control.get('status') in ('queued', 'running'):
+        return jsonify({'success': False, 'message': '已有立即运行任务，请勿重复提交'}), 409
+    job = mongo_storage.get_strategy_trial_ai_job(TRIAL_VERSION, owner_date)
+    saved_dates = {row['owner_date'] for row in mongo_storage.get_strategy_trial_days(TRIAL_VERSION)}
+    if job and (owner_date not in saved_dates or (job.get('retry_state') or {}).get('status') in ('queued', 'running')):
+        return jsonify({'success': False, 'message': '固定研判或旧重试任务仍在执行，请等待完成后再运行'}), 409
+    matches = mongo_storage.get_matches(filters={'owner_date': owner_date})
+    fundamentals = mongo_storage.get_match_fundamentals_bulk([row['match_id'] for row in matches])
+    try:
+        run = make_manual_run(trial, matches, fundamentals, _fae_admin_user() or {},
+                              owner_date=owner_date, now=current)
+    except TrialRetryError as exc:
+        return jsonify({'success': False, 'message': str(exc)}), 409
+    if not mongo_storage.request_strategy_trial_manual_run(run):
+        return jsonify({'success': False, 'message': '任务已由其他请求提交，请刷新查看进度'}), 409
+    try:
+        threading.Thread(target=_run_strategy_trial_manual_now, args=(run['request_id'],),
+                         name='fae-trial-run-now', daemon=True).start()
+    except RuntimeError:
+        app.logger.exception('立即运行已入队，将由定时任务恢复: %s', run['request_id'])
+    return jsonify({'success': True, 'request_id': run['request_id'],
+                    'message': f"已提交{run['match_count']}场比赛，按当前规则与新快照立即研判；旧记录保留"}), 202
+
+
+def _run_strategy_trial_manual_now(request_id):
+    try:
+        run = mongo_storage.get_strategy_trial_manual_run(request_id)
+        trial = mongo_storage.get_strategy_trial(TRIAL_VERSION)
+        if run:
+            mongo_storage.reconcile_strategy_trial_manual_control(run)
+            execute_manual_run(trial, run, mongo_storage)
+    except Exception:
+        app.logger.exception('策略验收立即运行失败: %s', request_id)
+        mongo_storage.fail_strategy_trial_manual_run(request_id, '执行异常；调用检查点已保留，请刷新查看后再操作')
 
 
 @app.route('/api/fae/strategy-trial/retry', methods=['POST'])
@@ -2607,7 +2667,9 @@ def _run_strategy_trial_manual_retry(owner_date):
 def _strategy_trial_days(trial):
     days = mongo_storage.get_strategy_trial_days(trial['experiment_id'])
     if trial['policy'].get('llm_enabled'):
-        return merge_trial_days(days, mongo_storage.get_strategy_trial_ai_jobs(trial['experiment_id'], audit=False))
+        days = merge_trial_days(days, mongo_storage.get_strategy_trial_ai_jobs(trial['experiment_id'], audit=False))
+        return merge_manual_runs(days, mongo_storage.get_strategy_trial_manual_runs(trial['experiment_id']),
+                                 mongo_storage.get_strategy_trial_manual_controls(trial['experiment_id']))
     return days
 
 
@@ -2671,6 +2733,13 @@ def _run_scheduled_strategy_trial():
             if (job.get('retry_state') or {}).get('status') in ('queued', 'running'):
                 _run_strategy_trial_manual_retry(job['owner_date'])
         days = merge_trial_days(days, mongo_storage.get_strategy_trial_ai_jobs(TRIAL_VERSION, audit=False))
+        pending_ids = {run['request_id'] for run in mongo_storage.get_strategy_trial_manual_runs(TRIAL_VERSION, pending=True)}
+        pending_ids.update(control['request_id'] for control in mongo_storage.get_strategy_trial_manual_controls(TRIAL_VERSION)
+                           if control.get('status') in ('queued', 'running'))
+        for request_id in sorted(pending_ids):
+            _run_strategy_trial_manual_now(request_id)
+        days = merge_manual_runs(days, mongo_storage.get_strategy_trial_manual_runs(TRIAL_VERSION),
+                                 mongo_storage.get_strategy_trial_manual_controls(TRIAL_VERSION))
     # Retired versions remain stored, but are no longer shown or scheduled.
     for day in days:
         if not any(day.get(key) for key in ('ticket', 'baseline_ticket', 'draw_ticket', 'draw_baseline_ticket')):
