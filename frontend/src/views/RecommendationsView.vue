@@ -819,6 +819,53 @@
           <p v-if="reviewAiMessage" class="review-ai-message">{{ reviewAiMessage }}</p>
           <p v-if="reviewAiError" class="review-ai-message error">{{ reviewAiError }}</p>
 
+          <section class="daily-review-block special-review-block">
+            <h2><span>进球数 / 半全场复盘</span><small>首选与双选独立统计</small></h2>
+            <details v-for="group in specialMarketReviewGroups" :key="group.key" class="special-review-market">
+              <summary>
+                <strong>{{ group.title }}</strong>
+                <span v-if="group.rows.length">
+                  当日首选 {{ group.primaryHits }}/{{ group.primarySettled }}
+                  · 双选覆盖 {{ group.coverageHits }}/{{ group.coverageSettled }}
+                  <template v-if="group.pending"> · 待结算 {{ group.pending }}场</template>
+                </span>
+                <span v-else>{{ faeReview ? '当日没有可复盘的赛前选项' : '当日复盘尚未生成' }}</span>
+                <small v-if="group.cumulative?.primary?.settled || group.cumulative?.two_option?.settled">
+                  累计首选 {{ group.cumulative?.primary?.hits || 0 }}/{{ group.cumulative?.primary?.settled || 0 }}
+                  · 双选覆盖 {{ group.cumulative?.two_option?.hits || 0 }}/{{ group.cumulative?.two_option?.settled || 0 }}
+                </small>
+              </summary>
+              <p v-if="!group.rows.length" class="special-review-empty">
+                {{ faeReview ? '仅结算赛前已留档的选项，不用赛后赔率补选。' : '已有赛果时，可稍后点「刷新数据」查看。' }}
+              </p>
+              <button
+                v-for="item in group.rows"
+                :key="item.match_id"
+                type="button"
+                class="special-review-row"
+                @click="goToDetail(item.match_id)"
+              >
+                <span class="review-match-info">
+                  <b>{{ item.match_number }}</b>{{ item.home_team }} vs {{ item.away_team }}
+                </span>
+                <span class="review-pick-info">
+                  <strong>首选 {{ specialSelectionLabel(group.key, item.primary_selection) }}</strong>
+                  <small v-if="item.secondary_selection">次选 {{ specialSelectionLabel(group.key, item.secondary_selection) }}</small>
+                  <i :class="item.primary_status">首选 {{ specialReviewStatusLabel(item, item.primary_status) }}</i>
+                  <i v-if="item.secondary_selection" :class="item.coverage_status">
+                    双选 {{ specialReviewStatusLabel(item, item.coverage_status) }}
+                  </i>
+                </span>
+                <span class="review-result-info">
+                  <em v-if="item.actual_selection != null">实际 {{ specialSelectionLabel(group.key, item.actual_selection) }}</em>
+                  <em v-if="item.result_score">全场 {{ item.result_score }}</em>
+                  <small v-if="group.key === 'half_full' && item.half_score">半场 {{ item.half_score }}</small>
+                  <small v-if="item.hit_odds">命中 @{{ item.hit_odds }}</small>
+                </span>
+              </button>
+            </details>
+          </section>
+
           <div class="review-stats-grid">
             <article>
               <span>正式二串一命中</span>
@@ -1279,34 +1326,6 @@
                   <small>
                     {{ twoOptionHitOdds(item) ? `@${twoOptionHitOdds(item)}` : (item.market || '双选') }}
                   </small>
-                </span>
-              </button>
-            </section>
-
-            <section v-if="specialMarketReviewRows.length" class="daily-review-block special-review-block">
-              <h2>
-                <span>进球数 / 半全场复盘</span>
-                <small>首选与双选分开统计</small>
-              </h2>
-              <button
-                v-for="item in specialMarketReviewRows"
-                :key="`special-${item.match_id}-${item.market_key}`"
-                type="button"
-                @click="goToDetail(item.match_id)"
-              >
-                <span class="review-match-info">
-                  <b>{{ item.match_number }}</b>{{ item.market }}
-                </span>
-                <span class="review-pick-info">
-                  <strong>{{ item.primary_selection }} / {{ item.secondary_selection }}</strong>
-                  <i :class="item.coverage_status">
-                    {{ item.coverage_status === 'hit' ? `✓ 命中 ${item.hit_selection}` : reviewStatusLabel(item.coverage_status) }}
-                  </i>
-                  <small>首选 {{ reviewStatusLabel(item.primary_status) }}</small>
-                </span>
-                <span class="review-result-info">
-                  <em>{{ item.half_score ? `${item.half_score} / ` : '' }}{{ item.result_score || '待赛' }}</em>
-                  <small v-if="item.hit_odds">@{{ item.hit_odds }}</small>
                 </span>
               </button>
             </section>
@@ -2041,9 +2060,33 @@ const twoOptionReviewRows = computed(() => {
   }
   return Array.from(byMatch.values())
 })
-const specialMarketReviewRows = computed(() => (
-  faeReview.value?.special_market_results || []
-))
+const specialMarketReviewGroups = computed(() => [
+  { key: 'total_goals', title: '总进球数' },
+  { key: 'half_full', title: '半全场' }
+].map(group => {
+  const rows = (faeReview.value?.special_market_results || []).filter(row => row.market_key === group.key)
+  const doubles = rows.filter(row => row.secondary_selection != null && row.secondary_selection !== '')
+  return {
+    ...group,
+    rows,
+    primaryHits: rows.filter(row => row.primary_status === 'hit').length,
+    primarySettled: rows.filter(row => isSettledStatus(row.primary_status)).length,
+    coverageHits: doubles.filter(row => row.coverage_status === 'hit').length,
+    coverageSettled: doubles.filter(row => isSettledStatus(row.coverage_status)).length,
+    pending: rows.filter(row => row.coverage_status === 'pending').length,
+    cumulative: faeStats.value?.special_markets?.[group.key]
+  }
+}))
+
+function specialSelectionLabel(market, selection) {
+  if (selection == null || selection === '') return '—'
+  return market === 'total_goals' ? `${selection}球` : selection
+}
+
+function specialReviewStatusLabel(item, status) {
+  if (status === 'pending') return item.pending_reason || '待结算'
+  return reviewStatusLabel(status)
+}
 const drawTicketReviewRows = computed(() => (
   faeReview.value?.draw_ticket_results || []
 ))
@@ -5702,7 +5745,35 @@ onBeforeUnmount(() => {
   background: #fffaf0;
 }
 
-.daily-review-block > button {
+.special-review-market {
+  border-top: 1px solid #f5eff0;
+}
+
+.special-review-market > summary {
+  padding: 10px;
+  cursor: pointer;
+  font-size: 13px;
+  color: #444;
+}
+
+.special-review-market > summary > span,
+.special-review-market > summary > small {
+  display: block;
+  padding-left: 15px;
+  margin-top: 4px;
+  color: #777;
+  font-size: 12px;
+}
+
+.special-review-empty {
+  margin: 0;
+  padding: 4px 10px 10px;
+  color: #777;
+  font-size: 12px;
+}
+
+.daily-review-block > button,
+.special-review-market > .special-review-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(98px, 34%) 46px;
   gap: 6px;
@@ -5714,6 +5785,10 @@ onBeforeUnmount(() => {
   background: #fff;
   border: 0;
   border-top: 1px solid #f5eff0;
+}
+
+.special-review-market > .special-review-row {
+  grid-template-columns: minmax(0, 1fr) minmax(86px, 32%) minmax(65px, auto);
 }
 
 .review-match-info {

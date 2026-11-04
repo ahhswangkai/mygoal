@@ -749,9 +749,12 @@ def settle_special_markets(
     match: Dict[str, Any],
 ) -> List[Dict[str, Any]]:
     """Settle saved score, total-goals and half/full selections."""
-    analysis = (source.get("analysis") or {}).get("special_markets") or (
-        (source.get("input_snapshot") or {}).get("special_markets") or {}
-    )
+    # Some older runs saved one market in analysis and another only in the
+    # frozen input. Resolve each market independently, never using live odds.
+    analysis = {
+        **((source.get("input_snapshot") or {}).get("special_markets") or {}),
+        **((source.get("analysis") or {}).get("special_markets") or {}),
+    }
     full_score = _score_pair(match)
     half_score = _score_pair(match, half=True)
     finished = match.get("status") in (2, "2") and full_score is not None
@@ -793,6 +796,8 @@ def settle_special_markets(
             dict(item) for item in (primary, secondary)
             if item.get("selection")
         ]
+        if not selections:
+            continue
         for index, item in enumerate(selections):
             item["role"] = "primary" if index == 0 else "secondary"
             item["status"] = (
@@ -839,6 +844,11 @@ def settle_special_markets(
             "primary_profit": round(primary_return - 1, 3) if primary_return is not None else None,
             "coverage_status": coverage_status,
             "status": coverage_status,
+            "pending_reason": (
+                "缺半场比分" if finished and key == "half_full" and half_score is None
+                else "缺全场比分" if match.get("status") in (2, "2") and not full_score
+                else None
+            ),
             "hit_selection": hit.get("selection") if hit else None,
             "hit_odds": hit.get("odds") if hit else None,
             "equal_stake_stake": coverage_stake,

@@ -56,6 +56,7 @@ from football_ai import (
     compact_daily_ai_run,
     normalize_match_number,
     parse_calculator_payload,
+    settle_special_markets,
 )
 
 from db_storage import MongoDBStorage
@@ -2450,6 +2451,30 @@ def get_fae_daily_ai_match(match_id):
     return jsonify({'success': True, 'data': data})
 
 
+def _fill_missing_special_review_rows(review, owner_date, run_id):
+    """Recover missing display rows from the same frozen run, without Ark or writes."""
+    market_keys = {'total_goals', 'half_full'}
+    existing = list(review.get('special_market_results') or [])
+    # Normally the scheduler has already produced the special-market rows.
+    # Only use the compatibility path for an absent market.
+    missing = market_keys - {row.get('market_key') for row in existing}
+    if not missing:
+        return review
+    snapshot = mongo_storage.get_fae_daily_ai_snapshot(owner_date, latest=True)
+    if not snapshot or snapshot.get('run_id') != run_id:
+        return review
+    sources = [row for row in snapshot.get('matches') or [] if row.get('match_id')]
+    results = mongo_storage.get_matches_by_ids([str(row['match_id']) for row in sources])
+    recovered = [
+        row for source in sources
+        for row in settle_special_markets(
+            source, results.get(str(source['match_id'])) or {}
+        )
+        if row['market_key'] in missing
+    ]
+    return {**review, 'special_market_results': existing + recovered} if recovered else review
+
+
 @app.route('/api/fae/daily-ai/review', methods=['GET'])
 def get_fae_daily_ai_review():
     if not mongo_storage:
@@ -2462,6 +2487,8 @@ def get_fae_daily_ai_review():
         )
         if latest_run_id else None
     )
+    if data:
+        data = _fill_missing_special_review_rows(data, date_str, latest_run_id)
     if data and data.get('ai_deep_review'):
         data['ai_deep_review'] = (
             fae_ai_review_analyzer.humanize_review_match_ids(

@@ -7,6 +7,8 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, call
 
+from football_ai.special_markets import settle_special_markets
+
 
 def load_review_jobs():
     source = Path(__file__).resolve().parents[1] / "web_app.py"
@@ -14,7 +16,10 @@ def load_review_jobs():
     functions = [
         node for node in tree.body
         if isinstance(node, ast.FunctionDef)
-        and node.name in {"_run_scheduled_fae_reviews", "_start_scheduler"}
+        and node.name in {
+            "_run_scheduled_fae_reviews", "_start_scheduler",
+            "_fill_missing_special_review_rows",
+        }
     ]
     namespace = {"datetime": datetime, "timedelta": timedelta}
     exec(compile(ast.Module(body=functions, type_ignores=[]), str(source), "exec"), namespace)
@@ -22,6 +27,35 @@ def load_review_jobs():
 
 
 class ReviewRefreshTests(unittest.TestCase):
+    def test_legacy_review_recovers_missing_market_without_writing_or_rerunning_ai(self):
+        jobs = load_review_jobs()
+        storage = Mock()
+        storage.get_fae_daily_ai_snapshot.return_value = {
+            "run_id": "latest",
+            "matches": [{"match_id": "1", "input_snapshot": {"special_markets": {
+                "half_full": {"available": True, "primary": {"selection": "平胜", "odds": 4.5}},
+            }}}],
+        }
+        storage.get_matches_by_ids.return_value = {
+            "1": {"status": 2, "score": "2:1", "half_score": "0:0"},
+        }
+        jobs.update(mongo_storage=storage, settle_special_markets=settle_special_markets)
+        review = {"special_market_results": [{"match_id": "1", "market_key": "total_goals"}]}
+        fill = jobs["_fill_missing_special_review_rows"]
+        result = fill(review, "2026-11-03", "latest")
+        self.assertEqual(len(review["special_market_results"]), 1)
+        recovered = result["special_market_results"][1]
+        self.assertEqual(recovered["market_key"], "half_full")
+        self.assertEqual(recovered["primary_status"], "hit")
+        self.assertEqual(recovered["hit_odds"], 4.5)
+        self.assertIs(fill(result, "2026-11-03", "latest"), result)
+        self.assertIs(fill(review, "2026-11-03", "different-run"), review)
+        self.assertEqual(storage.method_calls, [
+            call.get_fae_daily_ai_snapshot("2026-11-03", latest=True),
+            call.get_matches_by_ids(["1"]),
+            call.get_fae_daily_ai_snapshot("2026-11-03", latest=True),
+        ])
+
     def test_one_failed_date_does_not_stop_other_reviews_or_draw_settlement(self):
         jobs = load_review_jobs()
         storage = Mock()

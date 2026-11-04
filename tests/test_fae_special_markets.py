@@ -246,6 +246,41 @@ class SpecialMarketTests(unittest.TestCase):
         self.assertEqual(by_key["half_full"]["coverage_status"], "hit")
         self.assertEqual(by_key["half_full"]["half_score"], "0:0")
 
+    def test_split_legacy_markets_use_the_same_frozen_input(self):
+        source = {
+            "analysis": {"special_markets": {
+                "total_goals": {"available": True, "primary": {"selection": "3", "odds": 3.5}},
+            }},
+            "input_snapshot": {"special_markets": {
+                "total_goals": {"available": True, "primary": {"selection": "2", "odds": 4}},
+                "half_full": {"available": True, "primary": {"selection": "平胜", "odds": 4.5}},
+            }},
+        }
+        rows = settle_special_markets(source, {"status": "2", "score": "2:1", "half_score": "0-0"})
+        by_key = {row["market_key"]: row for row in rows}
+        self.assertEqual(by_key["total_goals"]["hit_odds"], 3.5)
+        self.assertEqual(by_key["half_full"]["hit_odds"], 4.5)
+
+    def test_full_time_without_half_score_settles_goals_only(self):
+        source = {"analysis": {"special_markets": {
+            "total_goals": {"available": True, "primary": {"selection": "0", "odds": 9}},
+            "half_full": {"available": True, "primary": {"selection": "平平", "odds": 6}},
+        }}}
+        goals, half_full = settle_special_markets(source, {"status": 2, "score": "0:0"})
+        self.assertEqual(goals["primary_status"], "hit")
+        self.assertEqual(half_full["primary_status"], "pending")
+        self.assertEqual(half_full["coverage_status"], "pending")
+        self.assertEqual(half_full["pending_reason"], "缺半场比分")
+        self.assertIsNone(half_full["actual_selection"])
+
+    def test_no_pregame_selection_is_not_counted_as_a_miss(self):
+        source = {"analysis": {"special_markets": {
+            "half_full": {"available": True},
+        }}}
+        self.assertEqual(settle_special_markets(source, {
+            "status": 2, "score": "1:0", "half_score": "0:0",
+        }), [])
+
 
 if __name__ == "__main__":
     unittest.main()
