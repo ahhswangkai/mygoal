@@ -45,7 +45,25 @@
           <article><span>最大回撤</span><strong>{{ report.draw_summary.max_drawdown_units }} 单位</strong><small>待结算 {{ report.draw_summary.pending }} 张</small></article>
         </div>
         <p class="trial-note">同一场只取平或让平中的一个；3场为3个二串一＋1个三串一，只有2场时为1个二串一，合计均为1单位。有返奖不等于盈利。</p>
-        <p class="trial-note">纯赔率平／让平对照ROI {{ percent(report.draw_baseline?.roi) }} · 无合格组合 {{ report.draw_no_ticket_days || 0 }} 天<template v-if="report.draw_summary.roi_interval_95"> · ROI重采样95%区间 {{ report.draw_summary.roi_interval_95[0] }}%～{{ report.draw_summary.roi_interval_95[1] }}%</template></p>
+        <p class="trial-note">AI无合格组合 {{ report.draw_no_ticket_days || 0 }} 天<template v-if="report.draw_summary.roi_interval_95"> · ROI重采样95%区间 {{ report.draw_summary.roi_interval_95[0] }}%～{{ report.draw_summary.roi_interval_95[1] }}%</template></p>
+        <template v-if="report.draw_baseline">
+          <h3 class="trial-section-title">纯赔率平／让平对照 · 独立成绩</h3>
+          <div class="trial-stat-grid">
+            <article>
+              <span>有返奖率</span>
+              <strong>{{ percent(report.draw_baseline.hit_rate) }}</strong>
+              <small>{{ report.draw_baseline.hits }}/{{ report.draw_baseline.decided }} 张有返奖</small>
+              <small>待结算 {{ report.draw_baseline.pending }} 张 · 全退 {{ report.draw_baseline.pushes }} 张</small>
+            </article>
+            <article>
+              <span>模拟ROI</span>
+              <strong>{{ percent(report.draw_baseline.roi) }}</strong>
+              <small>盈利 {{ report.draw_baseline.profitable_tickets }} / {{ report.draw_baseline.settled }} 张已结算</small>
+              <small v-if="report.draw_baseline.settled">净收益 {{ units(report.draw_baseline.profit_units) }}</small>
+            </article>
+          </div>
+          <p class="trial-note">只统计当前规则阶段的赔率对照单；即使 AI 没出单，对照单也照常结算。有返奖率不计全退和待结算的单，返奖不一定盈利。</p>
+        </template>
       </template>
       <section class="trial-day">
         <header><strong>{{ selectedDate }} 赛前留档</strong><span>二串一 {{ decisionLabel(day?.decision) }}</span></header>
@@ -95,7 +113,26 @@
               <details><summary>逐注结算：{{ day.draw_ticket.line_count === 1 ? '1个二串一' : '3个二串一＋1个三串一' }}</summary><p v-for="(line, index) in day.draw_ticket.lines" :key="index"><b>{{ line.play }}</b> {{ line.picks.map(pick => `${pick.match_number}${pick.selection_text}`).join(' × ') }}<small>投入{{ line.stake }}单位 · {{ statusLabel(line.status) }}<template v-if="line.return_units != null"> · 返奖 {{ amountUnits(line.return_units) }}</template></small></p></details>
             </template>
             <details v-if="day.draw_candidates?.length"><summary>平／让平独立候选与排除原因</summary><p v-for="pick in day.draw_candidates" :key="`${pick.match_id}-${pick.selection}`"><b>{{ pick.match_number }} {{ pick.selection_text }} @{{ pick.odds }}</b> · {{ pick.eligible ? '通过候选门槛' : '未入选' }}<small>AI：{{ pick.ai_reason }}</small><small v-if="pick.rejections?.length">{{ pick.rejections.join('；') }}</small></p></details>
-            <details v-if="day.draw_baseline_ticket"><summary>纯赔率平／让平对照单</summary><p v-for="pick in day.draw_baseline_ticket.picks" :key="pick.match_id">{{ pick.match_number }} {{ pick.selection_text }} @{{ pick.odds }}</p><small>{{ day.draw_baseline_ticket.play }} · 1单位 · {{ statusLabel(day.draw_baseline_ticket.status) }}</small></details>
+            <details v-if="dayDrawBaseline" class="trial-draw-baseline">
+              <summary>
+                <strong>纯赔率平／让平对照单</strong>
+                <small :class="settlementClass(dayDrawBaseline.status)">
+                  {{ drawBaselineResultLabel(dayDrawBaseline) }}<template v-if="dayDrawBaseline.profit_units != null"> · 净收益 {{ units(dayDrawBaseline.profit_units) }}</template>
+                </small>
+              </summary>
+              <div v-for="pick in dayDrawBaseline.picks" :key="pick.match_id" class="trial-baseline-row">
+                <span><b>{{ pick.match_number }}</b> {{ pick.selection_text }} @{{ pick.odds }}</span>
+                <span :class="settlementClass(pick.status)">{{ statusLabel(pick.status || 'pending') }}<template v-if="pick.result_score"> · {{ pick.result_score }}</template></span>
+              </div>
+              <small>{{ dayDrawBaseline.play }} · {{ dayDrawBaseline.line_count }} 注 · 投入 {{ dayDrawBaseline.stake }} 单位<template v-if="dayDrawBaseline.return_units != null"> · 返奖 {{ amountUnits(dayDrawBaseline.return_units) }}</template></small>
+              <details v-if="dayDrawBaseline.lines?.length">
+                <summary>逐注结算</summary>
+                <div v-for="(line, index) in dayDrawBaseline.lines" :key="index" class="trial-baseline-row">
+                  <span><b>{{ line.play }}</b> {{ line.picks.map(pick => pick.match_number).join(' × ') }}</span>
+                  <span :class="settlementClass(line.status)">{{ statusLabel(line.status) }}<template v-if="line.return_units != null"> · 返奖 {{ amountUnits(line.return_units) }}</template></span>
+                </div>
+              </details>
+            </details>
           </section>
           <small class="trial-hash">快照 {{ day.snapshot_hash?.slice(0, 16) }}</small>
         </template>
@@ -113,7 +150,22 @@
         <p>30天结束不自动发布。需要继续检查样本量、基准对比、收益集中度和不确定性；不使用倍投，不以回本为目标加注。</p>
         <small>规则指纹 {{ report.trial.policy_hash?.slice(0, 16) }} · 模型指纹 {{ report.trial.model_fingerprint?.slice(0, 16) }}</small>
       </details>
-      <section v-if="report.days.length" class="trial-history"><strong>完整模拟流水</strong><button v-for="item in [...report.days].reverse()" :key="item.owner_date" type="button" @click="$emit('select-date', item.owner_date)"><span>{{ item.owner_date }}<small>二串一 {{ decisionLabel(item.decision) }}<template v-if="hasDrawStrategy"> · 平/让平 {{ decisionLabel(item.draw_decision) }}</template><template v-if="item.manual_run"> · 手动新快照</template><template v-else-if="item.manual_retry"> · 手动重试</template></small></span><b><template v-if="item.ticket?.profit_units != null">二串 {{ units(item.ticket.profit_units) }}</template><small v-if="item.draw_ticket?.profit_units != null">平/让平 {{ units(item.draw_ticket.profit_units) }}</small></b></button></section>
+      <section v-if="report.days.length" class="trial-history">
+        <strong>完整模拟流水</strong>
+        <button v-for="item in [...report.days].reverse()" :key="item.owner_date" type="button" @click="$emit('select-date', item.owner_date)">
+          <span>
+            {{ item.owner_date }}
+            <small>二串一 {{ decisionLabel(item.decision) }}<template v-if="hasDrawStrategy"> · 平/让平 {{ decisionLabel(item.draw_decision) }}</template><template v-if="item.manual_run"> · 手动新快照</template><template v-else-if="item.manual_retry"> · 手动重试</template></small>
+            <small v-if="hasDrawStrategy && item.draw_baseline_ticket" :class="settlementClass(item.draw_baseline_ticket.status)">
+              赔率平／让平 · {{ drawBaselineResultLabel(item.draw_baseline_ticket) }}<template v-if="item.draw_baseline_ticket.profit_units != null"> · {{ units(item.draw_baseline_ticket.profit_units) }}</template>
+            </small>
+          </span>
+          <b v-if="item.ticket?.profit_units != null || item.draw_ticket?.profit_units != null">
+            <template v-if="item.ticket?.profit_units != null">二串 {{ units(item.ticket.profit_units) }}</template>
+            <small v-if="item.draw_ticket?.profit_units != null">平/让平 {{ units(item.draw_ticket.profit_units) }}</small>
+          </b>
+        </button>
+      </section>
     </template>
   </section>
 </template>
@@ -131,6 +183,7 @@ const canManage = ref(false)
 const error = ref('')
 const message = ref('')
 const day = computed(() => report.value?.days?.find(item => item.owner_date === props.selectedDate))
+const dayDrawBaseline = computed(() => day.value?.draw_baseline_ticket)
 const retriedDayCount = computed(() => report.value?.days?.filter(item => (item.manual_retry || item.manual_run) && item.selection_mode === report.value?.selection_mode).length || 0)
 const hasDrawStrategy = computed(() => Boolean(report.value?.trial?.policy?.draw_focus?.enabled))
 const researchMode = computed(() => report.value?.selection_mode === 'daily_research_v1')
@@ -156,6 +209,13 @@ const amountUnits = value => `${Number(value).toFixed(2)} 单位`
 const formatTime = value => value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '—'
 const decisionLabel = value => ({ ticket: '模拟单', no_ticket: '未出单', missed: '错过窗口', suspended: '版本暂停', analyzing: 'AI研判中', ai_failed: 'AI研判失败' }[value] || '等待留档')
 const statusLabel = value => ({ hit: '✓ 命中', miss: '× 未中', push: '已退回', pending: '待结算' }[value] || '待赛')
+const settlementClass = value => ({ hit: 'trial-result-hit', miss: 'trial-result-miss' }[value])
+function drawBaselineResultLabel(ticket) {
+  if (ticket.status !== 'hit') return statusLabel(ticket.status)
+  const hits = ticket.hit_leg_count || 0
+  const total = ticket.picks?.length || 0
+  return hits && total ? `✓ 有返奖 · 中 ${hits}/${total} 场` : '✓ 有返奖'
+}
 const runStatusLabel = value => ({ queued: '排队中', running: '运行中', complete: '已完成', failed: '运行失败', rejected: '未执行' }[value] || value)
 async function load() {
   controller?.abort()
@@ -244,6 +304,10 @@ onBeforeUnmount(() => { controller?.abort(); clearInterval(timer) })
 .trial-hash { overflow-wrap: anywhere; }
 .strategy-trial details { margin-top: 14px; padding: 12px; border-radius: 8px; background: #f8f8fa; font-size: 12px; }
 .strategy-trial summary { cursor: pointer; color: #626978; line-height: 1.5; }
+.trial-draw-baseline > details { padding: 8px 0 0; }
+.trial-baseline-row { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 8px; padding: 8px 0; border-bottom: 1px dashed #e4e4e7; }
+.strategy-trial .trial-result-hit { color: #187556; }
+.strategy-trial .trial-result-miss { color: #b94355; }
 .trial-history { margin-top: 18px; }
 .trial-history button { width: 100%; margin-top: 8px; text-align: left; border-color: #ececf0; font-size: 12px; }
 @media (max-width: 360px) { .trial-pick { grid-template-columns: minmax(0, 1fr); } .trial-pick > div:last-child { text-align: left; } }

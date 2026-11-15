@@ -110,6 +110,49 @@ class DrawTrialTicketTests(unittest.TestCase):
         self.assertEqual(report['draw_summary']['settled'], 1)
         self.assertEqual(report['draw_summary']['roi'], 1250)
 
+    def test_pure_odds_draw_results_count_even_when_ai_has_no_ticket(self):
+        baseline = choose_draw_ticket([
+            pick('001', odds=2.8, eligible=False),
+            pick('002', odds=2.9, eligible=False),
+            pick('003', '让平', odds=3.52, eligible=False),
+        ], TRIAL_POLICY, baseline=True)
+        results = [
+            {'001': {'status': 2, 'score': '1:1'}, '002': {'status': 2, 'score': '0:0'},
+             '003': {'status': 2, 'score': '1:1'}},
+            {key: {'status': 2, 'score': '0:1'} for key in ('001', '002', '003')},
+            {},
+            {key: {'status': 6} for key in ('001', '002', '003')},
+        ]
+        days = [
+            {'owner_date': f'2026-11-{index + 3:02d}', 'snapshot_hash': f'frozen-{index}',
+             'policy': TRIAL_POLICY, 'decision': 'no_ticket', 'draw_decision': 'no_ticket',
+             'draw_baseline_ticket': baseline}
+            for index in range(len(results))
+        ]
+        reviews = [
+            {'owner_date': day['owner_date'], 'snapshot_hash': day['snapshot_hash'],
+             'draw_baseline_ticket': settle_draw_ticket(baseline, scores)}
+            for day, scores in zip(days, results)
+        ]
+        report = trial_report(start_trial(NOW - timedelta(hours=1)), days, reviews, now=NOW)
+
+        self.assertEqual(report['draw_summary']['tickets'], 0)
+        stats = report['draw_baseline']
+        self.assertEqual(
+            {key: stats[key] for key in ('hits', 'decided', 'settled', 'pending', 'pushes', 'hit_rate', 'profitable_tickets')},
+            {'hits': 1, 'decided': 2, 'settled': 3, 'pending': 1, 'pushes': 1, 'hit_rate': 50, 'profitable_tickets': 1},
+        )
+        ticket = report['days'][0]['draw_baseline_ticket']
+        self.assertEqual(ticket['hit_leg_count'], 2)
+        self.assertEqual(ticket['return_line_count'], 1)
+        self.assertEqual(
+            {leg['match_id']: leg['status'] for leg in ticket['picks']},
+            {'001': 'hit', '002': 'hit', '003': 'miss'},
+        )
+        self.assertEqual(ticket['return_units'], 2.03)
+        self.assertEqual(ticket['profit_units'], 1.03)
+        self.assertEqual(baseline['status'], 'pending')
+
 
 class DrawTrialAITests(unittest.TestCase):
     def setUp(self):
